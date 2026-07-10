@@ -1,0 +1,112 @@
+using StardewModdingAPI;
+using StardewModdingAPI.Utilities;
+
+namespace PelicanCompanions;
+
+internal sealed class ModConfig
+{
+    public int ConfigVersion { get; set; } = 4;
+
+    public KeybindList RecruitKey { get; set; } = KeybindList.Parse("F5");
+    public KeybindList ManualTaskKey { get; set; } = KeybindList.Parse("F6");
+    public KeybindList OpenSquadInventoryKey { get; set; } = KeybindList.Parse("F7");
+    public KeybindList TasksToggleKey { get; set; } = KeybindList.Parse("F8");
+    public KeybindList OpenCompanionPanelKey { get; set; } = KeybindList.Parse("F9");
+    public KeybindList RecallAllCompanionsKey { get; set; } = KeybindList.Parse("");
+    public bool ShowCompanionQuickHud { get; set; } = true;
+    public CompanionQuickHudMode CompanionQuickHudMode { get; set; } = CompanionQuickHudMode.Detailed;
+    public int CompanionQuickHudMaxRows { get; set; } = 6;
+    public CompanionFormationMode CompanionFormationMode { get; set; } = CompanionFormationMode.Adaptive;
+    public bool ShowCompanionMovementDebug { get; set; } = false;
+
+    public bool UseSquadInventory { get; set; } = true;
+    public bool UseVanillaDialogueUi { get; set; } = true;
+    public bool EnableCompanionProgression { get; set; } = true;
+    public int CompanionInventorySlots { get; set; } = 10;
+    public int CompanionWorkRadius { get; set; } = 8;
+    public int CompanionWorkReturnDistance { get; set; } = 12;
+    public bool ShowCompanionLevelUpHud { get; set; } = true;
+    public int FriendshipRequirement { get; set; } = 2;
+    public int FriendshipPointsPerHour { get; set; } = 2;
+    public int MaxSquadSize { get; set; } = 3;
+    public bool RecruitAllNpcs { get; set; } = false;
+    public DisableInteractionMode DisableInteraction { get; set; } = DisableInteractionMode.Never;
+    public TrashReactionMode DisableTrashRummagingReaction { get; set; } = TrashReactionMode.Never;
+
+    public bool EnableCommunication { get; set; } = true;
+    public int DialogueCooldownSeconds { get; set; } = 45;
+    public bool EnableIdleAnimations { get; set; } = false;
+
+    public bool EnableGathering { get; set; } = false;
+    public TaskMode AttackingMode { get; set; } = TaskMode.Disabled;
+    public TaskMode HarvestingMode { get; set; } = TaskMode.Mimicking;
+    public int ProtectBeehouseFlowers { get; set; } = 5;
+    public TaskMode ForagingMode { get; set; } = TaskMode.Disabled;
+    public TaskMode LumberingMode { get; set; } = TaskMode.Mimicking;
+    public TaskMode MiningMode { get; set; } = TaskMode.Mimicking;
+    public TaskMode WateringMode { get; set; } = TaskMode.Mimicking;
+    public FishingTaskMode FishingMode { get; set; } = FishingTaskMode.Disabled;
+    public TaskMode PettingMode { get; set; } = TaskMode.Mimicking;
+    public TaskMode ShearingMode { get; set; } = TaskMode.Disabled;
+    public TaskMode MilkingMode { get; set; } = TaskMode.Disabled;
+
+    public bool EnableRiding { get; set; } = false;
+    public bool EnableSitting { get; set; } = false;
+
+    public bool WarpHomeOnDisconnect { get; set; } = false;
+    public int ParkTimeoutMinutes { get; set; } = 0;
+
+    public void Validate()
+    {
+        this.FriendshipRequirement = Math.Clamp(this.FriendshipRequirement, 0, 14);
+        this.FriendshipPointsPerHour = Math.Max(0, this.FriendshipPointsPerHour);
+        this.MaxSquadSize = Math.Clamp(this.MaxSquadSize, 1, 12);
+        this.CompanionInventorySlots = Math.Clamp(this.CompanionInventorySlots, 1, 10);
+        this.CompanionWorkRadius = Math.Clamp(this.CompanionWorkRadius, 3, 20);
+        this.CompanionWorkReturnDistance = Math.Clamp(this.CompanionWorkReturnDistance, this.CompanionWorkRadius, 40);
+        this.CompanionQuickHudMaxRows = Math.Clamp(this.CompanionQuickHudMaxRows, 1, 12);
+        this.DialogueCooldownSeconds = Math.Max(0, this.DialogueCooldownSeconds);
+        this.ProtectBeehouseFlowers = Math.Max(0, this.ProtectBeehouseFlowers);
+        this.ParkTimeoutMinutes = Math.Max(0, this.ParkTimeoutMinutes);
+    }
+}
+
+internal enum TaskMode
+{
+    Disabled,
+    Mimicking,
+    Autonomous
+}
+
+internal enum FishingTaskMode
+{
+    Disabled,
+    Mimicking
+}
+
+internal enum CompanionFormationMode
+{
+    Behind,
+    Compact,
+    Adaptive
+}
+
+internal enum CompanionQuickHudMode
+{
+    Detailed,
+    Compact
+}
+
+internal enum DisableInteractionMode
+{
+    Never,
+    CombatOnly,
+    Always
+}
+
+internal enum TrashReactionMode
+{
+    Never,
+    PetsOnly,
+    Everyone
+}

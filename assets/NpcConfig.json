@@ -1,0 +1,130 @@
+{
+  "Generic": {
+    "Dialogue": {
+      "Recruit": [
+        {
+          "TextKey": "dialogue.Recruit.generic"
+        }
+      ],
+      "Dismiss": [
+        {
+          "TextKey": "dialogue.Dismiss.generic"
+        }
+      ],
+      "Idle": [
+        {
+          "TextKey": "dialogue.Idle.generic"
+        },
+        {
+          "TextKey": "dialogue.Idle.farm",
+          "Condition": "farm"
+        },
+        {
+          "TextKey": "dialogue.Idle.night",
+          "Condition": "night"
+        }
+      ],
+      "Watering": [
+        {
+          "TextKey": "dialogue.Watering.generic"
+        }
+      ],
+      "Attacking": [
+        {
+          "TextKey": "dialogue.Attacking.generic"
+        }
+      ],
+      "Lumbering": [
+        {
+          "TextKey": "dialogue.Lumbering.generic"
+        }
+      ],
+      "Mining": [
+        {
+          "TextKey": "dialogue.Mining.generic"
+        }
+      ],
+      "Harvesting": [
+        {
+          "TextKey": "dialogue.Harvesting.generic"
+        }
+      ],
+      "Foraging": [
+        {
+          "TextKey": "dialogue.Foraging.generic"
+        }
+      ],
+      "Fishing_Waiting": [
+        {
+          "TextKey": "dialogue.Fishing_Waiting.generic"
+        }
+      ],
+      "Fishing_Caught": [
+        {
+          "TextKey": "dialogue.Fishing_Caught.generic"
+        }
+      ],
+      "Petting": [
+        {
+          "TextKey": "dialogue.Petting.generic"
+        }
+      ],
+      "FriendshipTooLow": [
+        {
+          "TextKey": "dialogue.FriendshipTooLow.generic"
+        }
+      ],
+      "RecruitmentRefusal": [
+        {
+          "TextKey": "dialogue.RecruitmentRefusal.generic"
+        }
+      ]
+    },
+    "IdleAnimations": []
+  },
+  "All_Cat": {
+    "Dialogue": {
+      "Recruit": [
+        {
+          "TextKey": "dialogue.Recruit.generic"
+        }
+      ],
+      "Idle": [
+        {
+          "TextKey": "dialogue.Idle.generic"
+        }
+      ]
+    },
+    "IdleAnimations": []
+  },
+  "All_Dog": {
+    "Dialogue": {
+      "Recruit": [
+        {
+          "TextKey": "dialogue.Recruit.generic"
+        }
+      ],
+      "Idle": [
+        {
+          "TextKey": "dialogue.Idle.generic"
+        }
+      ]
+    },
+    "IdleAnimations": []
+  },
+  "All_Turtle": {
+    "Dialogue": {
+      "Recruit": [
+        {
+          "TextKey": "dialogue.Recruit.generic"
+        }
+      ],
+      "Idle": [
+        {
+          "TextKey": "dialogue.Idle.generic"
+        }
+      ]
+    },
+    "IdleAnimations": []
+  }
+}

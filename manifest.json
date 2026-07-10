@@ -1,0 +1,10 @@
+{
+  "Name": "Pelican Companions",
+  "Author": "Lucas",
+  "Version": "%ProjectVersion%",
+  "Description": "Recruit NPCs and pets into a persistent companion squad with formations, specialties, progression, inventories, and safe task assistance.",
+  "UniqueID": "Lucas.PelicanCompanions",
+  "EntryDll": "PelicanCompanions.dll",
+  "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": []
+}

@@ -1,0 +1,18 @@
+# Documentation and release notes are kept locally, not versioned in this runtime repository.
+docs/
+*.md
+
+# Build output and generated mod packages.
+bin/
+obj/
+*.zip
+
+# Generated runtime data and local IDE/system files.
+config.json
+*.log
+.DS_Store
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
