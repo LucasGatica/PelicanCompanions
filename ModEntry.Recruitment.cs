@@ -1,0 +1,347 @@
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using StardewModdingAPI;
+using StardewModdingAPI.Events;
+using StardewModdingAPI.Integrations.GenericModConfigMenu;
+using StardewModdingAPI.Utilities;
+using StardewValley;
+using StardewValley.Characters;
+using StardewValley.TerrainFeatures;
+using StardewValley.Tools;
+using SObject = StardewValley.Object;
+
+namespace PelicanCompanions;
+
+public sealed partial class ModEntry
+{
+    private void TryOpenRecruitmentOrManagement(ICursorPosition cursor)
+    {
+        NPC? target = this.FindTargetNpc(cursor);
+        if (target is null)
+        {
+            this.Warn("recruitment.no_target");
+            return;
+        }
+
+        if (this.members.TryGetValue(target.Name, out SquadMemberState? member))
+        {
+            if (member.OwnerId != Game1.player.UniqueMultiplayerID)
+            {
+                this.Warn("recruitment.not_owner", new { npc = target.displayName });
+                return;
+            }
+
+            if (this.config.UseVanillaDialogueUi)
+                this.OpenManagementMenu(target, member);
+            else
+                this.OpenCompanionPanel(member.NpcName);
+
+            return;
+        }
+
+        this.TryRecruit(target, Game1.player.UniqueMultiplayerID, showPrompt: true);
+    }
+
+    private void TryRecruit(NPC npc, long ownerId, bool showPrompt)
+    {
+        if (!Context.IsMainPlayer && ownerId == Game1.player.UniqueMultiplayerID)
+        {
+            this.SendActionRequest("Recruit", npc.Name);
+            this.Info("recruitment.request_sent", new { npc = npc.displayName });
+            return;
+        }
+
+        EligibilityResult eligibility = this.CanRecruit(npc, ownerId);
+        if (!eligibility.Allowed)
+        {
+            if (eligibility.ReasonKey == "recruitment.friendship_low")
+                this.Say(npc, "FriendshipTooLow", force: true);
+
+            this.Warn(eligibility.ReasonKey, new { npc = npc.displayName, required = this.config.FriendshipRequirement });
+            return;
+        }
+
+        if (showPrompt)
+        {
+            string question = this.Tr("recruitment.prompt", new { npc = npc.displayName });
+            Game1.currentLocation.createQuestionDialogue(
+                question,
+                new[] { new Response("Recruit", this.Tr("generic.yes")), new Response("Cancel", this.Tr("generic.cancel")) },
+                (_, answer) =>
+                {
+                    if (answer == "Recruit")
+                    {
+                        // The world may have changed while the confirmation prompt was
+                        // open (ownership, friendship, squad capacity, location, etc.).
+                        // Run the full eligibility check again at the commit point.
+                        this.TryRecruit(npc, ownerId, showPrompt: false);
+                    }
+                });
+            return;
+        }
+
+        this.AddMember(npc, ownerId);
+    }
+
+    private EligibilityResult CanRecruit(NPC npc, long ownerId)
+    {
+        if (this.IsBlockedGameState(blockForMenu: false))
+            return new EligibilityResult(false, "recruitment.blocked_state");
+
+        if (this.members.TryGetValue(npc.Name, out SquadMemberState? existing))
+        {
+            return existing.OwnerId == ownerId
+                ? new EligibilityResult(false, "recruitment.already_yours")
+                : new EligibilityResult(false, "recruitment.already_other");
+        }
+
+        if (this.deferredNpcRestores.ContainsKey(npc.Name))
+            return new EligibilityResult(false, "recruitment.blocked_state");
+
+        if (this.members.Values.Count(p => p.OwnerId == ownerId) >= this.config.MaxSquadSize)
+            return new EligibilityResult(false, "recruitment.squad_full");
+
+        Farmer? owner = this.GetOwnerFarmer(ownerId);
+        if (owner is null)
+            return new EligibilityResult(false, "recruitment.unsupported");
+
+        if (owner.currentLocation is null
+            || npc.currentLocation != owner.currentLocation
+            || Vector2.Distance(NormalizeTile(npc.Tile), NormalizeTile(owner.Tile)) > 2.25f)
+        {
+            return new EligibilityResult(false, "recruitment.no_target");
+        }
+
+        if (!this.IsSupportedTarget(npc, owner))
+            return new EligibilityResult(false, "recruitment.unsupported");
+
+        if (!this.MeetsFriendshipRequirement(npc, owner))
+            return new EligibilityResult(false, "recruitment.friendship_low");
+
+        return EligibilityResult.Success;
+    }
+
+    private void AddMember(NPC npc, long ownerId)
+    {
+        Farmer? owner = this.GetOwnerFarmer(ownerId);
+        if (owner is null)
+            return;
+
+        SquadMemberState member = new()
+        {
+            NpcName = npc.Name,
+            DisplayName = npc.displayName,
+            OwnerId = ownerId,
+            Mode = CompanionMode.Following,
+            OriginalLocationName = npc.currentLocation?.NameOrUniqueName,
+            OriginalTileX = npc.Tile.X,
+            OriginalTileY = npc.Tile.Y,
+            HasOriginalPosition = npc.currentLocation is not null,
+            OriginalDayIndex = Game1.Date.TotalDays
+        };
+        this.deferredNpcRestores.Remove(npc.Name);
+        this.members[npc.Name] = member;
+        this.MarkStateDirty();
+        this.RemovePendingTask(npc.Name);
+        this.DisableNpcSchedule(npc, stopCurrentRoute: true);
+
+        this.Info("recruitment.joined", new { npc = npc.displayName });
+        this.Say(npc, "Recruit", force: true);
+        this.UpdateFollower(member, npc, owner, forceCatchUp: true);
+    }
+
+    private void OpenManagementMenu(NPC npc, SquadMemberState member)
+    {
+        if (member.OwnerId != Game1.player.UniqueMultiplayerID)
+        {
+            this.Warn("recruitment.not_owner", new { npc = npc.displayName });
+            return;
+        }
+
+        List<Response> responses = new()
+        {
+            new Response("Dismiss", this.Tr("management.dismiss")),
+            new Response("DismissAll", this.Tr("management.dismiss_all")),
+            new Response("Panel", this.Tr("management.panel")),
+            new Response(member.Mode == CompanionMode.Following ? "Wait" : "Resume", this.Tr(member.Mode == CompanionMode.Following ? "management.wait" : "management.resume"))
+        };
+
+        if ((this.replicatedHostRules?.UseSquadInventory ?? this.config.UseSquadInventory) || this.squadInventory.Count > 0)
+            responses.Add(new Response("Inventory", this.Tr("management.inventory")));
+
+        responses.Add(new Response("Cancel", this.Tr("generic.cancel")));
+
+        Game1.currentLocation.createQuestionDialogue(
+            this.Tr("management.prompt", new { npc = npc.displayName, status = this.Tr($"status.{member.Mode}") }),
+            responses.ToArray(),
+            (_, answer) => this.HandleManagementAnswer(npc, member, answer));
+    }
+
+    private void HandleManagementAnswer(NPC npc, SquadMemberState member, string answer)
+    {
+        switch (answer)
+        {
+            case "Dismiss":
+                this.DismissMember(npc.Name);
+                break;
+
+            case "DismissAll":
+                this.DismissAll(Game1.player.UniqueMultiplayerID);
+                break;
+
+            case "Wait":
+                this.SetWaiting(npc.Name, Game1.player.UniqueMultiplayerID);
+                break;
+
+            case "Resume":
+                this.ResumeFollowing(npc.Name, Game1.player.UniqueMultiplayerID);
+                break;
+
+            case "Inventory":
+                this.OpenSquadInventoryMenu();
+                break;
+
+            case "Panel":
+                this.OpenCompanionPanel(member.NpcName);
+                break;
+        }
+    }
+
+    private void DismissAll(long ownerId)
+    {
+        if (!Context.IsMainPlayer && ownerId == Game1.player.UniqueMultiplayerID)
+        {
+            this.SendActionRequest("DismissAll");
+            return;
+        }
+
+        foreach (string npcName in this.members.Values.Where(p => p.OwnerId == ownerId).Select(p => p.NpcName).ToList())
+            this.DismissMember(npcName, ownerOverride: ownerId);
+
+        this.MarkStateDirty();
+        if (ownerId == Game1.player.UniqueMultiplayerID)
+            this.Info("recruitment.dismissed_all");
+    }
+
+    private void DismissMember(string npcName, bool silent = false, long? ownerOverride = null)
+    {
+        if (!this.members.TryGetValue(npcName, out SquadMemberState? member))
+            return;
+
+        long requester = ownerOverride ?? Game1.player.UniqueMultiplayerID;
+        if (member.OwnerId != requester)
+        {
+            this.Warn("recruitment.not_owner", new { npc = member.DisplayName });
+            return;
+        }
+
+        if (!Context.IsMainPlayer && requester == Game1.player.UniqueMultiplayerID)
+        {
+            this.SendActionRequest("Dismiss", npcName);
+            return;
+        }
+
+        bool deferNpcRestore = silent && this.IsBlockedGameState(blockForMenu: false);
+
+        NPC? npc = Game1.getCharacterFromName(npcName, mustBeVillager: false, includeEventActors: false);
+        if (deferNpcRestore)
+        {
+            // Commit the inventory/state removal now so a save or shutdown
+            // can't resurrect the companion. Only the event-sensitive vanilla
+            // schedule restoration is deferred and persisted.
+            this.deferredNpcRestores[npcName] = new DeferredNpcRestoreState
+            {
+                NpcName = member.NpcName,
+                OriginalLocationName = member.OriginalLocationName,
+                OriginalTileX = member.OriginalTileX,
+                OriginalTileY = member.OriginalTileY,
+                HasOriginalPosition = member.HasOriginalPosition,
+                OriginalDayIndex = member.OriginalDayIndex
+            };
+        }
+        else if (npc is not null)
+        {
+            npc.controller = null;
+            ResetCompanionMovementSpeed(npc);
+            npc.Halt();
+            this.Say(npc, "Dismiss", force: true);
+            this.RestoreNpcSchedule(npc, member);
+        }
+
+        // Dismissal must never destroy carried items (including the silent
+        // disconnect path). Move raw stacks through the persistent overflow;
+        // resolvable items are then folded into the shared squad inventory.
+        if (member.Inventory is { Count: > 0 })
+        {
+            this.legacyOverflowItems.AddRange(member.Inventory);
+            member.Inventory.Clear();
+            this.ReloadOverflowInventoryIntoSquad();
+        }
+
+        this.members.Remove(npcName);
+        this.ClearFollowState(npcName);
+        this.RemovePendingTask(npcName);
+        if (!deferNpcRestore)
+            this.deferredNpcRestores.Remove(npcName);
+        this.MarkStateDirty();
+        if (!silent)
+            this.Info("recruitment.dismissed", new { npc = member.DisplayName });
+    }
+
+    private void SetWaiting(string npcName, long ownerId)
+    {
+        if (!this.members.TryGetValue(npcName, out SquadMemberState? member) || !this.CanOwnerMutate(member, ownerId))
+            return;
+
+        if (!Context.IsMainPlayer && ownerId == Game1.player.UniqueMultiplayerID)
+        {
+            this.SendActionRequest("Wait", npcName);
+            return;
+        }
+
+        this.RemovePendingTask(npcName);
+        this.ClearFollowState(npcName);
+        NPC? npc = Game1.getCharacterFromName(npcName, mustBeVillager: false, includeEventActors: false);
+        if (npc is not null)
+        {
+            this.StoreWaitingPosition(member, npc);
+            npc.controller = null;
+            ResetCompanionMovementSpeed(npc);
+            npc.Halt();
+        }
+
+        member.Mode = CompanionMode.Waiting;
+        this.ClearCompanionTarget(member);
+        this.SetCompanionActivity(member, "companion.status.waiting");
+        this.MarkStateDirty();
+        if (ownerId == Game1.player.UniqueMultiplayerID)
+            this.Info("management.waiting", new { npc = member.DisplayName });
+    }
+
+    private void ResumeFollowing(string npcName, long ownerId)
+    {
+        if (!this.members.TryGetValue(npcName, out SquadMemberState? member) || !this.CanOwnerMutate(member, ownerId))
+            return;
+
+        if (!Context.IsMainPlayer && ownerId == Game1.player.UniqueMultiplayerID)
+        {
+            this.SendActionRequest("Resume", npcName);
+            return;
+        }
+
+        member.Mode = CompanionMode.Following;
+        member.WaitingLocationName = null;
+        member.ParkedAtUtcTicks = 0;
+        this.SetCompanionActivity(member, "companion.status.following");
+        this.MarkStateDirty();
+        if (ownerId == Game1.player.UniqueMultiplayerID)
+            this.Info("management.resumed", new { npc = member.DisplayName });
+    }
+
+    private void StoreWaitingPosition(SquadMemberState member, NPC npc)
+    {
+        member.WaitingLocationName = npc.currentLocation?.NameOrUniqueName;
+        member.WaitingTileX = npc.Tile.X;
+        member.WaitingTileY = npc.Tile.Y;
+    }
+}

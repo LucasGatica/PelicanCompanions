@@ -5,7 +5,7 @@ namespace PelicanCompanions;
 
 internal sealed class ModConfig
 {
-    public int ConfigVersion { get; set; } = 4;
+    public int ConfigVersion { get; set; } = 5;
 
     public KeybindList RecruitKey { get; set; } = KeybindList.Parse("F5");
     public KeybindList ManualTaskKey { get; set; } = KeybindList.Parse("F6");
@@ -15,6 +15,7 @@ internal sealed class ModConfig
     public KeybindList RecallAllCompanionsKey { get; set; } = KeybindList.Parse("");
     public bool ShowCompanionQuickHud { get; set; } = true;
     public CompanionQuickHudMode CompanionQuickHudMode { get; set; } = CompanionQuickHudMode.Detailed;
+    public CompanionQuickHudSide CompanionQuickHudSide { get; set; } = CompanionQuickHudSide.Right;
     public int CompanionQuickHudMaxRows { get; set; } = 6;
     public CompanionFormationMode CompanionFormationMode { get; set; } = CompanionFormationMode.Adaptive;
     public bool ShowCompanionMovementDebug { get; set; } = false;
@@ -30,6 +31,8 @@ internal sealed class ModConfig
     public int FriendshipPointsPerHour { get; set; } = 2;
     public int MaxSquadSize { get; set; } = 3;
     public bool RecruitAllNpcs { get; set; } = false;
+    // Retained in config.json so older configs remain loadable. These options
+    // aren't exposed in GMCM until their gameplay modules are implemented.
     public DisableInteractionMode DisableInteraction { get; set; } = DisableInteractionMode.Never;
     public TrashReactionMode DisableTrashRummagingReaction { get; set; } = TrashReactionMode.Never;
 
@@ -58,6 +61,13 @@ internal sealed class ModConfig
 
     public void Validate()
     {
+        this.RecruitKey ??= KeybindList.Parse("F5");
+        this.ManualTaskKey ??= KeybindList.Parse("F6");
+        this.OpenSquadInventoryKey ??= KeybindList.Parse("F7");
+        this.TasksToggleKey ??= KeybindList.Parse("F8");
+        this.OpenCompanionPanelKey ??= KeybindList.Parse("F9");
+        this.RecallAllCompanionsKey ??= KeybindList.Parse("");
+
         this.FriendshipRequirement = Math.Clamp(this.FriendshipRequirement, 0, 14);
         this.FriendshipPointsPerHour = Math.Max(0, this.FriendshipPointsPerHour);
         this.MaxSquadSize = Math.Clamp(this.MaxSquadSize, 1, 12);
@@ -65,9 +75,38 @@ internal sealed class ModConfig
         this.CompanionWorkRadius = Math.Clamp(this.CompanionWorkRadius, 3, 20);
         this.CompanionWorkReturnDistance = Math.Clamp(this.CompanionWorkReturnDistance, this.CompanionWorkRadius, 40);
         this.CompanionQuickHudMaxRows = Math.Clamp(this.CompanionQuickHudMaxRows, 1, 12);
+
+        if (!Enum.IsDefined(this.CompanionQuickHudMode))
+            this.CompanionQuickHudMode = CompanionQuickHudMode.Detailed;
+        if (!Enum.IsDefined(this.CompanionQuickHudSide))
+            this.CompanionQuickHudSide = CompanionQuickHudSide.Right;
+        if (!Enum.IsDefined(this.CompanionFormationMode))
+            this.CompanionFormationMode = CompanionFormationMode.Adaptive;
+        if (!Enum.IsDefined(this.DisableInteraction))
+            this.DisableInteraction = DisableInteractionMode.Never;
+        if (!Enum.IsDefined(this.DisableTrashRummagingReaction))
+            this.DisableTrashRummagingReaction = TrashReactionMode.Never;
+        if (!Enum.IsDefined(this.FishingMode))
+            this.FishingMode = FishingTaskMode.Disabled;
+
+        this.AttackingMode = NormalizeTaskMode(this.AttackingMode, TaskMode.Disabled);
+        this.HarvestingMode = NormalizeTaskMode(this.HarvestingMode, TaskMode.Mimicking);
+        this.ForagingMode = NormalizeTaskMode(this.ForagingMode, TaskMode.Disabled);
+        this.LumberingMode = NormalizeTaskMode(this.LumberingMode, TaskMode.Mimicking);
+        this.MiningMode = NormalizeTaskMode(this.MiningMode, TaskMode.Mimicking);
+        this.WateringMode = NormalizeTaskMode(this.WateringMode, TaskMode.Mimicking);
+        this.PettingMode = NormalizeTaskMode(this.PettingMode, TaskMode.Mimicking);
+        this.ShearingMode = NormalizeTaskMode(this.ShearingMode, TaskMode.Disabled);
+        this.MilkingMode = NormalizeTaskMode(this.MilkingMode, TaskMode.Disabled);
+
         this.DialogueCooldownSeconds = Math.Max(0, this.DialogueCooldownSeconds);
         this.ProtectBeehouseFlowers = Math.Max(0, this.ProtectBeehouseFlowers);
         this.ParkTimeoutMinutes = Math.Max(0, this.ParkTimeoutMinutes);
+    }
+
+    private static TaskMode NormalizeTaskMode(TaskMode value, TaskMode fallback)
+    {
+        return Enum.IsDefined(value) ? value : fallback;
     }
 }
 
@@ -95,6 +134,12 @@ internal enum CompanionQuickHudMode
 {
     Detailed,
     Compact
+}
+
+internal enum CompanionQuickHudSide
+{
+    Left,
+    Right
 }
 
 internal enum DisableInteractionMode

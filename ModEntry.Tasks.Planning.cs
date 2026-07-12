@@ -1,0 +1,464 @@
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using StardewModdingAPI;
+using StardewModdingAPI.Events;
+using StardewModdingAPI.Integrations.GenericModConfigMenu;
+using StardewModdingAPI.Utilities;
+using StardewValley;
+using StardewValley.Characters;
+using StardewValley.GameData.Crops;
+using StardewValley.TerrainFeatures;
+using StardewValley.Tools;
+using SObject = StardewValley.Object;
+
+namespace PelicanCompanions;
+
+public sealed partial class ModEntry
+{
+    private bool HasActiveWorkDirective(SquadMemberState member)
+    {
+        return member.SearchWood || member.SearchMining || member.ClearArea;
+    }
+
+    private bool IsPendingTaskAllowedByDirectives(SquadMemberState member, CompanionTaskKind kind)
+    {
+        return kind switch
+        {
+            CompanionTaskKind.Lumbering => member.SearchWood || member.ClearArea,
+            CompanionTaskKind.Mining => member.SearchMining || member.ClearArea,
+            _ => true
+        };
+    }
+
+    private void CancelPendingTasksForOwner(long ownerId, string failureKey)
+    {
+        foreach (PendingCompanionTask task in this.pendingTasks.Values
+            .Where(task => this.members.TryGetValue(task.NpcName, out SquadMemberState? member) && member.OwnerId == ownerId)
+            .ToList())
+        {
+            this.RemovePendingTask(task, failureKey, returning: true);
+        }
+    }
+
+    private void ApplyPreferredWorkSpecialty(SquadMemberState member)
+    {
+        member.SearchWood = member.PreferredWorkSpecialty == CompanionWorkSpecialty.Wood;
+        member.SearchMining = member.PreferredWorkSpecialty == CompanionWorkSpecialty.Mining;
+        member.ClearArea = member.PreferredWorkSpecialty == CompanionWorkSpecialty.ClearArea;
+        this.InvalidateTargetPreviews();
+    }
+
+    private bool TryAssignWorkDirectiveTask(SquadMemberState member)
+    {
+        NPC? npc = Game1.getCharacterFromName(member.NpcName, mustBeVillager: false, includeEventActors: false);
+        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+        if (npc is null || owner is null || owner.currentLocation is null)
+        {
+            this.SetTaskFailure(member, "companion.task_failure.owner_unavailable");
+            return false;
+        }
+
+        GameLocation location = owner.currentLocation;
+        if (npc.currentLocation != location)
+        {
+            this.UpdateFollower(member, npc, owner, forceCatchUp: true);
+            this.SetTaskFailure(member, "companion.task_failure.owner_too_far");
+            return false;
+        }
+
+        int radius = this.GetCompanionWorkRadius(member);
+        WorkTarget? target = this.FindBestWorkTarget(member, npc, owner, location, radius);
+        this.UpdateTargetPreview(member, this.BuildTargetPreview(member, null));
+        if (target is null)
+        {
+            this.SetCompanionActivity(member, "companion.status.following");
+            this.ClearCompanionTarget(member);
+            return false;
+        }
+
+        return target.Value.Kind switch
+        {
+            CompanionTaskKind.Lumbering => this.TryQueueDirectiveLumberTask(location, target.Value.Tile, member, npc, radius),
+            CompanionTaskKind.Mining => this.TryQueueDirectiveMiningTask(location, target.Value.Tile, member, npc, radius),
+            _ => false
+        };
+    }
+
+    private bool TryAssignConfiguredAutonomousTask(SquadMemberState member)
+    {
+        bool includeWood = this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) == TaskMode.Autonomous;
+        bool includeMining = this.GetConfiguredTaskMode(CompanionTaskKind.Mining) == TaskMode.Autonomous;
+        if (!includeWood && !includeMining)
+            return false;
+
+        NPC? npc = this.GetNpcByName(member.NpcName);
+        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+        if (npc is null || owner?.currentLocation is null || npc.currentLocation != owner.currentLocation)
+            return false;
+
+        int radius = this.GetCompanionWorkRadius(member);
+        WorkTarget? target = this.FindBestWorkTarget(member, npc, owner, owner.currentLocation, radius, includeWood, includeMining);
+        if (target is null)
+            return false;
+
+        bool queued = target.Value.Kind switch
+        {
+            CompanionTaskKind.Lumbering => this.TryQueueDirectiveLumberTask(owner.currentLocation, target.Value.Tile, member, npc, radius),
+            CompanionTaskKind.Mining => this.TryQueueDirectiveMiningTask(owner.currentLocation, target.Value.Tile, member, npc, radius),
+            _ => false
+        };
+
+        if (queued && this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? task))
+        {
+            task.UsesWorkDirective = false;
+            task.UsesConfiguredAutonomy = true;
+        }
+
+        return queued;
+    }
+
+    private WorkTarget? FindBestWorkTarget(SquadMemberState member, NPC npc, Farmer owner, GameLocation location, int radius)
+    {
+        bool includeWood = (member.SearchWood || member.ClearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled;
+        bool includeMining = (member.SearchMining || member.ClearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled;
+        return this.FindBestWorkTarget(member, npc, owner, location, radius, includeWood, includeMining);
+    }
+
+    private WorkTarget? FindBestWorkTarget(SquadMemberState member, NPC npc, Farmer owner, GameLocation location, int radius, bool includeWood, bool includeMining)
+    {
+        if (!includeWood && !includeMining)
+            return null;
+
+        Vector2 npcTile = NormalizeTile(npc.Tile);
+        Vector2 ownerTile = NormalizeTile(owner.Tile);
+        List<WorkTarget> targets = new();
+
+        void TryAddTarget(CompanionTaskKind kind, Vector2 rawTile)
+        {
+            Vector2 tile = NormalizeTile(rawTile);
+            float playerDistance = Vector2.Distance(ownerTile, tile);
+            if (playerDistance > radius)
+                return;
+
+            if (this.IsTargetReserved(location, tile))
+                return;
+
+            float npcDistance = Vector2.Distance(npcTile, tile);
+            if (this.TryFindSafeAdjacentTile(location, tile, npc, member, radius, out _))
+                targets.Add(new WorkTarget(kind, tile, npcDistance, playerDistance));
+        }
+
+        // Enumerate actual world features instead of walking every tile in the
+        // search square. Large work radii now scale with candidate count, not
+        // map area, and reachability is reused by the tick-local cache.
+        if (includeWood)
+        {
+            foreach (Vector2 tile in location.terrainFeatures.Keys)
+            {
+                if (this.IsValidWoodTarget(location, tile))
+                    TryAddTarget(CompanionTaskKind.Lumbering, tile);
+            }
+        }
+
+        if (includeMining)
+        {
+            foreach (Vector2 tile in location.Objects.Keys)
+            {
+                if (this.IsValidMiningTarget(location, tile))
+                    TryAddTarget(CompanionTaskKind.Mining, tile);
+            }
+        }
+
+        if (targets.Count == 0)
+            return null;
+
+        return targets
+            .OrderBy(p => p.NpcDistance)
+            .ThenBy(p => p.PlayerDistance)
+            .FirstOrDefault();
+    }
+
+    private TargetPreview BuildTargetPreview(SquadMemberState member, CompanionDirective? simulatedDirective)
+    {
+        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+        NPC? npc = this.GetNpcByName(member.NpcName);
+        string locationName = owner?.currentLocation?.NameOrUniqueName ?? "";
+        Vector2 ownerTile = owner is null ? new Vector2(-1f, -1f) : NormalizeTile(owner.Tile);
+        Vector2 npcTile = npc is null ? new Vector2(-1f, -1f) : NormalizeTile(npc.Tile);
+        bool tasksEnabled = this.AreTasksEnabled(member.OwnerId);
+        bool blocked = this.IsBlockedGameState(blockForMenu: false);
+        TargetPreviewCacheKey cacheKey = new(
+            member.NpcName,
+            simulatedDirective,
+            locationName,
+            (int)ownerTile.X,
+            (int)ownerTile.Y,
+            (int)npcTile.X,
+            (int)npcTile.Y,
+            member.SearchWood,
+            member.SearchMining,
+            member.ClearArea,
+            tasksEnabled,
+            blocked,
+            member.Mode);
+
+        if (this.targetPreviewCache.Count > 256)
+        {
+            foreach (TargetPreviewCacheKey staleKey in this.targetPreviewCache
+                .Where(p => Game1.ticks - p.Value.Tick >= 60)
+                .Select(p => p.Key)
+                .ToList())
+            {
+                this.targetPreviewCache.Remove(staleKey);
+            }
+        }
+
+        if (this.targetPreviewCache.TryGetValue(cacheKey, out TargetPreviewCacheEntry cached)
+            && Game1.ticks - cached.Tick < 60)
+        {
+            return cached.Preview;
+        }
+
+        TargetPreview preview = this.BuildTargetPreviewCore(member, simulatedDirective);
+        this.targetPreviewCache[cacheKey] = new TargetPreviewCacheEntry(Game1.ticks, preview);
+        return preview;
+    }
+
+    private TargetPreview BuildTargetPreviewCore(SquadMemberState member, CompanionDirective? simulatedDirective)
+    {
+        if (!this.AreTasksEnabled(member.OwnerId))
+            return new TargetPreview(false, "", -1, -1, "companion.preview.tasks_disabled");
+
+        if (this.IsBlockedGameState(blockForMenu: false))
+            return new TargetPreview(false, "", -1, -1, "companion.preview.blocked");
+
+        if (member.Mode != CompanionMode.Following)
+            return new TargetPreview(false, "", -1, -1, "companion.preview.not_following");
+
+        NPC? npc = Game1.getCharacterFromName(member.NpcName, mustBeVillager: false, includeEventActors: false);
+        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+        if (npc is null || owner is null || owner.currentLocation is null)
+            return new TargetPreview(false, "", -1, -1, "companion.preview.no_owner");
+
+        GameLocation location = owner.currentLocation;
+        if (npc.currentLocation != location)
+            return new TargetPreview(false, "", -1, -1, "companion.preview.other_location");
+
+        bool searchWood = member.SearchWood;
+        bool searchMining = member.SearchMining;
+        bool clearArea = member.ClearArea;
+        if (simulatedDirective.HasValue)
+        {
+            switch (simulatedDirective.Value)
+            {
+                case CompanionDirective.SearchWood:
+                    searchWood = !searchWood;
+                    break;
+
+                case CompanionDirective.SearchMining:
+                    searchMining = !searchMining;
+                    break;
+
+                case CompanionDirective.ClearArea:
+                    clearArea = !clearArea;
+                    break;
+            }
+        }
+
+        bool includeWood = (searchWood || clearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled;
+        bool includeMining = (searchMining || clearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled;
+        if (!includeWood && !includeMining)
+        {
+            bool requestedWork = searchWood || searchMining || clearArea;
+            string reason = requestedWork
+                ? "companion.preview.work_modes_disabled"
+                : simulatedDirective.HasValue
+                    ? "companion.preview.disabled_after_click"
+                    : "companion.preview.inactive";
+            return new TargetPreview(false, "", -1, -1, reason);
+        }
+
+        WorkTarget? target = this.FindBestWorkTarget(member, npc, owner, location, this.GetCompanionWorkRadius(member), includeWood, includeMining);
+        if (target is null)
+            return new TargetPreview(false, "", -1, -1, "companion.preview.no_target");
+
+        string targetKey = target.Value.Kind switch
+        {
+            CompanionTaskKind.Lumbering => "companion.target.wood",
+            CompanionTaskKind.Mining => "companion.target.mining",
+            _ => ""
+        };
+        return new TargetPreview(true, targetKey, (int)target.Value.Tile.X, (int)target.Value.Tile.Y, "");
+    }
+
+    private void UpdateTargetPreview(SquadMemberState member, TargetPreview preview)
+    {
+        member.PreviewTargetKey = preview.TargetKey;
+        member.PreviewTargetX = preview.X;
+        member.PreviewTargetY = preview.Y;
+        member.PreviewReasonKey = preview.ReasonKey;
+    }
+
+    private void InvalidateTargetPreviews()
+    {
+        this.targetPreviewCache.Clear();
+    }
+
+    private string GetDirectivePreviewText(SquadMemberState member, CompanionDirective directive)
+    {
+        TargetPreview preview = this.BuildTargetPreview(member, directive);
+        if (preview.HasTarget)
+        {
+            return this.Tr("companion.preview.target", new
+            {
+                target = this.Tr(preview.TargetKey),
+                x = preview.X,
+                y = preview.Y
+            });
+        }
+
+        return this.Tr("companion.preview.reason", new { reason = this.Tr(preview.ReasonKey) });
+    }
+
+    private bool IsTargetReserved(GameLocation location, Vector2 tile)
+    {
+        string locationName = location.NameOrUniqueName;
+        return this.workTargetReservations.ContainsKey(this.GetWorkTargetKey(locationName, tile));
+    }
+
+    private bool IsValidWoodTarget(GameLocation location, Vector2 tile)
+    {
+        return location.terrainFeatures.TryGetValue(tile, out TerrainFeature? feature)
+            && feature is Tree tree
+            && tree.growthStage.Value >= 5
+            && !tree.stump.Value
+            && !tree.tapped.Value;
+    }
+
+    private bool IsValidMiningTarget(GameLocation location, Vector2 tile)
+    {
+        return location.Objects.TryGetValue(tile, out SObject? obj)
+            && this.IsSafeMineableObject(obj);
+    }
+
+    private bool IsSafeMineableObject(SObject obj)
+    {
+        return obj.IsBreakableStone();
+    }
+
+    private bool TryQueueDirectiveLumberTask(GameLocation location, Vector2 targetTile, SquadMemberState member, NPC npc, int radius)
+    {
+        if (this.config.LumberingMode == TaskMode.Disabled)
+            return false;
+
+        if (!location.terrainFeatures.TryGetValue(targetTile, out TerrainFeature? feature)
+            || feature is not Tree
+            || !this.IsValidWoodTarget(location, targetTile))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.target_lost");
+            return false;
+        }
+
+        if (!this.TryFindSafeAdjacentTile(location, targetTile, npc, member, radius, out Vector2 standTile))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
+            return false;
+        }
+
+        if (!this.TryReserveWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.target_reserved");
+            return false;
+        }
+
+        if (!this.TryReserveStandTile(member.NpcName, location.NameOrUniqueName, standTile))
+        {
+            this.ReleaseWorkTarget(location.NameOrUniqueName, targetTile);
+            this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
+            return false;
+        }
+
+        PendingCompanionTask task = new()
+        {
+            Kind = CompanionTaskKind.Lumbering,
+            NpcName = member.NpcName,
+            LocationName = location.NameOrUniqueName,
+            TargetTile = targetTile,
+            UsesWorkDirective = true,
+            RequiresPlayerTool = false,
+            WorkRadius = radius,
+            ReturnDistance = this.GetCompanionReturnDistance(member),
+            StartedTick = Game1.ticks,
+            LastProcessedTick = Game1.ticks,
+            StandTile = standTile
+        };
+
+        this.pendingTasks[member.NpcName] = task;
+        this.SetCompanionActivity(member, "companion.status.working");
+        this.SetCompanionTarget(member, CompanionTaskKind.Lumbering, targetTile);
+        this.ShowCompanionWorkSignal(npc, location, targetTile, "target");
+        this.Say(npc, "Lumbering", force: false);
+
+        if (!this.IsNpcAtTaskTile(npc, standTile))
+            this.RouteNpcToTaskTile(npc, location, standTile, task, force: true);
+
+        return true;
+    }
+
+    private bool TryQueueDirectiveMiningTask(GameLocation location, Vector2 targetTile, SquadMemberState member, NPC npc, int radius)
+    {
+        if (this.config.MiningMode == TaskMode.Disabled)
+            return false;
+
+        if (!location.Objects.TryGetValue(targetTile, out SObject? obj) || !this.IsSafeMineableObject(obj))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.target_lost");
+            return false;
+        }
+
+        if (!this.TryFindSafeAdjacentTile(location, targetTile, npc, member, radius, out Vector2 standTile))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
+            return false;
+        }
+
+        if (!this.TryReserveWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.target_reserved");
+            return false;
+        }
+
+        if (!this.TryReserveStandTile(member.NpcName, location.NameOrUniqueName, standTile))
+        {
+            this.ReleaseWorkTarget(location.NameOrUniqueName, targetTile);
+            this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
+            return false;
+        }
+
+        PendingCompanionTask task = new()
+        {
+            Kind = CompanionTaskKind.Mining,
+            NpcName = member.NpcName,
+            LocationName = location.NameOrUniqueName,
+            TargetTile = targetTile,
+            UsesWorkDirective = true,
+            RequiresPlayerTool = false,
+            WorkRadius = radius,
+            ReturnDistance = this.GetCompanionReturnDistance(member),
+            StartedTick = Game1.ticks,
+            LastProcessedTick = Game1.ticks,
+            StandTile = standTile
+        };
+
+        this.pendingTasks[member.NpcName] = task;
+        this.SetCompanionActivity(member, "companion.status.working");
+        this.SetCompanionTarget(member, CompanionTaskKind.Mining, targetTile);
+        this.ShowCompanionWorkSignal(npc, location, targetTile, "target");
+        this.Say(npc, "Mining", force: false);
+
+        if (!this.IsNpcAtTaskTile(npc, standTile))
+            this.RouteNpcToTaskTile(npc, location, standTile, task, force: true);
+
+        return true;
+    }
+}

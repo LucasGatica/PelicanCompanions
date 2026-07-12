@@ -5,45 +5,41 @@ using StardewValley.Menus;
 
 namespace PelicanCompanions;
 
+/// <summary>A small, grouped companion dock drawn in HUD coordinates.</summary>
 internal sealed class CompanionQuickHud : IClickableMenu
 {
-    private const int DetailedRowWidth = 248;
-    private const int CompactRowWidth = 168;
-    private const int DetailedRowHeight = 84;
-    private const int CompactRowHeight = 82;
-    private const int RowGap = 8;
-    private const int DetailedPortraitSize = 56;
-    private const int CompactPortraitSize = 58;
-    private const int DetailedActionButtonWidth = 38;
-    private const int CompactActionButtonWidth = 44;
-    private const int ActionButtonHeight = 32;
-    private const int ActionButtonGap = 5;
-    private const int OverflowButtonHeight = 28;
-    private const int EdgeInset = 9;
+    private const int DetailedDockWidth = 232;
+    private const int CompactDockWidth = 142;
+    private const int DetailedRowHeight = 58;
+    private const int CompactRowHeight = 46;
+    private const int DetailedPortraitSize = 40;
+    private const int CompactPortraitSize = 34;
+    private const int DetailedActionButtonSize = 29;
+    private const int CompactActionButtonSize = 24;
+    private const int DockPadding = 5;
+    private const int RowGap = 2;
+    private const int ActionButtonGap = 4;
+    private const int OverflowButtonHeight = 24;
+    private const int PortraitRetryTicks = 600;
 
-    private static readonly Color RowColor = new(255, 245, 218);
-    private static readonly Color RowHoverColor = new(255, 250, 232);
-    private static readonly Color RowBorder = Color.White;
-    private static readonly Color PortraitFill = new(248, 235, 205);
-    private static readonly Color PortraitBorder = new(116, 82, 54);
-    private static readonly Color WorkActive = new(102, 177, 104);
-    private static readonly Color WorkIdle = new(232, 214, 174);
-    private static readonly Color FollowColor = new(91, 151, 211);
-    private static readonly Color ButtonBorder = new(95, 71, 47);
-    private static readonly Color ButtonHoverBorder = new(255, 248, 205);
-    private static readonly Color IconDark = new(70, 47, 31);
-    private static readonly Color IconLight = new(255, 245, 210);
-    private static readonly Color MetalLight = new(225, 230, 221);
-    private static readonly Color MetalDark = new(107, 103, 92);
+    private static readonly Color DockFill = new(45, 35, 28, 225);
+    private static readonly Color DockBorder = new(245, 224, 185);
+    private static readonly Color RowFill = new(250, 237, 210);
+    private static readonly Color RowHoverFill = new(255, 247, 225);
+    private static readonly Color RowBorder = new(111, 79, 51);
+    private static readonly Color PortraitFill = new(255, 247, 227);
+    private static readonly Color WorkActive = new(78, 151, 88);
+    private static readonly Color WorkAutonomous = new(205, 142, 55);
+    private static readonly Color WorkIdle = new(218, 202, 170);
+    private static readonly Color RecallColor = new(76, 132, 188);
+    private static readonly Color ButtonBorder = new(83, 59, 40);
+    private static readonly Color ButtonHoverBorder = Color.White;
+    private static readonly Color TextColor = new(65, 43, 28);
+    private static readonly Color MutedTextColor = new(101, 75, 53);
     private static readonly Color WaitingIndicator = new(221, 163, 72);
     private static readonly Color WorkingIndicator = new(73, 150, 88);
     private static readonly Color FollowingIndicator = new(64, 132, 196);
     private static readonly Color WarningIndicator = new(193, 79, 64);
-    private static readonly Color TextColor = new(64, 42, 26);
-    private static readonly Color MutedTextColor = new(94, 72, 52);
-    private static readonly Color ButtonTextColor = new(70, 47, 31);
-    private static readonly Color BadgeFill = new(238, 224, 196);
-    private static readonly Color BadgeActiveFill = new(211, 235, 204);
 
     private readonly Func<IReadOnlyList<SquadMemberState>> getMembers;
     private readonly Func<string, NPC?> getNpc;
@@ -51,11 +47,13 @@ internal sealed class CompanionQuickHud : IClickableMenu
     private readonly Func<SquadMemberState, string> getStatusText;
     private readonly Func<SquadMemberState, bool> isWorkActive;
     private readonly Func<CompanionQuickHudMode> getMode;
+    private readonly Func<CompanionQuickHudSide> getSide;
     private readonly Func<int> getMaxVisibleRows;
     private readonly Func<int> getInventorySlotCount;
     private readonly Action<SquadMemberState> toggleWork;
     private readonly Action<SquadMemberState> follow;
     private readonly Action<SquadMemberState> openPanel;
+    private readonly Dictionary<string, PortraitCacheEntry> portraitCache = new(StringComparer.OrdinalIgnoreCase);
 
     public CompanionQuickHud(
         Func<IReadOnlyList<SquadMemberState>> getMembers,
@@ -64,6 +62,7 @@ internal sealed class CompanionQuickHud : IClickableMenu
         Func<SquadMemberState, string> getStatusText,
         Func<SquadMemberState, bool> isWorkActive,
         Func<CompanionQuickHudMode> getMode,
+        Func<CompanionQuickHudSide> getSide,
         Func<int> getMaxVisibleRows,
         Func<int> getInventorySlotCount,
         Action<SquadMemberState> toggleWork,
@@ -76,6 +75,7 @@ internal sealed class CompanionQuickHud : IClickableMenu
         this.getStatusText = getStatusText;
         this.isWorkActive = isWorkActive;
         this.getMode = getMode;
+        this.getSide = getSide;
         this.getMaxVisibleRows = getMaxVisibleRows;
         this.getInventorySlotCount = getInventorySlotCount;
         this.toggleWork = toggleWork;
@@ -85,45 +85,52 @@ internal sealed class CompanionQuickHud : IClickableMenu
 
     public void Draw(SpriteBatch b)
     {
-        List<SquadMemberState> allMembers = this.getMembers().ToList();
+        IReadOnlyList<SquadMemberState> allMembers = this.getMembers();
         if (allMembers.Count == 0)
             return;
 
         QuickHudLayout layout = this.GetLayout();
-        IReadOnlyList<SquadMemberState> members = this.GetVisibleMembers(allMembers, layout);
-        int hiddenCount = Math.Max(0, allMembers.Count - members.Count);
+        int visibleCount = this.GetVisibleRowCount(allMembers.Count, layout);
+        int hiddenCount = Math.Max(0, allMembers.Count - visibleCount);
         bool hasOverflow = hiddenCount > 0;
-        string hoverText = "";
+        Rectangle dock = this.GetDockBounds(visibleCount, hasOverflow, layout);
         Point mouse = new(Game1.getMouseX(), Game1.getMouseY());
+        string hoverText = "";
 
-        foreach (QuickHudRow row in this.BuildRows(members, hasOverflow, layout))
+        this.DrawPanel(b, dock, DockFill, DockBorder);
+        foreach (QuickHudRow row in this.BuildRows(allMembers, visibleCount, dock, layout))
         {
             SquadMemberState member = row.Member;
-            bool workActive = this.isWorkActive(member);
-            bool configuredAutonomyWorking = !workActive && member.CurrentActivityKey == "companion.status.working";
-            bool hoveringRow = row.Bounds.Contains(mouse);
+            bool directWork = this.isWorkActive(member);
+            bool autonomousWork = !directWork && member.CurrentActivityKey == "companion.status.working";
+            bool rowHovered = row.Bounds.Contains(mouse);
 
-            this.DrawPanel(b, row.Bounds, hoveringRow ? RowHoverColor : RowColor, RowBorder);
-            b.Draw(Game1.staminaRect, row.Indicator, this.GetIndicatorColor(member, workActive));
-
-            this.DrawPanel(b, row.Portrait, PortraitFill, PortraitBorder);
+            this.DrawFlatPanel(b, row.Bounds, rowHovered ? RowHoverFill : RowFill, RowBorder, 1);
+            b.Draw(Game1.staminaRect, row.Indicator, this.GetIndicatorColor(member, directWork));
+            this.DrawFlatPanel(b, row.Portrait, PortraitFill, RowBorder, 1);
             this.DrawPortrait(b, this.getNpc(member.NpcName), row.Portrait);
 
-            this.DrawIconButton(b, row.WorkButton, QuickHudAction.Work, workActive, row.WorkButton.Contains(mouse));
-            this.DrawIconButton(b, row.FollowButton, QuickHudAction.Follow, active: false, row.FollowButton.Contains(mouse));
+            this.DrawIconButton(
+                b,
+                row.WorkButton,
+                QuickHudAction.Work,
+                directWork ? WorkVisualState.Direct : autonomousWork ? WorkVisualState.Autonomous : WorkVisualState.Idle,
+                row.WorkButton.Contains(mouse));
+            this.DrawIconButton(b, row.FollowButton, QuickHudAction.Follow, WorkVisualState.Idle, row.FollowButton.Contains(mouse));
+
             if (layout.ShowText)
-                this.DrawMemberText(b, row, member, workActive);
+                this.DrawMemberText(b, row, member);
 
             if (row.WorkButton.Contains(mouse))
             {
-                hoverText = configuredAutonomyWorking
+                hoverText = autonomousWork
                     ? this.translate("companion.quick.configured_autonomy_hover", new
                     {
                         npc = member.DisplayName,
                         specialty = this.translate($"companion.specialty.{member.PreferredWorkSpecialty}", null)
                     })
                     : this.translate(
-                        workActive ? "companion.quick.work_stop_hover" : "companion.quick.work_hover",
+                        directWork ? "companion.quick.work_stop_hover" : "companion.quick.work_hover",
                         new
                         {
                             npc = member.DisplayName,
@@ -131,16 +138,24 @@ internal sealed class CompanionQuickHud : IClickableMenu
                         });
             }
             else if (row.FollowButton.Contains(mouse))
+            {
                 hoverText = this.translate("companion.quick.follow_hover", new { npc = member.DisplayName });
-            else if (row.Bounds.Contains(mouse))
-                hoverText = this.translate("companion.quick.panel_hover", new { npc = member.DisplayName, status = this.getStatusText(member) });
+            }
+            else if (rowHovered)
+            {
+                hoverText = this.translate("companion.quick.panel_hover", new
+                {
+                    npc = member.DisplayName,
+                    status = this.getStatusText(member)
+                });
+            }
         }
 
         if (hasOverflow)
         {
-            Rectangle overflowButton = this.GetOverflowButtonBounds(members.Count, layout);
-            this.DrawOverflowButton(b, overflowButton, hiddenCount, overflowButton.Contains(mouse));
-            if (overflowButton.Contains(mouse))
+            Rectangle overflow = this.GetOverflowButtonBounds(dock, layout, visibleCount);
+            this.DrawOverflowButton(b, overflow, hiddenCount, overflow.Contains(mouse));
+            if (overflow.Contains(mouse))
                 hoverText = this.translate("companion.quick.more_hover", new { count = hiddenCount });
         }
 
@@ -150,16 +165,17 @@ internal sealed class CompanionQuickHud : IClickableMenu
 
     public bool TryHandleClick(Vector2 screenPixels)
     {
-        List<SquadMemberState> allMembers = this.getMembers().ToList();
+        IReadOnlyList<SquadMemberState> allMembers = this.getMembers();
         if (allMembers.Count == 0)
             return false;
 
         QuickHudLayout layout = this.GetLayout();
-        IReadOnlyList<SquadMemberState> members = this.GetVisibleMembers(allMembers, layout);
-        int hiddenCount = Math.Max(0, allMembers.Count - members.Count);
-        bool hasOverflow = hiddenCount > 0;
-        Point point = new((int)screenPixels.X, (int)screenPixels.Y);
-        foreach (QuickHudRow row in this.BuildRows(members, hasOverflow, layout))
+        int visibleCount = this.GetVisibleRowCount(allMembers.Count, layout);
+        bool hasOverflow = visibleCount < allMembers.Count;
+        Rectangle dock = this.GetDockBounds(visibleCount, hasOverflow, layout);
+        Point point = screenPixels.ToPoint();
+
+        foreach (QuickHudRow row in this.BuildRows(allMembers, visibleCount, dock, layout))
         {
             if (row.WorkButton.Contains(point))
             {
@@ -175,9 +191,6 @@ internal sealed class CompanionQuickHud : IClickableMenu
                 return true;
             }
 
-            if (row.ActionArea.Contains(point))
-                return true;
-
             if (row.Bounds.Contains(point))
             {
                 this.openPanel(row.Member);
@@ -186,238 +199,184 @@ internal sealed class CompanionQuickHud : IClickableMenu
             }
         }
 
-        if (hasOverflow && this.GetOverflowButtonBounds(members.Count, layout).Contains(point))
+        if (hasOverflow && this.GetOverflowButtonBounds(dock, layout, visibleCount).Contains(point))
         {
-            this.openPanel(allMembers[members.Count]);
+            this.openPanel(allMembers[visibleCount]);
             Game1.playSound("smallSelect");
             return true;
         }
 
+        // Padding around the dock isn't interactive, so clicks never disappear into a dead zone.
         return false;
     }
 
-    private IReadOnlyList<SquadMemberState> GetVisibleMembers(IReadOnlyList<SquadMemberState> members, QuickHudLayout layout)
+    private QuickHudLayout GetLayout()
     {
-        int configuredRows = Math.Clamp(this.getMaxVisibleRows(), 1, 12);
-        int visibleRows = Math.Min(configuredRows, this.GetVisibleRowCapacity(members.Count, layout));
-        return members.Take(visibleRows).ToList();
+        bool detailed = this.getMode() == CompanionQuickHudMode.Detailed && Game1.uiViewport.Width >= 300;
+        int desiredWidth = detailed ? DetailedDockWidth : CompactDockWidth;
+        int width = Math.Min(desiredWidth, Math.Max(1, Game1.uiViewport.Width - 16));
+        bool showText = detailed && width >= 190;
+        return detailed
+            ? new QuickHudLayout(width, DetailedRowHeight, DetailedPortraitSize, DetailedActionButtonSize, showText)
+            : new QuickHudLayout(width, CompactRowHeight, CompactPortraitSize, CompactActionButtonSize, false);
     }
 
-    private int GetVisibleRowCapacity(int totalMemberCount, QuickHudLayout layout)
+    private int GetVisibleRowCount(int totalCount, QuickHudLayout layout)
     {
-        if (totalMemberCount <= 0)
-            return 0;
-
-        int availableHeight = Math.Max(layout.RowHeight, Game1.uiViewport.Height - 180);
-        int fullRows = Math.Max(1, availableHeight / (layout.RowHeight + RowGap));
-        if (totalMemberCount <= fullRows)
-            return totalMemberCount;
-
-        int overflowReservedHeight = OverflowButtonHeight + RowGap;
-        int rowsWithOverflow = Math.Max(1, (availableHeight - overflowReservedHeight) / (layout.RowHeight + RowGap));
-        return Math.Min(totalMemberCount, rowsWithOverflow);
-    }
-
-    private IEnumerable<QuickHudRow> BuildRows(IReadOnlyList<SquadMemberState> members, bool hasOverflow, QuickHudLayout layout)
-    {
-        int totalHeight = this.GetHudTotalHeight(members.Count, hasOverflow, layout);
-        int startY = this.GetHudStartY(totalHeight);
-        int rowWidth = this.GetRowWidth(layout);
-
-        for (int i = 0; i < members.Count; i++)
+        int configured = Math.Clamp(this.getMaxVisibleRows(), 1, 12);
+        int topSafe = Game1.uiViewport.Height >= 360 ? 68 : 8;
+        int bottomSafe = Game1.uiViewport.Height >= 360 ? 92 : 8;
+        int available = Math.Max(layout.RowHeight + DockPadding * 2, Game1.uiViewport.Height - topSafe - bottomSafe);
+        int capacityWithoutOverflow = Math.Max(1, (available - DockPadding * 2 + RowGap) / (layout.RowHeight + RowGap));
+        int visible = Math.Min(Math.Min(configured, totalCount), capacityWithoutOverflow);
+        if (visible < totalCount)
         {
-            int y = startY + i * (layout.RowHeight + RowGap);
-            Rectangle bounds = new(8, y, rowWidth, layout.RowHeight);
-            Rectangle portrait = new(bounds.X + EdgeInset, y + (layout.RowHeight - layout.PortraitSize) / 2, layout.PortraitSize, layout.PortraitSize);
-            int buttonX = bounds.Right - EdgeInset - layout.ActionButtonWidth;
-            int buttonY = y + (layout.RowHeight - ActionButtonHeight * 2 - ActionButtonGap) / 2;
-            Rectangle work = new(buttonX, buttonY, layout.ActionButtonWidth, ActionButtonHeight);
-            Rectangle follow = new(buttonX, work.Bottom + ActionButtonGap, layout.ActionButtonWidth, ActionButtonHeight);
-            Rectangle actionArea = new(
-                work.X - 5,
-                work.Y - 5,
-                layout.ActionButtonWidth + 10,
-                ActionButtonHeight * 2 + ActionButtonGap + 10);
-            Rectangle indicator = new(bounds.X + 3, y + 11, 4, layout.RowHeight - 22);
+            int reserved = OverflowButtonHeight + RowGap;
+            visible = Math.Max(1, (available - DockPadding * 2 - reserved + RowGap) / (layout.RowHeight + RowGap));
+            visible = Math.Min(visible, Math.Min(configured, totalCount));
+        }
 
-            yield return new QuickHudRow(members[i], bounds, portrait, work, follow, actionArea, indicator);
+        return visible;
+    }
+
+    private Rectangle GetDockBounds(int visibleCount, bool hasOverflow, QuickHudLayout layout)
+    {
+        int rowsHeight = visibleCount * layout.RowHeight + Math.Max(0, visibleCount - 1) * RowGap;
+        int height = DockPadding * 2 + rowsHeight + (hasOverflow ? RowGap + OverflowButtonHeight : 0);
+        int topSafe = Game1.uiViewport.Height >= 360 ? 68 : 8;
+        int bottomSafe = Game1.uiViewport.Height >= 360 ? 92 : 8;
+        int idealY = (Game1.uiViewport.Height - height) / 2;
+        int maxY = Math.Max(topSafe, Game1.uiViewport.Height - bottomSafe - height);
+        int y = Math.Clamp(idealY, topSafe, maxY);
+        int x = this.getSide() == CompanionQuickHudSide.Right
+            ? Math.Max(0, Game1.uiViewport.Width - layout.DockWidth - 8)
+            : Math.Max(0, Math.Min(8, Game1.uiViewport.Width - layout.DockWidth));
+        return new Rectangle(x, y, layout.DockWidth, height);
+    }
+
+    private IEnumerable<QuickHudRow> BuildRows(
+        IReadOnlyList<SquadMemberState> members,
+        int visibleCount,
+        Rectangle dock,
+        QuickHudLayout layout)
+    {
+        int rowWidth = Math.Max(1, dock.Width - DockPadding * 2);
+        for (int i = 0; i < visibleCount; i++)
+        {
+            int y = dock.Y + DockPadding + i * (layout.RowHeight + RowGap);
+            Rectangle bounds = new(dock.X + DockPadding, y, rowWidth, layout.RowHeight);
+            int portraitSize = Math.Min(layout.PortraitSize, Math.Max(1, bounds.Height - 8));
+            Rectangle portrait = new(bounds.X + 7, bounds.Y + (bounds.Height - portraitSize) / 2, portraitSize, portraitSize);
+
+            int actionsWidth = layout.ActionButtonSize * 2 + ActionButtonGap;
+            int actionX = bounds.Right - 6 - actionsWidth;
+            int actionY = bounds.Y + (bounds.Height - layout.ActionButtonSize) / 2;
+            Rectangle work = new(actionX, actionY, layout.ActionButtonSize, layout.ActionButtonSize);
+            Rectangle follow = new(work.Right + ActionButtonGap, actionY, layout.ActionButtonSize, layout.ActionButtonSize);
+            Rectangle indicator = new(bounds.X + 2, bounds.Y + 6, 3, Math.Max(1, bounds.Height - 12));
+            yield return new QuickHudRow(members[i], bounds, portrait, work, follow, indicator);
         }
     }
 
-    private int GetHudTotalHeight(int visibleRowCount, bool hasOverflow, QuickHudLayout layout)
+    private Rectangle GetOverflowButtonBounds(Rectangle dock, QuickHudLayout layout, int visibleCount)
     {
-        int rowsHeight = visibleRowCount * layout.RowHeight + Math.Max(0, visibleRowCount - 1) * RowGap;
-        return hasOverflow
-            ? rowsHeight + RowGap + OverflowButtonHeight
-            : rowsHeight;
+        int rowsHeight = visibleCount * layout.RowHeight + Math.Max(0, visibleCount - 1) * RowGap;
+        return new Rectangle(
+            dock.X + DockPadding,
+            dock.Y + DockPadding + rowsHeight + RowGap,
+            Math.Max(1, dock.Width - DockPadding * 2),
+            OverflowButtonHeight);
     }
 
-    private int GetHudStartY(int totalHeight)
+    private void DrawMemberText(SpriteBatch b, QuickHudRow row, SquadMemberState member)
     {
-        int minY = 96;
-        int maxY = Math.Max(minY, Game1.uiViewport.Height - totalHeight - 112);
-        return Math.Clamp((Game1.uiViewport.Height - totalHeight) / 2, minY, maxY);
+        int textX = row.Portrait.Right + 8;
+        int textRight = row.WorkButton.X - 7;
+        int width = Math.Max(1, textRight - textX);
+        string name = FitText(member.DisplayName, Game1.tinyFont, width);
+        string status = FitText(this.getStatusText(member), Game1.tinyFont, width);
+
+        Utility.drawTextWithShadow(b, name, Game1.tinyFont, new Vector2(textX, row.Bounds.Y + 7), TextColor);
+        Utility.drawTextWithShadow(b, status, Game1.tinyFont, new Vector2(textX, row.Bounds.Y + 25), MutedTextColor);
+
+        string level = FitText(this.translate("companion.quick.level_short", new { level = member.Level }), Game1.tinyFont, width);
+        Utility.drawTextWithShadow(b, level, Game1.tinyFont, new Vector2(textX, row.Bounds.Bottom - 17), TextColor);
+
+        if (member.Inventory.Count >= Math.Max(1, this.getInventorySlotCount()))
+        {
+            Rectangle full = new(textRight - 8, row.Bounds.Bottom - 14, 8, 8);
+            b.Draw(Game1.staminaRect, full, WarningIndicator);
+        }
     }
 
-    private int GetRowWidth(QuickHudLayout layout)
+    private Color GetIndicatorColor(SquadMemberState member, bool directWork)
     {
-        return Math.Max(128, Math.Min(layout.RowWidth, Game1.uiViewport.Width - 24));
-    }
-
-    private Rectangle GetOverflowButtonBounds(int visibleRowCount, QuickHudLayout layout)
-    {
-        int totalHeight = this.GetHudTotalHeight(visibleRowCount, hasOverflow: true, layout);
-        int startY = this.GetHudStartY(totalHeight);
-        int rowsHeight = visibleRowCount * layout.RowHeight + Math.Max(0, visibleRowCount - 1) * RowGap;
-        return new Rectangle(8, startY + rowsHeight + RowGap, this.GetRowWidth(layout), OverflowButtonHeight);
-    }
-
-    private Color GetIndicatorColor(SquadMemberState member, bool workActive)
-    {
-        if (member.CurrentActivityKey == "companion.status.stuck")
+        if (member.CurrentActivityKey == "companion.status.stuck"
+            || member.LastFailureReasonKey == "companion.task_failure.npc_missing")
             return WarningIndicator;
-
-        if (workActive || member.CurrentActivityKey == "companion.status.working")
+        if (directWork || member.CurrentActivityKey == "companion.status.working")
             return WorkingIndicator;
-
         return member.Mode == CompanionMode.Waiting || member.Mode == CompanionMode.ParkedForDisconnect
             ? WaitingIndicator
             : FollowingIndicator;
     }
 
-    private QuickHudLayout GetLayout()
+    private void DrawIconButton(
+        SpriteBatch b,
+        Rectangle bounds,
+        QuickHudAction action,
+        WorkVisualState workState,
+        bool hovered)
     {
-        bool detailed = this.getMode() == CompanionQuickHudMode.Detailed && Game1.uiViewport.Width >= 360;
-        return detailed
-            ? new QuickHudLayout(DetailedRowWidth, DetailedRowHeight, DetailedPortraitSize, DetailedActionButtonWidth, ShowText: true)
-            : new QuickHudLayout(CompactRowWidth, CompactRowHeight, CompactPortraitSize, CompactActionButtonWidth, ShowText: false);
-    }
-
-    private void DrawMemberText(SpriteBatch b, QuickHudRow row, SquadMemberState member, bool workActive)
-    {
-        int textX = row.Portrait.Right + 9;
-        int textRight = row.WorkButton.X - 9;
-        int textWidth = Math.Max(1, textRight - textX);
-
-        Utility.drawTextWithShadow(
-            b,
-            this.FitText(member.DisplayName, Game1.tinyFont, textWidth),
-            Game1.tinyFont,
-            new Vector2(textX, row.Bounds.Y + 12),
-            TextColor);
-
-        string status = this.FitText(this.getStatusText(member), Game1.tinyFont, textWidth);
-        Utility.drawTextWithShadow(
-            b,
-            status,
-            Game1.tinyFont,
-            new Vector2(textX, row.Bounds.Y + 31),
-            MutedTextColor);
-
-        int badgeY = row.Bounds.Bottom - 26;
-        string levelText = this.translate("companion.quick.level_short", new { level = member.Level });
-        int levelWidth = Math.Clamp((int)Game1.tinyFont.MeasureString(levelText).X + 14, 34, Math.Max(34, textWidth / 2));
-        this.DrawMiniBadge(
-            b,
-            new Rectangle(textX, badgeY, levelWidth, 20),
-            levelText,
-            BadgeFill,
-            ButtonBorder);
-
-        int dotsX = textX + levelWidth + 8;
-        this.DrawDirectiveDots(b, new Rectangle(dotsX, badgeY + 4, Math.Max(0, textRight - dotsX), 12), member, workActive);
-    }
-
-    private void DrawMiniBadge(SpriteBatch b, Rectangle bounds, string text, Color fill, Color border)
-    {
-        if (bounds.Width <= 0 || bounds.Height <= 0)
-            return;
-
-        this.DrawFlatPanel(b, bounds, fill, border, 1);
-        string label = this.FitText(text, Game1.tinyFont, bounds.Width - 8);
-        Vector2 size = Game1.tinyFont.MeasureString(label);
-        Utility.drawTextWithShadow(
-            b,
-            label,
-            Game1.tinyFont,
-            new Vector2(bounds.X + (bounds.Width - size.X) / 2f, bounds.Y + Math.Max(1, (bounds.Height - size.Y) / 2f)),
-            ButtonTextColor);
-    }
-
-    private void DrawDirectiveDots(SpriteBatch b, Rectangle bounds, SquadMemberState member, bool workActive)
-    {
-        const int dotSize = 10;
-        const int gap = 5;
-        int x = bounds.X;
-        this.DrawDirectiveDot(b, new Rectangle(x, bounds.Y, dotSize, dotSize), member.SearchWood || member.ClearArea || workActive, new Color(91, 141, 79));
-        x += dotSize + gap;
-        this.DrawDirectiveDot(b, new Rectangle(x, bounds.Y, dotSize, dotSize), member.SearchMining || member.ClearArea || workActive, new Color(123, 132, 145));
-        x += dotSize + gap;
-        bool inventoryFull = member.Inventory.Count >= Math.Max(1, this.getInventorySlotCount());
-        this.DrawDirectiveDot(b, new Rectangle(x, bounds.Y, dotSize, dotSize), inventoryFull, inventoryFull ? WarningIndicator : new Color(185, 153, 84));
-    }
-
-    private void DrawDirectiveDot(SpriteBatch b, Rectangle bounds, bool active, Color color)
-    {
-        b.Draw(Game1.staminaRect, bounds, active ? color : Color.Black * 0.18f);
-        b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 2, bounds.Y + 2, Math.Max(1, bounds.Width - 4), Math.Max(1, bounds.Height - 4)), active ? BadgeActiveFill * 0.35f : BadgeFill * 0.45f);
-    }
-
-    private void DrawIconButton(SpriteBatch b, Rectangle bounds, QuickHudAction action, bool active, bool hovered)
-    {
-        Color fill = action == QuickHudAction.Work
-            ? active ? WorkActive : WorkIdle
-            : FollowColor;
-        this.DrawFlatPanel(b, bounds, fill, hovered ? ButtonHoverBorder : ButtonBorder, 2);
-        b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 3, bounds.Y + 3, bounds.Width - 6, 1), Color.White * 0.45f);
-        b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 3, bounds.Bottom - 4, bounds.Width - 6, 1), Color.Black * 0.2f);
-
+        Color fill = action == QuickHudAction.Follow
+            ? RecallColor
+            : workState switch
+            {
+                WorkVisualState.Direct => WorkActive,
+                WorkVisualState.Autonomous => WorkAutonomous,
+                _ => WorkIdle
+            };
+        this.DrawFlatPanel(b, bounds, fill, hovered ? ButtonHoverBorder : ButtonBorder, hovered ? 2 : 1);
         if (action == QuickHudAction.Work)
-            this.DrawWorkIcon(b, bounds, active);
+            this.DrawWorkIcon(b, bounds, workState != WorkVisualState.Idle);
         else
-            this.DrawFollowIcon(b, bounds);
+            this.DrawRecallIcon(b, bounds);
     }
 
     private void DrawWorkIcon(SpriteBatch b, Rectangle bounds, bool active)
     {
-        Color handle = active ? IconLight : IconDark;
-        Color head = active ? Color.White : MetalLight;
-        Color headShadow = active ? new Color(68, 117, 74) : MetalDark;
-
-        int centerX = bounds.X + bounds.Width / 2;
-        int centerY = bounds.Y + bounds.Height / 2;
-        b.Draw(Game1.staminaRect, new Rectangle(centerX - 3, centerY - 2, 6, 13), handle);
-        b.Draw(Game1.staminaRect, new Rectangle(centerX - 10, centerY - 11, 20, 6), headShadow);
-        b.Draw(Game1.staminaRect, new Rectangle(centerX - 8, centerY - 13, 16, 6), head);
-        b.Draw(Game1.staminaRect, new Rectangle(centerX + 6, centerY - 8, 5, 8), headShadow);
+        Color handle = active ? Color.White : new Color(78, 54, 36);
+        Color head = active ? new Color(238, 244, 231) : new Color(129, 122, 105);
+        int cx = bounds.Center.X;
+        int cy = bounds.Center.Y;
+        b.Draw(Game1.staminaRect, new Rectangle(cx - 2, cy - 2, 4, Math.Max(7, bounds.Height / 3)), handle);
+        b.Draw(Game1.staminaRect, new Rectangle(cx - bounds.Width / 4, cy - bounds.Height / 4, Math.Max(8, bounds.Width / 2), 4), head);
+        b.Draw(Game1.staminaRect, new Rectangle(cx + bounds.Width / 5, cy - bounds.Height / 4, 3, Math.Max(5, bounds.Height / 4)), head);
     }
 
-    private void DrawFollowIcon(SpriteBatch b, Rectangle bounds)
+    private void DrawRecallIcon(SpriteBatch b, Rectangle bounds)
     {
-        int centerX = bounds.X + bounds.Width / 2;
-        int centerY = bounds.Y + bounds.Height / 2;
-        Color arrow = IconLight;
-        Color shadow = new(43, 82, 125);
-
-        b.Draw(Game1.staminaRect, new Rectangle(centerX - 10, centerY - 1, 17, 5), shadow);
-        b.Draw(Game1.staminaRect, new Rectangle(centerX - 9, centerY - 3, 16, 5), arrow);
-        b.Draw(Game1.staminaRect, new Rectangle(centerX + 4, centerY - 8, 4, 15), shadow);
-        b.Draw(Game1.staminaRect, new Rectangle(centerX + 8, centerY - 5, 4, 9), shadow);
-        b.Draw(Game1.staminaRect, new Rectangle(centerX + 3, centerY - 10, 4, 15), arrow);
-        b.Draw(Game1.staminaRect, new Rectangle(centerX + 7, centerY - 7, 4, 9), arrow);
+        Color light = new(255, 247, 218);
+        Color shadow = new(39, 75, 111);
+        int cx = bounds.Center.X;
+        int cy = bounds.Center.Y;
+        b.Draw(Game1.staminaRect, new Rectangle(cx - 7, cy - 2, 12, 4), shadow);
+        b.Draw(Game1.staminaRect, new Rectangle(cx - 6, cy - 4, 12, 4), light);
+        b.Draw(Game1.staminaRect, new Rectangle(cx + 3, cy - 7, 4, 11), light);
+        b.Draw(Game1.staminaRect, new Rectangle(cx + 6, cy - 4, 3, 6), light);
     }
 
     private void DrawOverflowButton(SpriteBatch b, Rectangle bounds, int hiddenCount, bool hovered)
     {
-        this.DrawFlatPanel(b, bounds, hovered ? RowHoverColor : RowColor, hovered ? ButtonHoverBorder : ButtonBorder, 2);
-        string label = this.FitText(this.translate("companion.quick.more", new { count = hiddenCount }), Game1.tinyFont, bounds.Width - 18);
-        Vector2 labelSize = Game1.tinyFont.MeasureString(label);
+        this.DrawFlatPanel(b, bounds, hovered ? RowHoverFill : RowFill, hovered ? ButtonHoverBorder : RowBorder, 1);
+        string text = FitText(this.translate("companion.quick.more", new { count = hiddenCount }), Game1.tinyFont, bounds.Width - 12);
+        Vector2 size = Game1.tinyFont.MeasureString(text);
         Utility.drawTextWithShadow(
             b,
-            label,
+            text,
             Game1.tinyFont,
-            new Vector2(bounds.X + (bounds.Width - labelSize.X) / 2f, bounds.Y + Math.Max(3, (bounds.Height - labelSize.Y) / 2f)),
-            IconDark);
+            new Vector2(bounds.X + (bounds.Width - size.X) / 2f, bounds.Y + Math.Max(2, (bounds.Height - size.Y) / 2f)),
+            TextColor);
     }
 
     private void DrawPanel(SpriteBatch b, Rectangle bounds, Color fill, Color border)
@@ -433,12 +392,14 @@ internal sealed class CompanionQuickHud : IClickableMenu
             border);
         b.Draw(
             Game1.staminaRect,
-            new Rectangle(bounds.X + 5, bounds.Y + 5, Math.Max(1, bounds.Width - 10), Math.Max(1, bounds.Height - 10)),
+            new Rectangle(bounds.X + 4, bounds.Y + 4, Math.Max(1, bounds.Width - 8), Math.Max(1, bounds.Height - 8)),
             fill);
     }
 
     private void DrawFlatPanel(SpriteBatch b, Rectangle bounds, Color fill, Color border, int borderSize)
     {
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+            return;
         b.Draw(Game1.staminaRect, bounds, border);
         b.Draw(
             Game1.staminaRect,
@@ -452,41 +413,78 @@ internal sealed class CompanionQuickHud : IClickableMenu
 
     private void DrawPortrait(SpriteBatch b, NPC? npc, Rectangle bounds)
     {
-        if (npc is not null)
+        Texture2D? portrait = this.GetPortrait(npc);
+        if (portrait is not null)
         {
-            try
-            {
-                Texture2D portrait = Game1.content.Load<Texture2D>($"Portraits/{npc.Name}");
-                b.Draw(portrait, new Rectangle(bounds.X + 5, bounds.Y + 5, bounds.Width - 10, bounds.Height - 10), new Rectangle(0, 0, 64, 64), Color.White);
-                return;
-            }
-            catch
-            {
-                // Custom actors and pets may not provide a portrait asset.
-            }
+            b.Draw(
+                portrait,
+                new Rectangle(bounds.X + 3, bounds.Y + 3, Math.Max(1, bounds.Width - 6), Math.Max(1, bounds.Height - 6)),
+                new Rectangle(0, 0, 64, 64),
+                Color.White);
+            return;
         }
 
-        if (npc?.Sprite?.Texture is not null)
-            b.Draw(npc.Sprite.Texture, new Rectangle(bounds.X + 13, bounds.Y + 6, 32, 48), npc.Sprite.SourceRect, Color.White);
+        if (npc?.Sprite?.Texture is null)
+            return;
+
+        int width = Math.Max(1, Math.Min(bounds.Width - 6, 24));
+        int height = Math.Max(1, Math.Min(bounds.Height - 4, 36));
+        Rectangle destination = new(bounds.Center.X - width / 2, bounds.Bottom - height - 2, width, height);
+        b.Draw(npc.Sprite.Texture, destination, npc.Sprite.SourceRect, Color.White);
     }
 
-    private string FitText(string text, SpriteFont font, int width)
+    private Texture2D? GetPortrait(NPC? npc)
     {
-        if (width <= 0)
-            return "";
+        if (npc is null)
+            return null;
 
+        if (this.portraitCache.TryGetValue(npc.Name, out PortraitCacheEntry cached))
+        {
+            if (cached.Texture is not null && !cached.Texture.IsDisposed)
+                return cached.Texture;
+            if (cached.Texture is null && Game1.ticks - cached.CheckedAtTick < PortraitRetryTicks)
+                return null;
+        }
+
+        try
+        {
+            Texture2D portrait = Game1.content.Load<Texture2D>($"Portraits/{npc.Name}");
+            this.portraitCache[npc.Name] = new PortraitCacheEntry(portrait, Game1.ticks);
+            return portrait;
+        }
+        catch
+        {
+            this.portraitCache[npc.Name] = new PortraitCacheEntry(null, Game1.ticks);
+            return null;
+        }
+    }
+
+    private static string FitText(string text, SpriteFont font, int width)
+    {
+        if (string.IsNullOrEmpty(text) || width <= 0)
+            return "";
         if (font.MeasureString(text).X <= width)
             return text;
 
-        const string suffix = "...";
+        const string suffix = "…";
         if (font.MeasureString(suffix).X > width)
             return "";
 
-        while (text.Length > 0 && font.MeasureString(text + suffix).X > width)
-            text = text[..^1];
+        int low = 0;
+        int high = text.Length;
+        while (low < high)
+        {
+            int mid = (low + high + 1) / 2;
+            if (font.MeasureString(text[..mid] + suffix).X <= width)
+                low = mid;
+            else
+                high = mid - 1;
+        }
 
-        return text + suffix;
+        return text[..low] + suffix;
     }
+
+    private readonly record struct PortraitCacheEntry(Texture2D? Texture, int CheckedAtTick);
 
     private readonly record struct QuickHudRow(
         SquadMemberState Member,
@@ -494,19 +492,25 @@ internal sealed class CompanionQuickHud : IClickableMenu
         Rectangle Portrait,
         Rectangle WorkButton,
         Rectangle FollowButton,
-        Rectangle ActionArea,
         Rectangle Indicator);
 
     private readonly record struct QuickHudLayout(
-        int RowWidth,
+        int DockWidth,
         int RowHeight,
         int PortraitSize,
-        int ActionButtonWidth,
+        int ActionButtonSize,
         bool ShowText);
 
     private enum QuickHudAction
     {
         Work,
         Follow
+    }
+
+    private enum WorkVisualState
+    {
+        Idle,
+        Direct,
+        Autonomous
     }
 }

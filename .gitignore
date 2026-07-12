@@ -1,6 +1,8 @@
 # Documentation and release notes are kept locally, not versioned in this runtime repository.
 docs/
 *.md
+!README.md
+!CHANGELOG.md
 
 # Build output and generated mod packages.
 bin/

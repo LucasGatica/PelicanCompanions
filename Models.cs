@@ -17,6 +17,10 @@ internal sealed class SquadMemberState
     public long OwnerId { get; set; }
     public CompanionMode Mode { get; set; } = CompanionMode.Following;
     public string? OriginalLocationName { get; set; }
+    public float OriginalTileX { get; set; }
+    public float OriginalTileY { get; set; }
+    public bool HasOriginalPosition { get; set; }
+    public int OriginalDayIndex { get; set; } = -1;
     public string? WaitingLocationName { get; set; }
     public float WaitingTileX { get; set; }
     public float WaitingTileY { get; set; }
@@ -31,6 +35,7 @@ internal sealed class SquadMemberState
     public bool SearchWood { get; set; }
     public bool SearchMining { get; set; }
     public bool ClearArea { get; set; }
+    public bool CurrentWorkIsDirect { get; set; }
     public CompanionWorkSpecialty PreferredWorkSpecialty { get; set; } = CompanionWorkSpecialty.ClearArea;
     public string CurrentActivityKey { get; set; } = "companion.status.following";
     public string LastTaskResultKey { get; set; } = "";
@@ -48,10 +53,43 @@ internal sealed class SquadMemberState
 internal sealed class SavedModState
 {
     public int Version { get; set; } = 1;
+    public long Revision { get; set; }
     public List<SquadMemberState> Members { get; set; } = new();
     public Dictionary<string, bool> TaskTogglesByPlayer { get; set; } = new();
     public List<SavedItemStack> SquadInventory { get; set; } = new();
     public List<SavedItemStack> LegacyOverflowItems { get; set; } = new();
+    public List<DeferredNpcRestoreState> PendingNpcRestores { get; set; } = new();
+    public CompanionHostRules? HostRules { get; set; }
+}
+
+internal sealed class DeferredNpcRestoreState
+{
+    public string NpcName { get; set; } = "";
+    public string? OriginalLocationName { get; set; }
+    public float OriginalTileX { get; set; }
+    public float OriginalTileY { get; set; }
+    public bool HasOriginalPosition { get; set; }
+    public int OriginalDayIndex { get; set; } = -1;
+}
+
+internal sealed class CompanionHostRules
+{
+    public bool UseSquadInventory { get; set; }
+    public bool EnableCompanionProgression { get; set; }
+    public int CompanionInventorySlots { get; set; }
+    public int CompanionWorkRadius { get; set; }
+    public int CompanionWorkReturnDistance { get; set; }
+    public int FriendshipRequirement { get; set; }
+    public int MaxSquadSize { get; set; }
+    public bool RecruitAllNpcs { get; set; }
+    public bool EnableGathering { get; set; }
+    public int ProtectBeehouseFlowers { get; set; }
+    public TaskMode HarvestingMode { get; set; }
+    public TaskMode ForagingMode { get; set; }
+    public TaskMode LumberingMode { get; set; }
+    public TaskMode MiningMode { get; set; }
+    public TaskMode WateringMode { get; set; }
+    public TaskMode PettingMode { get; set; }
 }
 
 internal sealed class SavedItemStack
@@ -59,6 +97,13 @@ internal sealed class SavedItemStack
     public string QualifiedItemId { get; set; } = "";
     public int Stack { get; set; } = 1;
     public int Quality { get; set; }
+    public Dictionary<string, string> ModData { get; set; } = new(StringComparer.Ordinal);
+    public string? PreservedParentItemId { get; set; }
+    public bool HasColor { get; set; }
+    public byte ColorR { get; set; }
+    public byte ColorG { get; set; }
+    public byte ColorB { get; set; }
+    public byte ColorA { get; set; } = byte.MaxValue;
 }
 
 internal sealed class RecentCompanionLoot
@@ -92,14 +137,24 @@ internal sealed class CompanionDialogueLine
 
 internal sealed class SquadActionMessage
 {
+    public string CommandId { get; set; } = "";
     public string Action { get; set; } = "";
     public string NpcName { get; set; } = "";
+    public string Argument { get; set; } = "";
+    public string LocationName { get; set; } = "";
+    public int TileX { get; set; }
+    public int TileY { get; set; }
+    public int Index { get; set; } = -1;
 }
 
 internal enum CompanionTaskKind
 {
     Lumbering,
-    Mining
+    Mining,
+    Watering,
+    Gathering,
+    Harvesting,
+    Petting
 }
 
 internal sealed class PendingCompanionTask
@@ -108,6 +163,7 @@ internal sealed class PendingCompanionTask
     public string NpcName { get; set; } = "";
     public string LocationName { get; set; } = "";
     public Vector2 TargetTile { get; set; }
+    public long TargetEntityId { get; set; }
     public bool Manual { get; set; }
     public bool UsesWorkDirective { get; set; }
     public bool UsesConfiguredAutonomy { get; set; }
@@ -117,6 +173,9 @@ internal sealed class PendingCompanionTask
     public int LastPathTick { get; set; }
     public int LastActionTick { get; set; }
     public int StartedTick { get; set; }
+    public int LastProcessedTick { get; set; }
+    public int ActiveTicks { get; set; }
+    public Vector2 StandTile { get; set; }
     public float LastDistanceToStandTile { get; set; } = -1f;
     public int NoProgressTicks { get; set; }
 }
@@ -152,6 +211,16 @@ internal static class CompanionProgression
 {
     public const int MaxLevel = 10;
 
+    // These skills shipped in older saves even though combat was never
+    // implemented. They are kept only as migration metadata so players get
+    // their spent points back instead of carrying permanently inert unlocks.
+    private static readonly IReadOnlyDictionary<string, int> LegacySkillRefunds =
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["SKILL-COMBAT-001"] = 1,
+            ["SKILL-COMBAT-002"] = 1
+        };
+
     public static readonly int[] LevelXpThresholds =
     {
         0,
@@ -168,8 +237,6 @@ internal static class CompanionProgression
 
     public static readonly CompanionSkillDefinition[] Skills =
     {
-        new("SKILL-COMBAT-001", "Combat", "skills.combat_1.name", "skills.combat_1.description", 1, null),
-        new("SKILL-COMBAT-002", "Combat", "skills.combat_2.name", "skills.combat_2.description", 1, "SKILL-COMBAT-001"),
         new("SKILL-LUMBER-001", "Lumbering", "skills.lumber_1.name", "skills.lumber_1.description", 1, null),
         new("SKILL-LUMBER-002", "Lumbering", "skills.lumber_2.name", "skills.lumber_2.description", 1, "SKILL-LUMBER-001"),
         new("SKILL-LUMBER-003", "Lumbering", "skills.lumber_3.name", "skills.lumber_3.description", 2, "SKILL-LUMBER-002"),
@@ -205,5 +272,16 @@ internal static class CompanionProgression
             return GetXpForLevel(MaxLevel);
 
         return GetXpForLevel(level + 1);
+    }
+
+    public static int GetLegacySkillPointRefund(IEnumerable<string>? unlockedSkillIds)
+    {
+        if (unlockedSkillIds is null)
+            return 0;
+
+        return unlockedSkillIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Sum(id => LegacySkillRefunds.TryGetValue(id, out int cost) ? cost : 0);
     }
 }
