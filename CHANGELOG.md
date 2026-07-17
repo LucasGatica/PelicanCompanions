@@ -2,6 +2,53 @@
 
 All notable Pelican Companions changes are documented here.
 
+## 1.1.2 — 2026-07-12
+
+### Companion control and movement
+
+- Centralized ownership of follow, recall, and task path controllers so vanilla
+  routes can no longer masquerade as a companion controller or overwrite an
+  active order.
+- Fully suspends temporary schedule routes, walking-square returns, route-end
+  animations, movement freezes, spouse return-home behavior, and pet roaming
+  while an NPC is recruited.
+- Blocks pet location-entry sleep, push trajectories, bowl/home warps, and
+  behavior movement while the companion controller owns the pet.
+- Companion path creation now preserves the spouse's daily marriage dialogue
+  instead of letting Stardew's default path constructor clear it.
+- Replaced Stardew's off-screen path teleport with a pausing companion
+  controller and restricted same-map emergency repositioning to explicit recall.
+- Separated structural reachability from temporary character occupancy, so a
+  farmer, animal, or NPC standing in a doorway doesn't make the map look
+  permanently disconnected.
+- Passable flooring, tilled soil, bridges, and NPC doors now match the game's
+  pathfinding rules instead of being treated as walls by the preflight scan.
+- Keeps healthy task routes instead of recreating them every 30 ticks, and plans
+  autonomous work before the single follower navigation pass.
+
+### Task and schedule reliability
+
+- Task timeouts now measure lack of progress; walking and successful tool hits
+  refresh the budget instead of valid long-distance work expiring mid-action.
+- Companions must reach the exact reserved stand tile before acting, preventing
+  tool use from one tile short and multiple Recall targets from overlapping.
+- Failed autonomous wood/mining targets receive a short retry backoff instead of
+  being selected in an immediate work/follow loop.
+- Waiting and disconnect parking now cancel every movement source and retain a
+  mode-consistent activity state.
+- Dismissal reloads today's vanilla schedule and restores the NPC to its current
+  scheduled stop, rather than clearing the schedule and checking an empty one.
+- A dismissal during scheduled travel keeps the live pre-reload position and
+  pauses the remaining route for that day instead of teleporting to an old stop.
+- Married home/bed endpoints are resolved from the internal Bus Stop waypoint
+  to the real farmhouse routine (kitchen before bedtime, bed afterward); pet
+  dismissal also respects its home, owner, behavior, and night routine.
+- Daily control is reacquired only after vanilla `OnDayStarted`/marriage duties;
+  spouse patio animation, bedtime state, and bed mutex ownership are restored
+  without letting the base routine overwrite a companion order.
+- Save schema 7 records the original schedule key so dismissal preserves the
+  exact daily/rain/island schedule without rerolling it.
+
 ## 1.1.1 — 2026-07-11
 
 ### Multiplayer integrity

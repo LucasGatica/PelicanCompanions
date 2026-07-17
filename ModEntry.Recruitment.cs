@@ -132,22 +132,41 @@ public sealed partial class ModEntry
             NpcName = npc.Name,
             DisplayName = npc.displayName,
             OwnerId = ownerId,
-            Mode = CompanionMode.Following,
-            OriginalLocationName = npc.currentLocation?.NameOrUniqueName,
-            OriginalTileX = npc.Tile.X,
-            OriginalTileY = npc.Tile.Y,
-            HasOriginalPosition = npc.currentLocation is not null,
-            OriginalDayIndex = Game1.Date.TotalDays
+            Mode = CompanionMode.Following
         };
+        CaptureOriginalNpcState(member, npc, captureSchedule: true);
         this.deferredNpcRestores.Remove(npc.Name);
         this.members[npc.Name] = member;
-        this.MarkStateDirty();
-        this.RemovePendingTask(npc.Name);
-        this.DisableNpcSchedule(npc, stopCurrentRoute: true);
+        try
+        {
+            this.RemovePendingTask(npc.Name);
+            this.DisableNpcSchedule(npc, stopCurrentRoute: true);
+            this.UpdateFollower(member, npc, owner, forceCatchUp: true);
+        }
+        catch (Exception ex)
+        {
+            this.members.Remove(npc.Name);
+            this.ClearFollowState(npc.Name);
+            this.ReleaseWorkTargetsForNpc(npc.Name);
+            try
+            {
+                this.RestoreNpcSchedule(npc, member);
+            }
+            catch (Exception restoreError)
+            {
+                this.deferredNpcRestores[npc.Name] = CreateDeferredNpcRestore(member);
+                this.MarkStateDirty();
+                this.Monitor.Log($"Rollback also failed for companion '{npc.Name}': {restoreError}", LogLevel.Error);
+            }
 
+            this.Monitor.Log($"Recruitment of '{npc.Name}' was rolled back after control acquisition failed: {ex}", LogLevel.Error);
+            this.Warn("recruitment.blocked_state", new { npc = npc.displayName });
+            return;
+        }
+
+        this.MarkStateDirty();
         this.Info("recruitment.joined", new { npc = npc.displayName });
         this.Say(npc, "Recruit", force: true);
-        this.UpdateFollower(member, npc, owner, forceCatchUp: true);
     }
 
     private void OpenManagementMenu(NPC npc, SquadMemberState member)
@@ -216,7 +235,16 @@ public sealed partial class ModEntry
         }
 
         foreach (string npcName in this.members.Values.Where(p => p.OwnerId == ownerId).Select(p => p.NpcName).ToList())
-            this.DismissMember(npcName, ownerOverride: ownerId);
+        {
+            try
+            {
+                this.DismissMember(npcName, ownerOverride: ownerId);
+            }
+            catch (Exception ex)
+            {
+                this.Monitor.Log($"Dismiss-all failed for '{npcName}' and continued with the remaining companions: {ex}", LogLevel.Error);
+            }
+        }
 
         this.MarkStateDirty();
         if (ownerId == Game1.player.UniqueMultiplayerID)
@@ -244,28 +272,39 @@ public sealed partial class ModEntry
         bool deferNpcRestore = silent && this.IsBlockedGameState(blockForMenu: false);
 
         NPC? npc = Game1.getCharacterFromName(npcName, mustBeVillager: false, includeEventActors: false);
+        if (npc is not null)
+        {
+            try
+            {
+                this.StopCompanionMovement(npc);
+            }
+            catch (Exception ex)
+            {
+                deferNpcRestore = true;
+                this.Monitor.Log($"Stopping '{npcName}' during dismissal failed; vanilla restoration was queued: {ex}", LogLevel.Error);
+            }
+        }
+
+        if (!deferNpcRestore && npc is not null)
+        {
+            try
+            {
+                this.Say(npc, "Dismiss", force: true);
+                this.RestoreNpcSchedule(npc, member);
+            }
+            catch (Exception ex)
+            {
+                deferNpcRestore = true;
+                this.Monitor.Log($"Schedule restoration for '{npcName}' failed and was deferred: {ex}", LogLevel.Error);
+            }
+        }
+
         if (deferNpcRestore)
         {
             // Commit the inventory/state removal now so a save or shutdown
-            // can't resurrect the companion. Only the event-sensitive vanilla
-            // schedule restoration is deferred and persisted.
-            this.deferredNpcRestores[npcName] = new DeferredNpcRestoreState
-            {
-                NpcName = member.NpcName,
-                OriginalLocationName = member.OriginalLocationName,
-                OriginalTileX = member.OriginalTileX,
-                OriginalTileY = member.OriginalTileY,
-                HasOriginalPosition = member.HasOriginalPosition,
-                OriginalDayIndex = member.OriginalDayIndex
-            };
-        }
-        else if (npc is not null)
-        {
-            npc.controller = null;
-            ResetCompanionMovementSpeed(npc);
-            npc.Halt();
-            this.Say(npc, "Dismiss", force: true);
-            this.RestoreNpcSchedule(npc, member);
+            // can't resurrect the companion. Only the vanilla restoration is
+            // deferred and persisted.
+            this.deferredNpcRestores[npcName] = CreateDeferredNpcRestore(member);
         }
 
         // Dismissal must never destroy carried items (including the silent
@@ -305,9 +344,7 @@ public sealed partial class ModEntry
         if (npc is not null)
         {
             this.StoreWaitingPosition(member, npc);
-            npc.controller = null;
-            ResetCompanionMovementSpeed(npc);
-            npc.Halt();
+            this.DisableNpcSchedule(npc, stopCurrentRoute: true);
         }
 
         member.Mode = CompanionMode.Waiting;
@@ -329,10 +366,20 @@ public sealed partial class ModEntry
             return;
         }
 
+        this.ClearFollowState(member.NpcName);
         member.Mode = CompanionMode.Following;
         member.WaitingLocationName = null;
         member.ParkedAtUtcTicks = 0;
-        this.SetCompanionActivity(member, "companion.status.following");
+        NPC? npc = this.GetNpcByName(member.NpcName);
+        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+        bool needsReturn = npc is not null
+            && owner is not null
+            && (npc.currentLocation != owner.currentLocation
+                || Vector2.Distance(NormalizeTile(npc.Tile), NormalizeTile(owner.Tile)) > MaxCompanionDistanceTiles);
+        if (npc is not null)
+            this.DisableNpcSchedule(npc, stopCurrentRoute: true);
+
+        this.SetCompanionActivity(member, needsReturn ? "companion.status.returning" : "companion.status.following");
         this.MarkStateDirty();
         if (ownerId == Game1.player.UniqueMultiplayerID)
             this.Info("management.resumed", new { npc = member.DisplayName });
@@ -343,5 +390,40 @@ public sealed partial class ModEntry
         member.WaitingLocationName = npc.currentLocation?.NameOrUniqueName;
         member.WaitingTileX = npc.Tile.X;
         member.WaitingTileY = npc.Tile.Y;
+    }
+
+    private static DeferredNpcRestoreState CreateDeferredNpcRestore(SquadMemberState member)
+    {
+        return new DeferredNpcRestoreState
+        {
+            NpcName = member.NpcName,
+            OriginalLocationName = member.OriginalLocationName,
+            OriginalTileX = member.OriginalTileX,
+            OriginalTileY = member.OriginalTileY,
+            HasOriginalPosition = member.HasOriginalPosition,
+            OriginalDayIndex = member.OriginalDayIndex,
+            OriginalScheduleCaptured = member.OriginalScheduleCaptured,
+            OriginalScheduleKey = member.OriginalScheduleKey,
+            OriginalPetBehavior = member.OriginalPetBehavior,
+            OriginalSpousePatioActivity = member.OriginalSpousePatioActivity
+        };
+    }
+
+    private static void CaptureOriginalNpcState(SquadMemberState member, NPC npc, bool captureSchedule)
+    {
+        member.OriginalLocationName = npc.currentLocation?.NameOrUniqueName;
+        member.OriginalTileX = npc.Tile.X;
+        member.OriginalTileY = npc.Tile.Y;
+        member.HasOriginalPosition = npc.currentLocation is not null;
+        member.OriginalDayIndex = Game1.Date.TotalDays;
+        // A custom NPC may inject a runtime Schedule dictionary without a
+        // reloadable ScheduleKey. Treat that as unknown (reload fallback), not
+        // as a positively captured "no schedule" state.
+        bool hasUnkeyedSchedule = npc.Schedule is { Count: > 0 }
+            && string.IsNullOrWhiteSpace(npc.ScheduleKey);
+        member.OriginalScheduleCaptured = captureSchedule && !hasUnkeyedSchedule;
+        member.OriginalScheduleKey = member.OriginalScheduleCaptured ? npc.ScheduleKey : null;
+        member.OriginalPetBehavior = npc is Pet pet ? pet.CurrentBehavior : null;
+        member.OriginalSpousePatioActivity = npc.shouldPlaySpousePatioAnimation.Value;
     }
 }

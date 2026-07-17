@@ -170,17 +170,20 @@ public sealed partial class ModEntry
         bool startedRecallPath = false;
         if (npc is not null && owner is not null)
         {
-            npc.controller = null;
+            this.StopCompanionMovement(npc);
             startedRecallPath = this.TryStartRecallPath(member, npc, owner);
             if (!startedRecallPath)
             {
-                this.UpdateFollower(member, npc, owner, forceCatchUp: true);
                 this.activeRecallTargets[member.NpcName] = NormalizeTile(npc.Tile);
-                this.SetCompanionActivity(member, "companion.status.returning");
+                this.UpdateFollower(member, npc, owner, forceCatchUp: false);
+                if (this.activeRecallTargets.ContainsKey(member.NpcName))
+                    this.SetCompanionActivity(member, "companion.status.returning");
             }
         }
 
-        shouldReturn = shouldReturn || startedRecallPath;
+        shouldReturn = shouldReturn
+            || startedRecallPath
+            || this.activeRecallTargets.ContainsKey(member.NpcName);
 
         if (showMessage && shouldReturn)
             this.Info("companion.quick.returning", new { npc = member.DisplayName });
@@ -209,15 +212,17 @@ public sealed partial class ModEntry
         ResetCompanionMovementSpeed(npc);
         try
         {
-            npc.controller = new StardewValley.Pathfinding.PathFindController(npc, location, new Point((int)targetTile.X, (int)targetTile.Y), -1);
+            if (!this.TryStartCompanionPath(npc, location, targetTile, CompanionMovementIntent.Recall))
+                return false;
         }
         catch (Exception ex)
         {
-            npc.controller = null;
+            this.StopCompanionMovement(npc);
             this.Monitor.Log($"Could not start recall path for '{member.NpcName}': {ex.Message}", LogLevel.Warn);
             return false;
         }
         this.activeRecallTargets[member.NpcName] = targetTile;
+        this.ReserveFollowDestination(location, targetTile, force: true);
         this.lastFollowTargets[member.NpcName] = targetTile;
         this.lastFollowTargetDistances[member.NpcName] = GetFollowDistance(npc, targetTile);
         this.lastFollowPathTicks[member.NpcName] = Game1.ticks;
@@ -237,9 +242,9 @@ public sealed partial class ModEntry
             .Where(candidate => Vector2.Distance(ownerTile, NormalizeTile(candidate)) <= RecallArrivalDistance)
             .Where(candidate => this.IsTileSafe(location, candidate))
             .Where(candidate => !this.IsFollowDestinationReserved(location, candidate))
-            .Where(candidate => reachableDistances.ContainsKey(candidate))
+            .Where(candidate => IsReachableOrUncertain(reachableDistances, candidate, MaxFollowReachabilitySearchTiles))
             .OrderBy(candidate => Vector2.Distance(candidate, ownerTile))
-            .ThenBy(candidate => reachableDistances[candidate]))
+            .ThenBy(candidate => reachableDistances.TryGetValue(candidate, out int pathDistance) ? pathDistance : int.MaxValue))
         {
             targetTile = candidate;
             return true;
@@ -790,7 +795,10 @@ public sealed partial class ModEntry
             && pending.UsesWorkDirective
             && !this.IsPendingTaskAllowedByDirectives(member, pending.Kind))
         {
-            this.RemovePendingTask(pending, "companion.task_failure.directive_disabled", returning: true);
+            this.RemovePendingTask(
+                pending,
+                "companion.task_failure.directive_disabled",
+                returning: !this.HasActiveWorkDirective(member));
         }
 
         this.InvalidateTargetPreviews();

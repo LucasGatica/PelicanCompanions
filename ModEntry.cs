@@ -1,5 +1,6 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using HarmonyLib;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewModdingAPI.Integrations.GenericModConfigMenu;
@@ -15,7 +16,7 @@ namespace PelicanCompanions;
 public sealed partial class ModEntry : Mod
 {
     private const string SaveKey = "pelican-companions-state";
-    private const int CurrentSaveVersion = 6;
+    private const int CurrentSaveVersion = 7;
     private const string NpcConfigAssetKey = "Lucas.PelicanCompanions/NpcConfig";
     private const string MessageActionRequest = "CompanionActionRequest";
     private const string MessageStateRequest = "CompanionStateRequest";
@@ -35,6 +36,8 @@ public sealed partial class ModEntry : Mod
     private const int MiningHitCooldownTicks = 45;
     private const int MiningTaskTimeoutTicks = 900;
     private const float StartPathingDistance = 1.15f;
+    // This is the stand-to-target adjacency radius. Reaching the stand itself
+    // is checked by tile equality so a companion can't work from two tiles away.
     private const float TaskArrivalDistance = 1.1f;
     private const float FollowTrailMaxOwnerDistance = 2.25f;
     private const int FollowRepathCooldownTicks = 20;
@@ -47,6 +50,7 @@ public sealed partial class ModEntry : Mod
     private const int RecentLootLimit = 5;
     private const int CompanionHudNoticeDurationTicks = 260;
     private const int DeferredActionMaxAgeTicks = 600;
+    private const int FailedWorkTargetBackoffTicks = 600;
     private const float RecallArrivalDistance = 1.5f;
     private const float FollowProgressTolerance = 0.05f;
     private const float FollowPositionProgressTolerance = 0.03f;
@@ -82,6 +86,9 @@ public sealed partial class ModEntry : Mod
     private readonly Dictionary<string, int> followNoProgressTicks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> followRecoveryUntilTick = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> lastMovementDebugNoticeTicks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CompanionMovementControllerState> companionMovementControllers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> workTargetRetryAfterTicks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<NPC, int> suppressedVanillaArrivals = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ReachabilityCacheKey, ReachabilityCacheEntry> reachabilityCache = new();
     private readonly Dictionary<TargetPreviewCacheKey, TargetPreviewCacheEntry> targetPreviewCache = new();
     private readonly Dictionary<long, OwnerMovementSnapshot> ownerMovementSnapshots = new();
@@ -101,8 +108,13 @@ public sealed partial class ModEntry : Mod
     private long stateRevision;
     private long lastAppliedStateRevision = -1;
     private bool stateSnapshotDirty = true;
+    private bool stateSnapshotFailureLogged;
+    private int nextStateSnapshotRetryTick;
     private bool saveWritesBlocked;
     private bool planningFollowDestinations;
+    private int companionReleaseGuardDepth;
+    private bool pendingDailyCompanionRefresh;
+    private Harmony? harmony;
 
     private readonly record struct FollowTrailPoint(string LocationName, Vector2 Tile, int Tick);
     private readonly record struct OwnerMovementSnapshot(string LocationName, Vector2 Position, int LastMoveTick, int LastObservedTick, bool IsStationary);
@@ -127,6 +139,11 @@ public sealed partial class ModEntry : Mod
         CompanionMode Mode);
     private readonly record struct TargetPreviewCacheEntry(int Tick, TargetPreview Preview);
     private readonly record struct DeferredActionRequest(long PlayerId, SquadActionMessage Message, int ReceivedTick);
+    private readonly record struct CompanionMovementControllerState(
+        CompanionPathFindController Controller,
+        CompanionMovementIntent Intent,
+        string LocationName,
+        Vector2 TargetTile);
 
     public override void Entry(IModHelper helper)
     {
@@ -148,6 +165,25 @@ public sealed partial class ModEntry : Mod
         helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
         helper.Events.Multiplayer.PeerConnected += this.OnPeerConnected;
         helper.Events.Multiplayer.PeerDisconnected += this.OnPeerDisconnected;
+
+        CompanionBehaviorPatches.IsControlled = npc => Context.IsOnHostComputer
+            && !this.pendingDailyCompanionRefresh
+            && this.members.ContainsKey(npc.Name);
+        CompanionBehaviorPatches.IsVanillaMovementExplicitlyAllowed = () => this.companionReleaseGuardDepth > 0;
+        CompanionBehaviorPatches.ShouldSuppressVanillaArrival = npc => this.suppressedVanillaArrivals.ContainsKey(npc);
+        CompanionBehaviorPatches.NeutralizeVanillaBedtimeController = this.NeutralizeVanillaBedtimeController;
+        this.harmony = new Harmony(this.ModManifest.UniqueID);
+        try
+        {
+            this.harmony.PatchAll(typeof(ModEntry).Assembly);
+        }
+        catch (Exception ex)
+        {
+            // Keep the core controller available if a future game update renames
+            // one of the optional spouse/pet hooks. Harmony may already have
+            // installed the compatible subset before reporting the bad target.
+            this.Monitor.Log($"Some companion behavior guards could not be installed. Movement control may be reduced until the mod is updated. {ex}", LogLevel.Error);
+        }
 
         this.companionQuickHuds = new PerScreen<CompanionQuickHud>(() => new CompanionQuickHud(
             getMembers: () => this.GetLocalMembers().ToList(),

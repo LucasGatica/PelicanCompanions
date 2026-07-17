@@ -61,7 +61,7 @@ public sealed partial class ModEntry
         GameLocation location = owner.currentLocation;
         if (npc.currentLocation != location)
         {
-            this.UpdateFollower(member, npc, owner, forceCatchUp: true);
+            this.SetCompanionActivity(member, "companion.status.returning");
             this.SetTaskFailure(member, "companion.task_failure.owner_too_far");
             return false;
         }
@@ -323,7 +323,18 @@ public sealed partial class ModEntry
     private bool IsTargetReserved(GameLocation location, Vector2 tile)
     {
         string locationName = location.NameOrUniqueName;
-        return this.workTargetReservations.ContainsKey(this.GetWorkTargetKey(locationName, tile));
+        string key = this.GetWorkTargetKey(locationName, tile);
+        if (this.workTargetReservations.ContainsKey(key))
+            return true;
+
+        if (!this.workTargetRetryAfterTicks.TryGetValue(key, out int retryAfterTick))
+            return false;
+
+        if (Game1.ticks < retryAfterTick)
+            return true;
+
+        this.workTargetRetryAfterTicks.Remove(key);
+        return false;
     }
 
     private bool IsValidWoodTarget(GameLocation location, Vector2 tile)
@@ -348,6 +359,13 @@ public sealed partial class ModEntry
 
     private bool TryQueueDirectiveLumberTask(GameLocation location, Vector2 targetTile, SquadMemberState member, NPC npc, int radius)
     {
+        if (this.pendingTasks.ContainsKey(member.NpcName)
+            || this.activeRecallTargets.ContainsKey(member.NpcName)
+            || member.Mode != CompanionMode.Following)
+        {
+            return false;
+        }
+
         if (this.config.LumberingMode == TaskMode.Disabled)
             return false;
 
@@ -373,7 +391,7 @@ public sealed partial class ModEntry
 
         if (!this.TryReserveStandTile(member.NpcName, location.NameOrUniqueName, standTile))
         {
-            this.ReleaseWorkTarget(location.NameOrUniqueName, targetTile);
+            this.ReleaseWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile);
             this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
             return false;
         }
@@ -407,6 +425,13 @@ public sealed partial class ModEntry
 
     private bool TryQueueDirectiveMiningTask(GameLocation location, Vector2 targetTile, SquadMemberState member, NPC npc, int radius)
     {
+        if (this.pendingTasks.ContainsKey(member.NpcName)
+            || this.activeRecallTargets.ContainsKey(member.NpcName)
+            || member.Mode != CompanionMode.Following)
+        {
+            return false;
+        }
+
         if (this.config.MiningMode == TaskMode.Disabled)
             return false;
 
@@ -430,7 +455,7 @@ public sealed partial class ModEntry
 
         if (!this.TryReserveStandTile(member.NpcName, location.NameOrUniqueName, standTile))
         {
-            this.ReleaseWorkTarget(location.NameOrUniqueName, targetTile);
+            this.ReleaseWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile);
             this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
             return false;
         }

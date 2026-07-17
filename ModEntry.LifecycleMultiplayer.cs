@@ -116,14 +116,11 @@ public sealed partial class ModEntry
 
         try
         {
-            // Treat normalization and world restoration as part of the load
-            // transaction too. A custom item, NPC, or map can throw here; in
-            // that case never persist the partially transformed state.
+            // Finish all in-memory normalization before touching live NPCs. If
+            // this phase fails, rollback is complete and save writes can safely
+            // remain disabled without leaving a character under partial control.
             this.ValidateLoadedMembers();
             this.ReloadOverflowInventoryIntoSquad();
-            this.RestorePersistedMemberPositions();
-            this.MaintainCompanionScheduleLocks(stopCurrentRoutes: true);
-            this.ProcessDeferredNpcRestores();
         }
         catch (Exception ex)
         {
@@ -134,6 +131,38 @@ public sealed partial class ModEntry
             return;
         }
 
+        // World restoration is deliberately isolated from the data transaction.
+        // Keeping the loaded members active lets the periodic controller repair
+        // any custom NPC/map which throws here, instead of abandoning it with a
+        // cleared schedule after ResetRuntimeState.
+        this.CaptureDailyOriginalNpcStates();
+        try
+        {
+            this.RestorePersistedMemberPositions();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Some persisted companion positions could not be restored and will be retried during normal updates. {ex}", LogLevel.Error);
+        }
+
+        try
+        {
+            this.MaintainCompanionScheduleLocks(stopCurrentRoutes: true);
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Some companion schedule locks could not be restored and will be retried during normal updates. {ex}", LogLevel.Error);
+        }
+
+        try
+        {
+            this.ProcessDeferredNpcRestores();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Some dismissed NPCs could not be restored and remain queued for retry. {ex}", LogLevel.Error);
+        }
+
         this.MarkStateDirty();
     }
 
@@ -142,7 +171,16 @@ public sealed partial class ModEntry
         if (!Context.IsMainPlayer || this.saveWritesBlocked)
             return;
 
-        this.Helper.Data.WriteSaveData(SaveKey, this.BuildSaveData());
+        try
+        {
+            this.Helper.Data.WriteSaveData(SaveKey, this.BuildSaveData());
+        }
+        catch (Exception ex)
+        {
+            // Don't let one custom item/NPC abort the game's own save. The
+            // previous mod data remains intact and the next save can retry.
+            this.Monitor.Log($"Pelican Companions couldn't write its save data; the previous state was preserved. {ex}", LogLevel.Error);
+        }
     }
 
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
@@ -167,9 +205,68 @@ public sealed partial class ModEntry
         foreach (SquadMemberState member in this.members.Values)
             this.ClearFollowState(member.NpcName);
 
-        this.RestorePersistedMemberPositions();
-        this.MaintainCompanionScheduleLocks(stopCurrentRoutes: true);
+        // SMAPI can raise DayStarted while the save/shipping menu is still
+        // closing, before Game1.OnDayStarted runs NPC marriage duties and other
+        // special setup. Capturing or clearing schedules now would record the
+        // pre-setup state and let vanilla retake control afterward.
+        if (Game1.showingEndOfNightStuff)
+        {
+            this.pendingDailyCompanionRefresh = true;
+            return;
+        }
+
+        this.FinishDailyCompanionRefresh();
+    }
+
+    private void FinishDailyCompanionRefresh()
+    {
+        this.pendingDailyCompanionRefresh = false;
+        this.CaptureDailyOriginalNpcStates();
+
+        try
+        {
+            this.RestorePersistedMemberPositions();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Some persisted companion positions could not be restored after the new day and will be retried: {ex}", LogLevel.Error);
+        }
+
+        try
+        {
+            this.MaintainCompanionScheduleLocks(stopCurrentRoutes: true);
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Some companion schedule locks could not be restored after the new day and will be retried: {ex}", LogLevel.Error);
+        }
+
         this.MarkStateDirty();
+    }
+
+    private void CaptureDailyOriginalNpcStates()
+    {
+        int today = Game1.Date.TotalDays;
+        foreach (SquadMemberState member in this.members.Values)
+        {
+            if (member.OriginalDayIndex == today)
+                continue;
+
+            try
+            {
+                NPC? npc = this.GetNpcByName(member.NpcName);
+                if (npc is null)
+                    continue;
+
+                bool hasLoadedSchedule = npc.Schedule is { Count: > 0 }
+                    || !string.IsNullOrWhiteSpace(npc.ScheduleKey);
+                CaptureOriginalNpcState(member, npc, captureSchedule: hasLoadedSchedule);
+            }
+            catch (Exception ex)
+            {
+                this.Monitor.Log($"Could not capture the new-day vanilla state for '{member.NpcName}': {ex.Message}", LogLevel.Warn);
+            }
+        }
     }
 
     private void OnReturnedToTitle(object? sender, ReturnedToTitleEventArgs e)
@@ -203,6 +300,9 @@ public sealed partial class ModEntry
         this.followRecoveryUntilTick.Clear();
         this.disconnectedFollowRecovery.Clear();
         this.lastMovementDebugNoticeTicks.Clear();
+        this.companionMovementControllers.Clear();
+        this.workTargetRetryAfterTicks.Clear();
+        this.suppressedVanillaArrivals.Clear();
         this.reachabilityCache.Clear();
         this.targetPreviewCache.Clear();
         this.ownerMovementSnapshots.Clear();
@@ -219,8 +319,12 @@ public sealed partial class ModEntry
         this.stateRevision = 0;
         this.lastAppliedStateRevision = -1;
         this.stateSnapshotDirty = true;
+        this.stateSnapshotFailureLogged = false;
+        this.nextStateSnapshotRetryTick = 0;
         this.saveWritesBlocked = false;
         this.planningFollowDestinations = false;
+        this.companionReleaseGuardDepth = 0;
+        this.pendingDailyCompanionRefresh = false;
         this.replicatedHostRules = null;
 
         if (clearProfiles)
@@ -315,6 +419,14 @@ public sealed partial class ModEntry
             return;
         }
 
+        if (this.pendingDailyCompanionRefresh)
+        {
+            if (Game1.showingEndOfNightStuff)
+                return;
+
+            this.FinishDailyCompanionRefresh();
+        }
+
         if (e.IsMultipleOf(5))
         {
             this.ProcessDeferredActionRequests();
@@ -322,12 +434,11 @@ public sealed partial class ModEntry
             this.ProcessPendingTasks();
         }
 
-        if (e.IsMultipleOf(FollowUpdateIntervalTicks))
-            this.UpdateFollowers();
-
         if (e.IsMultipleOf(30) && Game1.activeClickableMenu is CompanionPanelMenu)
             this.RefreshCompanionPanelPreviews();
 
+        // Plan work before the single navigation pass. This prevents a task
+        // completion from installing follow -> task controllers in the same tick.
         if (Game1.ticks >= this.nextTaskScanTick)
         {
             this.nextTaskScanTick = Game1.ticks + 60;
@@ -335,9 +446,16 @@ public sealed partial class ModEntry
             this.UpdateDisconnectTimeouts();
         }
 
+        if (e.IsMultipleOf(FollowUpdateIntervalTicks))
+            this.UpdateFollowers();
+
+        if (e.IsMultipleOf(300) && !this.IsBlockedGameState(blockForMenu: false))
+            this.RestorePersistedMemberPositions(logFailures: false);
+
         if (e.IsMultipleOf(60))
         {
-            this.MaintainCompanionScheduleLocks(stopCurrentRoutes: false);
+            if (!this.IsBlockedGameState(blockForMenu: false))
+                this.MaintainCompanionScheduleLocks(stopCurrentRoutes: false);
             this.UpdateAmbientDialogue();
         }
 
@@ -355,7 +473,8 @@ public sealed partial class ModEntry
         if (!Context.IsWorldReady || !Context.IsMainPlayer || this.saveWritesBlocked)
             return;
 
-        this.MaintainCompanionScheduleLocks(stopCurrentRoutes: false);
+        if (!this.IsBlockedGameState(blockForMenu: false))
+            this.MaintainCompanionScheduleLocks(stopCurrentRoutes: false);
 
         if (this.config.FriendshipPointsPerHour <= 0 || e.NewTime % 100 != 0)
             return;
@@ -394,28 +513,34 @@ public sealed partial class ModEntry
 
         foreach (SquadMemberState member in this.members.Values.Where(p => p.OwnerId == e.Peer.PlayerID).ToList())
         {
-            // Waiting is an explicit persistent order. A disconnect must not
-            // dismiss it or silently turn it into Following on reconnect.
-            if (member.Mode == CompanionMode.Waiting)
-                continue;
-
-            if (this.config.WarpHomeOnDisconnect)
+            try
             {
-                this.DismissMember(member.NpcName, silent: true, ownerOverride: member.OwnerId);
-                continue;
-            }
+                // Waiting is an explicit persistent order. A disconnect must not
+                // dismiss it or silently turn it into Following on reconnect.
+                if (member.Mode == CompanionMode.Waiting)
+                    continue;
 
-            NPC? npc = Game1.getCharacterFromName(member.NpcName, mustBeVillager: false, includeEventActors: false);
-            if (npc is not null)
+                if (this.config.WarpHomeOnDisconnect)
+                {
+                    this.DismissMember(member.NpcName, silent: true, ownerOverride: member.OwnerId);
+                    continue;
+                }
+
+                NPC? npc = Game1.getCharacterFromName(member.NpcName, mustBeVillager: false, includeEventActors: false);
+                if (npc is not null)
+                    this.StoreWaitingPosition(member, npc);
+
+                member.Mode = CompanionMode.ParkedForDisconnect;
+                member.ParkedAtUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
+                this.SetCompanionActivity(member, "companion.status.parked");
+                if (npc is not null)
+                    this.StopCompanionMovement(npc);
+            }
+            catch (Exception ex)
             {
-                this.StoreWaitingPosition(member, npc);
-                npc.controller = null;
-                ResetCompanionMovementSpeed(npc);
-                npc.Halt();
+                this.SetTaskFailure(member, "companion.task_failure.unexpected_error");
+                this.Monitor.Log($"Disconnect handling failed for '{member.NpcName}' and was isolated: {ex}", LogLevel.Error);
             }
-
-            member.Mode = CompanionMode.ParkedForDisconnect;
-            member.ParkedAtUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
         }
 
         this.MarkStateDirty();
@@ -476,6 +601,12 @@ public sealed partial class ModEntry
             this.Monitor.Log($"Ignored an invalid companion command from player {e.FromPlayerID}: {ex.Message}", LogLevel.Warn);
             return;
         }
+        if (message is null)
+        {
+            this.Monitor.Log($"Ignored a null companion command from player {e.FromPlayerID}.", LogLevel.Warn);
+            return;
+        }
+
         if (!this.TryRegisterCommand(e.FromPlayerID, message.CommandId))
         {
             this.SendStateSnapshot(e.FromPlayerID, force: true);

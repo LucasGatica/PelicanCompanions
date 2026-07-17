@@ -74,16 +74,38 @@ public sealed partial class ModEntry
                 if (member.LastFailureReasonKey == "companion.task_failure.npc_missing")
                     this.SetTaskFailure(member, "");
 
+                if (HasIndependentNpcMovementSystem(npc))
+                {
+                    try
+                    {
+                        this.DismissMember(member.NpcName, silent: true, ownerOverride: member.OwnerId);
+                        this.Monitor.Log($"Companion '{member.NpcName}' was dismissed because its NPC type has an independent movement system.", LogLevel.Warn);
+                    }
+                    catch (Exception ex)
+                    {
+                        this.SetTaskFailure(member, "companion.task_failure.unexpected_error");
+                        this.Monitor.Log($"Could not safely dismiss unsupported companion '{member.NpcName}': {ex}", LogLevel.Error);
+                    }
+                    continue;
+                }
+
                 if (owner is null)
                 {
-                    this.RemovePendingTask(member.NpcName);
-                    this.StoreWaitingPosition(member, npc);
-                    member.Mode = CompanionMode.ParkedForDisconnect;
-                    member.ParkedAtUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
-                    npc.controller = null;
-                    ResetCompanionMovementSpeed(npc);
-                    npc.Halt();
-                    this.MarkStateDirty();
+                    try
+                    {
+                        this.RemovePendingTask(member.NpcName);
+                        this.StoreWaitingPosition(member, npc);
+                        member.Mode = CompanionMode.ParkedForDisconnect;
+                        member.ParkedAtUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
+                        this.SetCompanionActivity(member, "companion.status.parked");
+                        this.StopCompanionMovement(npc);
+                        this.MarkStateDirty();
+                    }
+                    catch (Exception ex)
+                    {
+                        this.SetTaskFailure(member, "companion.task_failure.unexpected_error");
+                        this.Monitor.Log($"Parking disconnected companion '{member.NpcName}' failed and was isolated: {ex}", LogLevel.Error);
+                    }
                     continue;
                 }
 
@@ -93,7 +115,14 @@ public sealed partial class ModEntry
                 }
                 catch (Exception ex)
                 {
-                    npc.controller = null;
+                    try
+                    {
+                        this.StopCompanionMovement(npc);
+                    }
+                    catch (Exception stopError)
+                    {
+                        this.Monitor.Log($"Follower '{member.NpcName}' also failed while stopping its controller: {stopError.Message}", LogLevel.Warn);
+                    }
                     this.SetCompanionActivity(member, "companion.status.stuck");
                     this.SetTaskFailure(member, "companion.task_failure.unexpected_error");
                     this.Monitor.Log($"Follower update failed for '{member.NpcName}' and was isolated: {ex}", LogLevel.Error);
@@ -108,6 +137,7 @@ public sealed partial class ModEntry
 
     private void UpdateFollower(SquadMemberState member, NPC npc, Farmer owner, bool forceCatchUp)
     {
+        this.DisableNpcSchedule(npc, stopCurrentRoute: false);
         this.RecordOwnerTrailPoint(owner);
 
         GameLocation ownerLocation = owner.currentLocation;
@@ -152,21 +182,27 @@ public sealed partial class ModEntry
         if (!sameLocation)
         {
             bool recallAcrossLocations = this.activeRecallTargets.ContainsKey(member.NpcName);
-            if (recallAcrossLocations
-                && this.TryFindConservativeRecoveryTile(
-                    ownerLocation,
-                    owner,
-                    this.GetOwnerSlot(member),
-                    RecallArrivalDistance,
-                    out Vector2 recallTile))
+            float placementRadius = recallAcrossLocations
+                ? RecallArrivalDistance
+                : MaxCompanionDistanceTiles;
+            if (!this.TryFindConservativeRecoveryTile(
+                ownerLocation,
+                owner,
+                this.GetOwnerSlot(member),
+                placementRadius,
+                out Vector2 transferTile))
             {
-                desiredTile = recallTile;
+                this.StopCompanionMovement(npc);
+                this.SetCompanionActivity(member, "companion.status.stuck");
+                this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
+                return;
             }
+            desiredTile = transferTile;
 
             this.disconnectedFollowRecovery.Remove(member.NpcName);
             if (!recallAcrossLocations)
                 this.activeRecallTargets.Remove(member.NpcName);
-            this.ReserveFollowDestination(ownerLocation, desiredTile);
+            this.ReserveFollowDestination(ownerLocation, desiredTile, force: recallAcrossLocations);
             if (!this.PlaceNpc(npc, ownerLocation, desiredTile))
             {
                 this.SetCompanionActivity(member, "companion.status.stuck");
@@ -177,6 +213,8 @@ public sealed partial class ModEntry
             this.lastFollowTargetDistances[member.NpcName] = 0f;
             this.lastFollowPathTicks.Remove(member.NpcName);
             this.lastFollowProgressPositions.Remove(member.NpcName);
+            if (member.LastFailureReasonKey is "companion.task_failure.no_safe_tile" or "companion.task_failure.path_recovery")
+                this.SetTaskFailure(member, "");
             bool recallCompleted = recallAcrossLocations
                 && Vector2.Distance(NormalizeTile(npc.Tile), ownerTile) <= RecallArrivalDistance;
             if (recallCompleted)
@@ -218,15 +256,23 @@ public sealed partial class ModEntry
         }
 
         float recoveryArrivalRadius = recallActive ? RecallArrivalDistance : MaxCompanionDistanceTiles;
-        if (this.TryRecoverDisconnectedFollower(member, npc, owner, ownerLocation, ownerTile, npcTile, ownerDistance, recoveryArrivalRadius))
+        if (this.TryRecoverDisconnectedFollower(
+            member,
+            npc,
+            owner,
+            ownerLocation,
+            ownerTile,
+            npcTile,
+            ownerDistance,
+            recoveryArrivalRadius,
+            allowReposition: recallActive))
             return;
 
         if (!recallActive && ownerStationary && ownerDistance <= MaxCompanionDistanceTiles && distance <= StartPathingDistance)
         {
             this.ReserveFollowDestination(ownerLocation, npcTile);
             this.disconnectedFollowRecovery.Remove(member.NpcName);
-            npc.controller = null;
-            npc.Halt();
+            this.StopCompanionMovement(npc);
             this.activeRecallTargets.Remove(member.NpcName);
             this.followNoProgressTicks.Remove(member.NpcName);
             this.followRecoveryUntilTick.Remove(member.NpcName);
@@ -258,7 +304,7 @@ public sealed partial class ModEntry
         {
             this.followNoProgressTicks[member.NpcName] = 0;
             this.lastFollowPathTicks.Remove(member.NpcName);
-            npc.controller = null;
+            this.StopCompanionMovement(npc);
             if (!recallActive)
             {
                 this.followRecoveryUntilTick[member.NpcName] = Game1.ticks + FollowRecoveryDurationTicks;
@@ -278,7 +324,7 @@ public sealed partial class ModEntry
         }
 
         distance = GetFollowDistance(npc, desiredTile);
-        this.ReserveFollowDestination(ownerLocation, desiredTile);
+        this.ReserveFollowDestination(ownerLocation, desiredTile, force: recallActive);
         targetChanged = !this.lastFollowTargets.TryGetValue(member.NpcName, out lastTarget) || lastTarget != desiredTile;
 
         desiredTileIsCurrentTile = desiredTile == npcTile;
@@ -286,8 +332,13 @@ public sealed partial class ModEntry
         int repathCooldown = isRecovery ? FollowRecoveryRepathCooldownTicks : FollowRepathCooldownTicks;
         bool pathCooldownElapsed = !this.lastFollowPathTicks.TryGetValue(member.NpcName, out int lastPathTick)
             || Game1.ticks - lastPathTick >= repathCooldown;
+        CompanionMovementIntent movementIntent = recallActive
+            ? CompanionMovementIntent.Recall
+            : CompanionMovementIntent.Follow;
+        bool hasExpectedController = this.HasCompanionController(npc, movementIntent, ownerLocation, desiredTile);
         bool needsRepath = shouldMove
-            && (npc.controller is null || ((targetChanged || isRecovery) && pathCooldownElapsed));
+            && ((!hasExpectedController && pathCooldownElapsed)
+                || (hasExpectedController && targetChanged && pathCooldownElapsed));
         this.lastFollowTargetDistances[member.NpcName] = distance;
 
         if (needsRepath)
@@ -295,9 +346,10 @@ public sealed partial class ModEntry
             if (isRecovery && distance <= StartPathingDistance && !targetChanged)
                 this.followRecoveryUntilTick.Remove(member.NpcName);
 
-            if (!this.GetReachableTileDistances(ownerLocation, npcTile, MaxFollowReachabilitySearchTiles).ContainsKey(desiredTile))
+            Dictionary<Vector2, int> reachableDistances = this.GetReachableTileDistances(ownerLocation, npcTile, MaxFollowReachabilitySearchTiles);
+            if (!IsReachableOrUncertain(reachableDistances, desiredTile, MaxFollowReachabilitySearchTiles))
             {
-                npc.controller = null;
+                this.StopCompanionMovement(npc);
                 if (!recallActive)
                     this.activeRecallTargets.Remove(member.NpcName);
                 this.lastFollowPathTicks[member.NpcName] = Game1.ticks;
@@ -307,17 +359,22 @@ public sealed partial class ModEntry
                 return;
             }
 
-            npc.controller = new StardewValley.Pathfinding.PathFindController(npc, ownerLocation, new Point((int)desiredTile.X, (int)desiredTile.Y), -1);
+            if (!this.TryStartCompanionPath(npc, ownerLocation, desiredTile, movementIntent))
+            {
+                this.lastFollowPathTicks[member.NpcName] = Game1.ticks;
+                this.SetCompanionActivity(member, "companion.status.stuck");
+                this.SetTaskFailure(member, "companion.task_failure.path_recovery");
+                return;
+            }
             this.lastFollowTargets[member.NpcName] = desiredTile;
             this.lastFollowPathTicks[member.NpcName] = Game1.ticks;
+            if (member.LastFailureReasonKey == "companion.task_failure.path_recovery")
+                this.SetTaskFailure(member, "");
         }
         else if (!shouldMove)
         {
-            if (npc.controller is not null)
-            {
-                npc.controller = null;
-                npc.Halt();
-            }
+            if (npc.controller is not null || this.IsOwnedCompanionController(npc))
+                this.StopCompanionMovement(npc);
 
             this.lastFollowTargets[member.NpcName] = desiredTile;
             this.lastFollowProgressPositions[member.NpcName] = npc.Position / 64f;
@@ -342,11 +399,14 @@ public sealed partial class ModEntry
         Vector2 ownerTile,
         Vector2 npcTile,
         float ownerDistance,
-        float arrivalRadius)
+        float arrivalRadius,
+        bool allowReposition)
     {
-        if (this.CanReachOwnerNeighborhood(location, npcTile, ownerTile, arrivalRadius))
+        if (this.CanReachOwnerNeighborhood(location, npcTile, ownerTile, arrivalRadius, out bool reachabilityUncertain))
         {
-            this.disconnectedFollowRecovery.Remove(member.NpcName);
+            bool recovered = this.disconnectedFollowRecovery.Remove(member.NpcName);
+            if (recovered && member.LastFailureReasonKey == "companion.task_failure.path_recovery")
+                this.SetTaskFailure(member, "");
             return false;
         }
 
@@ -372,11 +432,27 @@ public sealed partial class ModEntry
             Game1.ticks);
 
         if (unreachableUpdates < DisconnectedRecoveryObservationThreshold
-            || noOwnerProgressUpdates < FollowNoProgressUpdatesThreshold
-            || !this.TryFindConservativeRecoveryTile(location, owner, this.GetOwnerSlot(member), arrivalRadius, out Vector2 recoveryTile))
+            || noOwnerProgressUpdates < FollowNoProgressUpdatesThreshold)
         {
             return false;
         }
+
+        if (!allowReposition)
+        {
+            if (reachabilityUncertain)
+                return false;
+
+            // A transient character in a doorway or the bounded connectivity
+            // scan must never make ordinary follow teleport on the same map.
+            this.StopCompanionMovement(npc);
+            this.SetCompanionActivity(member, "companion.status.stuck");
+            this.SetTaskFailure(member, "companion.task_failure.path_recovery");
+            this.ShowMovementDebugNotice(member, "companion.movement_debug.path_recovery", new { npc = member.DisplayName });
+            return true;
+        }
+
+        if (!this.TryFindConservativeRecoveryTile(location, owner, this.GetOwnerSlot(member), arrivalRadius, out Vector2 recoveryTile))
+            return false;
 
         this.ClearFollowState(member.NpcName);
         this.disconnectedFollowRecovery.Remove(member.NpcName);
@@ -390,19 +466,28 @@ public sealed partial class ModEntry
         this.lastFollowTargetDistances[member.NpcName] = 0f;
         this.lastFollowProgressPositions[member.NpcName] = npc.Position / 64f;
         this.SetCompanionActivity(member, "companion.status.following");
-        this.SetTaskFailure(member, "companion.task_failure.path_recovery");
+        if (member.LastFailureReasonKey == "companion.task_failure.path_recovery")
+            this.SetTaskFailure(member, "");
         this.ShowMovementDebugNotice(member, "companion.movement_debug.map_repositioned", new { npc = member.DisplayName });
         return true;
     }
 
-    private bool CanReachOwnerNeighborhood(GameLocation location, Vector2 npcTile, Vector2 ownerTile, float arrivalRadius)
+    private bool CanReachOwnerNeighborhood(
+        GameLocation location,
+        Vector2 npcTile,
+        Vector2 ownerTile,
+        float arrivalRadius,
+        out bool reachabilityUncertain)
     {
         Dictionary<Vector2, int> reachableDistances = this.GetReachableTileDistances(location, npcTile, MaxFollowReachabilitySearchTiles);
         int searchRadius = Math.Max(1, (int)MathF.Ceiling(arrivalRadius));
-        return this.GetNearbyTiles(ownerTile, searchRadius)
+        bool reachable = this.GetNearbyTiles(ownerTile, searchRadius)
             .Where(candidate => candidate != ownerTile)
             .Where(candidate => Vector2.Distance(NormalizeTile(ownerTile), NormalizeTile(candidate)) <= arrivalRadius)
-            .Any(candidate => reachableDistances.ContainsKey(NormalizeTile(candidate)) && this.IsTileSafe(location, candidate));
+            .Any(candidate => reachableDistances.ContainsKey(NormalizeTile(candidate))
+                && this.IsTileTraversable(location, candidate));
+        reachabilityUncertain = !reachable && reachableDistances.Count >= MaxFollowReachabilitySearchTiles;
+        return reachable;
     }
 
     private bool TryFindConservativeRecoveryTile(GameLocation location, Farmer owner, int slot, float arrivalRadius, out Vector2 recoveryTile)
@@ -435,9 +520,9 @@ public sealed partial class ModEntry
             || this.followDestinationsThisUpdate.Contains(key);
     }
 
-    private void ReserveFollowDestination(GameLocation location, Vector2 tile)
+    private void ReserveFollowDestination(GameLocation location, Vector2 tile, bool force = false)
     {
-        if (this.planningFollowDestinations)
+        if (this.planningFollowDestinations || force)
             this.followDestinationsThisUpdate.Add(this.GetWorkTargetKey(location.NameOrUniqueName, tile));
     }
 
@@ -677,7 +762,8 @@ public sealed partial class ModEntry
             .Where(candidate => IsWithinCompanionDistance(ownerTile, candidate))
             .Where(candidate => this.IsTileSafe(location, candidate))
             .Where(candidate => !this.IsFollowDestinationReserved(location, candidate))
-            .Where(candidate => reachableDistances is null || reachableDistances.ContainsKey(candidate))
+            .Where(candidate => reachableDistances is null
+                || IsReachableOrUncertain(reachableDistances, candidate, MaxFollowReachabilitySearchTiles))
             .OrderBy(candidate => Vector2.Distance(candidate, preferredTile))
             .ThenBy(candidate => reachableDistances is not null && reachableDistances.TryGetValue(candidate, out int pathDistance) ? pathDistance : 0)
             .ThenBy(candidate => Vector2.Distance(candidate, ownerTile)))
@@ -713,7 +799,8 @@ public sealed partial class ModEntry
             if (point.LocationName == locationName
                 && this.IsTileSafe(location, point.Tile)
                 && !this.IsFollowDestinationReserved(location, point.Tile)
-                && (reachableDistances is null || reachableDistances.ContainsKey(NormalizeTile(point.Tile))))
+                && (reachableDistances is null
+                    || IsReachableOrUncertain(reachableDistances, point.Tile, MaxFollowReachabilitySearchTiles)))
             {
                 target = point.Tile;
                 return true;
@@ -768,7 +855,7 @@ public sealed partial class ModEntry
             foreach (Vector2 offset in CardinalTileOffsets)
             {
                 Vector2 next = current + offset;
-                if (distances.ContainsKey(next) || !this.IsTileSafe(location, next))
+                if (distances.ContainsKey(next) || !this.IsTileTraversable(location, next))
                     continue;
 
                 distances[next] = nextDistance;
@@ -780,6 +867,15 @@ public sealed partial class ModEntry
 
         this.reachabilityCache[cacheKey] = new ReachabilityCacheEntry(Game1.ticks, distances);
         return distances;
+    }
+
+    private static bool IsReachableOrUncertain(
+        Dictionary<Vector2, int> reachableDistances,
+        Vector2 tile,
+        int maxVisitedTiles)
+    {
+        return reachableDistances.ContainsKey(NormalizeTile(tile))
+            || reachableDistances.Count >= maxVisitedTiles;
     }
 
     private void InvalidateReachabilityForLocation(GameLocation location)
@@ -813,21 +909,39 @@ public sealed partial class ModEntry
 
     private bool IsTileSafe(GameLocation location, Vector2 tile)
     {
+        return this.IsTileTraversable(location, tile)
+            && !location.IsTileOccupiedBy(tile, CollisionMask.Farmers)
+            && !location.IsTileOccupiedBy(
+                tile,
+                CollisionMask.Characters,
+                CollisionMask.Characters);
+    }
+
+    private bool IsTileTraversable(GameLocation location, Vector2 tile)
+    {
         tile = NormalizeTile(tile);
         if (!this.IsTileInsideMap(location, tile))
             return false;
 
         int x = (int)tile.X;
         int y = (int)tile.Y;
-        return !location.isWaterTile(x, y)
+        bool explicitlyPassable = this.HasTilePropertyOnLayer(location, x, y, "NPCPassable", "Buildings")
+            || this.HasTilePropertyOnLayer(location, x, y, "Passable", "Buildings")
+            || this.HasPassableAction(location, x, y);
+        bool blockedByBackLayer = this.HasTilePropertyOnLayer(location, x, y, "Passable", "Back");
+        bool layerPassable = location.isTilePassable(tile) || explicitlyPassable;
+        CollisionMask structuralMask = ~(CollisionMask.Characters | CollisionMask.Farmers);
+        return !blockedByBackLayer
+            && (!location.isWaterTile(x, y) || explicitlyPassable)
             && !this.HasBlockingTileProperty(location, x, y)
-            && location.isTileLocationOpen(tile)
-            && !location.IsTileBlockedBy(tile);
+            && layerPassable
+            && !location.IsTileOccupiedBy(tile, structuralMask, structuralMask);
     }
 
     private bool HasBlockingTileProperty(GameLocation location, int x, int y)
     {
         return this.HasTileProperty(location, x, y, "NPCBarrier")
+            || this.HasTileProperty(location, x, y, "TemporaryBarrier")
             || this.HasTileProperty(location, x, y, "NoPath")
             || this.HasTileProperty(location, x, y, "NoPathing");
     }
@@ -841,6 +955,25 @@ public sealed partial class ModEntry
         }
 
         return false;
+    }
+
+    private bool HasPassableAction(GameLocation location, int x, int y)
+    {
+        string action = location.doesTileHavePropertyNoNull(x, y, "Action", "Buildings");
+        return !string.IsNullOrWhiteSpace(action)
+            && !action.StartsWith("LockedDoorWarp", StringComparison.OrdinalIgnoreCase)
+            && (action.Contains("Door", StringComparison.OrdinalIgnoreCase)
+                || action.Contains("Passable", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool HasTilePropertyOnLayer(
+        GameLocation location,
+        int x,
+        int y,
+        string propertyName,
+        string layer)
+    {
+        return !string.IsNullOrWhiteSpace(location.doesTileHavePropertyNoNull(x, y, propertyName, layer));
     }
 
     private bool IsTileInsideMap(GameLocation location, Vector2 tile)
@@ -882,32 +1015,76 @@ public sealed partial class ModEntry
         return new Vector2((int)tile.X, (int)tile.Y);
     }
 
-    private bool PlaceNpc(NPC npc, GameLocation location, Vector2 tile)
+    private bool PlaceNpc(
+        NPC npc,
+        GameLocation location,
+        Vector2 tile,
+        bool maintainCompanionControl = true,
+        bool suppressVanillaArrival = false,
+        bool allowOccupiedExactTile = false)
     {
         tile = NormalizeTile(tile);
         bool alreadyAtTile = npc.currentLocation == location && NormalizeTile(npc.Tile) == tile;
+        if (!alreadyAtTile && allowOccupiedExactTile && !this.IsTileInsideMap(location, tile))
+            return false;
         if (!alreadyAtTile
+            && !allowOccupiedExactTile
             && !this.IsTileSafe(location, tile)
             && !this.TryFindNearestSafeTile(location, tile, SafePlacementSearchRadius, out tile))
         {
             return false;
         }
 
-        npc.controller = null;
-        ResetCompanionMovementSpeed(npc);
-        npc.Halt();
+        this.StopCompanionMovement(npc);
 
         GameLocation? oldLocation = npc.currentLocation;
         if (oldLocation != location)
         {
-            oldLocation?.characters.Remove(npc);
-            if (!location.characters.Contains(npc))
-                location.characters.Add(npc);
-            npc.currentLocation = location;
+            bool suppressArrival = maintainCompanionControl || suppressVanillaArrival;
+            if (suppressArrival)
+                this.BeginSuppressingVanillaArrival(npc);
+            try
+            {
+                Game1.warpCharacter(npc, location, tile);
+            }
+            finally
+            {
+                if (suppressArrival)
+                    this.EndSuppressingVanillaArrival(npc);
+            }
+        }
+        else
+        {
+            npc.Position = tile * 64f;
         }
 
-        npc.Position = tile * 64f;
+        if (maintainCompanionControl)
+        {
+            this.DisableNpcSchedule(npc, stopCurrentRoute: false);
+            // FarmHouse arrival hooks can move spouses to the entry/kitchen and
+            // install a vanilla controller synchronously. Reassert the exact
+            // companion destination after neutralizing those hooks.
+            npc.Position = tile * 64f;
+        }
+
+        npc.position.Field.CancelInterpolation();
+
         return true;
+    }
+
+    private void BeginSuppressingVanillaArrival(NPC npc)
+    {
+        this.suppressedVanillaArrivals[npc] = this.suppressedVanillaArrivals.TryGetValue(npc, out int depth)
+            ? depth + 1
+            : 1;
+    }
+
+    private void EndSuppressingVanillaArrival(NPC npc)
+    {
+        if (!this.suppressedVanillaArrivals.TryGetValue(npc, out int depth) || depth <= 1)
+            this.suppressedVanillaArrivals.Remove(npc);
+        else
+            this.suppressedVanillaArrivals[npc] = depth - 1;
     }
 
     private bool TryFindNearestSafeTile(GameLocation location, Vector2 centerTile, int radius, out Vector2 safeTile)

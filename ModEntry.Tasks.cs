@@ -102,8 +102,8 @@ public sealed partial class ModEntry
 
         if (!IsWithinCompanionDistance(owner.Tile, npc.Tile))
         {
-            this.UpdateFollower(member, npc, owner, forceCatchUp: true);
             this.SetTaskFailure(member, "companion.task_failure.owner_too_far");
+            this.SetCompanionActivity(member, "companion.status.returning");
             return false;
         }
 
@@ -121,7 +121,7 @@ public sealed partial class ModEntry
 
         if (!this.TryReserveStandTile(member.NpcName, location.NameOrUniqueName, standTile))
         {
-            this.ReleaseWorkTarget(location.NameOrUniqueName, targetTile);
+            this.ReleaseWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile);
             this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
             return false;
         }
@@ -257,60 +257,77 @@ public sealed partial class ModEntry
         if (!Context.IsMainPlayer || !this.AreTaskActionsSafe())
             return;
 
+        foreach (string expiredTarget in this.workTargetRetryAfterTicks
+            .Where(entry => Game1.ticks >= entry.Value)
+            .Select(entry => entry.Key)
+            .ToList())
+        {
+            this.workTargetRetryAfterTicks.Remove(expiredTarget);
+        }
+
         foreach (SquadMemberState member in this.members.Values
             .Where(p => p.Mode == CompanionMode.Following
                 && !this.pendingTasks.ContainsKey(p.NpcName)
-                && !this.activeRecallTargets.ContainsKey(p.NpcName))
+                && !this.activeRecallTargets.ContainsKey(p.NpcName)
+                && p.CurrentActivityKey != "companion.status.returning")
             .ToList())
         {
-            Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
-            GameLocation? location = owner?.currentLocation;
-            if (owner is null || location is null || !this.AreTasksEnabled(member.OwnerId))
-                continue;
-
-            if (this.HasActiveWorkDirective(member) && this.TryAssignWorkDirectiveTask(member))
-                continue;
-
-            if (!this.HasActiveWorkDirective(member) && this.TryAssignConfiguredAutonomousTask(member))
-                continue;
-
-            if (this.config.PettingMode == TaskMode.Autonomous
-                && this.TryPetNearestAnimal(location, member))
+            try
             {
-                continue;
-            }
-
-            if (this.config.HarvestingMode == TaskMode.Autonomous)
-            {
-                foreach (Vector2 tile in this.GetNearbyTiles(owner.Tile, radius: MaxCompanionDistanceTiles))
-                {
-                    if (this.TryHarvestTile(location, tile, member, manual: false))
-                        break;
-                }
-
-                if (this.pendingTasks.ContainsKey(member.NpcName))
+                Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+                GameLocation? location = owner?.currentLocation;
+                if (owner is null || location is null || !this.AreTasksEnabled(member.OwnerId))
                     continue;
-            }
 
-            if (this.config.EnableGathering && this.config.ForagingMode == TaskMode.Autonomous)
-            {
-                foreach (Vector2 tile in this.GetNearbyTiles(owner.Tile, radius: MaxCompanionDistanceTiles))
-                {
-                    if (this.TryGatherTile(location, tile, member, manual: false))
-                        break;
-                }
-
-                if (this.pendingTasks.ContainsKey(member.NpcName))
+                if (this.HasActiveWorkDirective(member) && this.TryAssignWorkDirectiveTask(member))
                     continue;
-            }
 
-            if (this.config.WateringMode == TaskMode.Autonomous)
-            {
-                foreach (Vector2 tile in this.GetNearbyTiles(owner.Tile, radius: MaxCompanionDistanceTiles))
+                if (!this.HasActiveWorkDirective(member) && this.TryAssignConfiguredAutonomousTask(member))
+                    continue;
+
+                if (this.config.PettingMode == TaskMode.Autonomous
+                    && this.TryPetNearestAnimal(location, member))
                 {
-                    if (this.TryWaterTile(location, tile, member, manual: false))
-                        break;
+                    continue;
                 }
+
+                if (this.config.HarvestingMode == TaskMode.Autonomous)
+                {
+                    foreach (Vector2 tile in this.GetNearbyTiles(owner.Tile, radius: MaxCompanionDistanceTiles))
+                    {
+                        if (this.TryHarvestTile(location, tile, member, manual: false))
+                            break;
+                    }
+
+                    if (this.pendingTasks.ContainsKey(member.NpcName))
+                        continue;
+                }
+
+                if (this.config.EnableGathering && this.config.ForagingMode == TaskMode.Autonomous)
+                {
+                    foreach (Vector2 tile in this.GetNearbyTiles(owner.Tile, radius: MaxCompanionDistanceTiles))
+                    {
+                        if (this.TryGatherTile(location, tile, member, manual: false))
+                            break;
+                    }
+
+                    if (this.pendingTasks.ContainsKey(member.NpcName))
+                        continue;
+                }
+
+                if (this.config.WateringMode == TaskMode.Autonomous)
+                {
+                    foreach (Vector2 tile in this.GetNearbyTiles(owner.Tile, radius: MaxCompanionDistanceTiles))
+                    {
+                        if (this.TryWaterTile(location, tile, member, manual: false))
+                            break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                this.SetTaskFailure(member, "companion.task_failure.unexpected_error");
+                this.Monitor.Log($"Autonomous task planning failed for '{member.NpcName}' and was isolated: {ex}", LogLevel.Error);
             }
         }
     }
@@ -357,6 +374,13 @@ public sealed partial class ModEntry
         if (!this.AreTaskActionsSafe() || location is null)
             return false;
 
+        if (this.pendingTasks.ContainsKey(member.NpcName)
+            || this.activeRecallTargets.ContainsKey(member.NpcName)
+            || member.Mode != CompanionMode.Following)
+        {
+            return false;
+        }
+
         if (this.config.LumberingMode == TaskMode.Disabled)
             return false;
 
@@ -397,8 +421,8 @@ public sealed partial class ModEntry
 
         if (!IsWithinCompanionDistance(owner.Tile, npc.Tile))
         {
-            this.UpdateFollower(member, npc, owner, forceCatchUp: true);
             this.SetTaskFailure(member, "companion.task_failure.owner_too_far");
+            this.SetCompanionActivity(member, "companion.status.returning");
             if (manual)
                 this.Warn("tasks.no_valid_target");
 
@@ -425,7 +449,7 @@ public sealed partial class ModEntry
 
         if (!this.TryReserveStandTile(member.NpcName, location.NameOrUniqueName, standTile))
         {
-            this.ReleaseWorkTarget(location.NameOrUniqueName, targetTile);
+            this.ReleaseWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile);
             this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
             if (manual)
                 this.Warn("tasks.no_valid_target");
@@ -466,6 +490,13 @@ public sealed partial class ModEntry
         if (!this.AreTaskActionsSafe() || this.config.MiningMode == TaskMode.Disabled)
             return false;
 
+        if (this.pendingTasks.ContainsKey(member.NpcName)
+            || this.activeRecallTargets.ContainsKey(member.NpcName)
+            || member.Mode != CompanionMode.Following)
+        {
+            return false;
+        }
+
         Vector2 targetTile = NormalizeTile(tile);
         if (!location.Objects.TryGetValue(targetTile, out SObject? obj) || !this.IsSafeMineableObject(obj))
             return false;
@@ -487,6 +518,7 @@ public sealed partial class ModEntry
         if (!IsWithinCompanionDistance(owner.Tile, npc.Tile))
         {
             this.SetTaskFailure(member, "companion.task_failure.owner_too_far");
+            this.SetCompanionActivity(member, "companion.status.returning");
             return false;
         }
 

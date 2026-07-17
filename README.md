@@ -58,8 +58,8 @@ dotnet build -c Release -p:EnableModDeploy=false -p:EnableModZip=true
 
 Expected release zip after the release build:
 
-`bin/Release/net6.0/PelicanCompanions 1.1.1.zip`
+`bin/Release/net6.0/PelicanCompanions 1.1.2.zip`
 
 ## Verification status
 
-Run `scripts/validate.sh` to compile the mod, validate all JSON files, and verify English/PT-BR key and interpolation-token parity. The 1.1.1 automated validation completes with 0 build warnings/errors. The current in-game checklist has not yet been run; multiplayer remains explicitly experimental.
+Run `scripts/validate.sh` to compile the mod, validate all JSON files, and verify English/PT-BR key and interpolation-token parity. The 1.1.2 automated validation completes with 0 build warnings/errors. The current in-game checklist has not yet been run; multiplayer remains explicitly experimental.

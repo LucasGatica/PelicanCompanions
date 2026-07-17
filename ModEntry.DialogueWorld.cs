@@ -158,7 +158,14 @@ public sealed partial class ModEntry
                 && member.ParkedAtUtcTicks > 0
                 && now - member.ParkedAtUtcTicks >= timeoutTicks)
             {
-                this.DismissMember(member.NpcName, silent: true, ownerOverride: member.OwnerId);
+                try
+                {
+                    this.DismissMember(member.NpcName, silent: true, ownerOverride: member.OwnerId);
+                }
+                catch (Exception ex)
+                {
+                    this.Monitor.Log($"Timed disconnect dismissal failed for '{member.NpcName}' and was isolated: {ex}", LogLevel.Error);
+                }
             }
         }
     }
@@ -188,9 +195,7 @@ public sealed partial class ModEntry
 
             try
             {
-                npc.controller = null;
-                ResetCompanionMovementSpeed(npc);
-                npc.Halt();
+                this.StopCompanionMovement(npc);
                 this.RestoreNpcSchedule(npc, restore);
                 this.deferredNpcRestores.Remove(npcName);
                 this.MarkStateDirty();
@@ -240,10 +245,22 @@ public sealed partial class ModEntry
         if (npc is Pet)
             return true;
 
+        // These NPC subclasses run an additional movement state machine after
+        // NPC.update (and some install their own controllers every ten minutes).
+        // Treating them as ordinary villagers causes double movement and order
+        // takeover even when RecruitAllNpcs is enabled.
+        if (HasIndependentNpcMovementSystem(npc))
+            return false;
+
         if (this.config.RecruitAllNpcs)
             return !npc.IsMonster && !npc.IsInvisible;
 
         return npc.CanSocialize || requester.friendshipData.ContainsKey(npc.Name) || this.npcProfiles.ContainsKey(npc.Name);
+    }
+
+    private static bool HasIndependentNpcMovementSystem(NPC npc)
+    {
+        return npc is Child or Horse or Junimo or JunimoHarvester or Raccoon or TrashBear;
     }
 
     private bool MeetsFriendshipRequirement(NPC npc, Farmer requester)
@@ -308,6 +325,8 @@ public sealed partial class ModEntry
             || Game1.eventUp
             || Game1.CurrentEvent is not null
             || Game1.fadeToBlack
+            || Game1.showingEndOfNightStuff
+            || this.pendingDailyCompanionRefresh
             || Game1.currentMinigame is not null
             || Game1.isFestival()
             || (blockForMenu && Game1.activeClickableMenu is not null);
@@ -323,53 +342,792 @@ public sealed partial class ModEntry
         if (!Context.IsWorldReady)
             return;
 
-        foreach (SquadMemberState member in this.members.Values)
+        foreach (SquadMemberState member in this.members.Values.ToList())
         {
             NPC? npc = this.GetNpcByName(member.NpcName);
-            if (npc is not null)
+            if (npc is null)
+                continue;
+
+            if (HasIndependentNpcMovementSystem(npc))
+            {
+                try
+                {
+                    this.DismissMember(member.NpcName, silent: true, ownerOverride: member.OwnerId);
+                    this.Monitor.Log($"Companion '{member.NpcName}' was dismissed because its NPC type has an independent movement system.", LogLevel.Warn);
+                }
+                catch (Exception ex)
+                {
+                    this.Monitor.Log($"Could not safely dismiss unsupported companion '{member.NpcName}': {ex}", LogLevel.Error);
+                }
+                continue;
+            }
+
+            try
+            {
                 this.DisableNpcSchedule(npc, stopCurrentRoutes);
+            }
+            catch (Exception ex)
+            {
+                this.Monitor.Log($"Failed maintaining companion control for '{member.NpcName}': {ex.Message}", LogLevel.Warn);
+            }
         }
     }
 
     private void DisableNpcSchedule(NPC npc, bool stopCurrentRoute)
     {
+        bool controllerBelongsToMod = this.IsOwnedCompanionController(npc);
+        StardewValley.Pathfinding.PathFindController? externalController = controllerBelongsToMod
+            ? null
+            : npc.controller;
+        bool wasSleeping = npc.isSleeping.Value || npc.layingDown;
+        int spriteWidthBeforeCleanup = npc.Sprite?.SpriteWidth ?? 16;
+        int spriteHeightBeforeCleanup = npc.Sprite?.SpriteHeight ?? 32;
+
         npc.ignoreScheduleToday = true;
-        if (!stopCurrentRoute)
+        npc.ClearSchedule();
+        npc.queuedSchedulePaths.Clear();
+        npc.currentScheduleDelay = -1f;
+        npc.DirectionsToNewLocation = null;
+        npc.temporaryController = null;
+
+        var startedBehaviorField = this.Helper.Reflection.GetField<string?>(npc, "_startedEndOfRouteBehavior", required: false);
+        var finishingBehaviorField = this.Helper.Reflection.GetField<string?>(npc, "_finishingEndOfRouteBehavior", required: false);
+        var currentlyAnimatingField = this.Helper.Reflection.GetField<bool>(npc, "currentlyDoingEndOfRouteAnimation", required: false);
+        bool routeAnimationStarted = npc.doingEndOfRouteAnimation.Value
+            || currentlyAnimatingField?.GetValue() == true
+            || !string.IsNullOrWhiteSpace(startedBehaviorField?.GetValue())
+            || !string.IsNullOrWhiteSpace(finishingBehaviorField?.GetValue());
+        bool hadRouteBehavior = npc.IsWalkingInSquare
+            || npc.IsReturningToEndPoint()
+            || routeAnimationStarted
+            || npc.goingToDoEndOfRouteAnimation.Value
+            || !string.IsNullOrWhiteSpace(npc.endOfRouteBehaviorName.Value)
+            || npc.shouldPlayRobinHammerAnimation.Value
+            || npc.shouldPlaySpousePatioAnimation.Value
+            || wasSleeping;
+        if (hadRouteBehavior)
+        {
+            if (routeAnimationStarted)
+            {
+                // finishEndOfRouteAnimation also clears spouse dialogue. Preserve
+                // that unrelated daily state while still letting custom route
+                // behaviors clean up temporary sprites and offsets.
+                bool shouldSayMarriageDialogue = npc.shouldSayMarriageDialogue.Value;
+                List<MarriageDialogueReference> marriageDialogue = npc.currentMarriageDialogue.ToList();
+                try
+                {
+                    npc.EndActivityRouteEndBehavior();
+                }
+                finally
+                {
+                    npc.currentMarriageDialogue.Clear();
+                    foreach (MarriageDialogueReference dialogue in marriageDialogue)
+                        npc.currentMarriageDialogue.Add(dialogue);
+                    npc.shouldSayMarriageDialogue.Value = shouldSayMarriageDialogue;
+                }
+            }
+
+            npc.IsWalkingInSquare = false;
+            if (npc.IsReturningToEndPoint())
+            {
+                // returnToEndPoint has no public cancel API. Making the current
+                // bounds its endpoint lets the public method close the state
+                // without changing position.
+                npc.lastCrossroad = npc.GetBoundingBox();
+                npc.returnToEndPoint();
+            }
+
+            npc.doingEndOfRouteAnimation.Value = false;
+            npc.goingToDoEndOfRouteAnimation.Value = false;
+            npc.endOfRouteBehaviorName.Value = null;
+            npc.endOfRouteMessage.Value = null;
+            npc.nextEndOfRouteMessage = null;
+            AnimatedSprite? sprite = npc.Sprite;
+            sprite?.StopAnimation();
+            startedBehaviorField?.SetValue(null);
+            finishingBehaviorField?.SetValue(null);
+            this.Helper.Reflection.GetField<string?>(npc, "loadedEndOfRouteBehavior", required: false)?.SetValue(null);
+            currentlyAnimatingField?.SetValue(false);
+            npc.drawOffset = Vector2.Zero;
+            npc.appliedRouteAnimationOffset = Vector2.Zero;
+            StardewValley.GameData.Characters.CharacterData? data = npc.GetData();
+            if (sprite is not null)
+            {
+                // Pets don't have CharacterData, and their sprites are normally
+                // 32x32 rather than the 16x32 NPC default. Keep the dimensions
+                // that were active before sleep/special-state cleanup. For a
+                // real route animation, finishEndOfRouteAnimation has already
+                // restored the correct custom fallback dimensions.
+                int fallbackWidth = routeAnimationStarted ? sprite.SpriteWidth : spriteWidthBeforeCleanup;
+                int fallbackHeight = routeAnimationStarted ? sprite.SpriteHeight : spriteHeightBeforeCleanup;
+                sprite.SpriteWidth = data?.Size.X ?? fallbackWidth;
+                sprite.SpriteHeight = data?.Size.Y ?? fallbackHeight;
+                sprite.UpdateSourceRect();
+            }
+        }
+
+        npc.shouldPlayRobinHammerAnimation.Value = false;
+        npc.shouldPlaySpousePatioAnimation.Value = false;
+        npc.isSleeping.Value = false;
+        if (npc.layingDown)
+        {
+            npc.layingDown = false;
+            if (npc is not Pet)
+                npc.HideShadow = false;
+        }
+
+        npc.movementPause = 0;
+        this.Helper.Reflection.GetField<bool>(npc, "freezeMotion", required: false)?.SetValue(false);
+
+        this.ReleaseCompanionBedReservation(npc, externalController);
+        if (npc is Pet pet && pet.isSleepingOnFarmerBed.Value)
+        {
+            pet.isSleepingOnFarmerBed.Value = false;
+            pet.UpdateSleepingOnBed();
+        }
+        if (npc is Pet controlledPet)
+            controlledPet.CurrentBehavior = "Walk";
+
+        bool replacedByExternalController = npc.controller is not null && !controllerBelongsToMod;
+        if (stopCurrentRoute || replacedByExternalController)
+        {
+            this.StopCompanionMovement(npc);
+            if (replacedByExternalController)
+            {
+                this.lastFollowPathTicks.Remove(npc.Name);
+                if (this.pendingTasks.TryGetValue(npc.Name, out PendingCompanionTask? interruptedTask))
+                {
+                    interruptedTask.LastPathTick = 0;
+                    interruptedTask.NoProgressTicks = 0;
+                }
+            }
+        }
+    }
+
+    private void ReleaseCompanionBedReservation(
+        NPC npc,
+        StardewValley.Pathfinding.PathFindController? externalController)
+    {
+        if (npc.currentLocation is not StardewValley.Locations.FarmHouse farmHouse)
             return;
 
-        npc.ClearSchedule();
-        npc.DirectionsToNewLocation = null;
-        npc.controller = null;
-        ResetCompanionMovementSpeed(npc);
-        npc.Halt();
+        if (npc is Pet pet)
+        {
+            if (!pet.isSleepingOnFarmerBed.Value)
+                return;
+
+            foreach (StardewValley.Objects.BedFurniture bed in farmHouse.furniture
+                .OfType<StardewValley.Objects.BedFurniture>()
+                .Where(bed => bed.GetBoundingBox().Intersects(pet.GetBoundingBox())))
+            {
+                // Match BedFurniture's own update scope. Passing only farmers
+                // currently inside this farmhouse can make NetMutex discard a
+                // valid remote owner's lock before we decide whether to release it.
+                bed.mutex.Update(Game1.getOnlineFarmers());
+                if (bed.mutex.IsLockHeld() && !IsBedNeededByOtherNpc(farmHouse, bed, npc))
+                    bed.mutex.ReleaseLock();
+            }
+
+            return;
+        }
+
+        if (!npc.isMarried())
+            return;
+
+        Point bedSpot = farmHouse.getSpouseBedSpot(npc.Name);
+        Rectangle bedSpotBounds = new(bedSpot.X * 64, bedSpot.Y * 64, 64, 64);
+        bool headingToBed = externalController?.endPoint == bedSpot;
+        bool occupyingBed = bedSpotBounds.Intersects(npc.GetBoundingBox());
+        if (!headingToBed && !occupyingBed)
+            return;
+
+        foreach (StardewValley.Objects.BedFurniture bed in farmHouse.furniture
+            .OfType<StardewValley.Objects.BedFurniture>()
+            .Where(bed => bed.GetBoundingBox().Intersects(bedSpotBounds)))
+        {
+            bed.mutex.Update(Game1.getOnlineFarmers());
+            if (bed.mutex.IsLockHeld() && !IsBedNeededByOtherNpc(farmHouse, bed, npc))
+                bed.mutex.ReleaseLock();
+        }
+    }
+
+    private static bool IsBedNeededByOtherNpc(
+        StardewValley.Locations.FarmHouse farmHouse,
+        StardewValley.Objects.BedFurniture bed,
+        NPC ignoredNpc)
+    {
+        Rectangle bedBounds = bed.GetBoundingBox();
+        foreach (NPC other in farmHouse.characters)
+        {
+            if (ReferenceEquals(other, ignoredNpc))
+                continue;
+
+            bool sleepingInBed = bedBounds.Intersects(other.GetBoundingBox())
+                && (other.isSleeping.Value
+                    || other.layingDown
+                    || (other is Pet otherPet && otherPet.isSleepingOnFarmerBed.Value));
+            if (sleepingInBed)
+                return true;
+
+            if (other.controller is not null)
+            {
+                Point endPoint = other.controller.endPoint;
+                Rectangle endPointBounds = new(endPoint.X * 64, endPoint.Y * 64, 64, 64);
+                if (bedBounds.Intersects(endPointBounds))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void NeutralizeVanillaBedtimeController(NPC npc)
+    {
+        if (npc.currentLocation is not StardewValley.Locations.FarmHouse farmHouse
+            || !npc.isMarried())
+        {
+            return;
+        }
+
+        Point bedSpot = farmHouse.getSpouseBedSpot(npc.Name);
+        if (!this.IsOwnedCompanionController(npc)
+            && npc.controller?.endPoint == bedSpot)
+        {
+            this.DisableNpcSchedule(npc, stopCurrentRoute: true);
+        }
     }
 
     private void RestoreNpcSchedule(NPC npc, SquadMemberState member)
     {
+        string? liveScheduleKey = npc.ScheduleKey;
+        bool hadLiveSchedule = npc.Schedule is not null;
+        this.StopCompanionMovement(npc);
+        this.DisableNpcSchedule(npc, stopCurrentRoute: true);
         npc.ignoreScheduleToday = false;
-        npc.DirectionsToNewLocation = null;
-        npc.ClearSchedule();
-
-        // Put the NPC back at the position where this mod acquired control
-        // before asking vanilla to resume today's schedule. Older saves don't
-        // have this marker and safely retain the legacy behavior.
-        bool originalPositionStillRelevant = member.OriginalDayIndex < 0 || member.OriginalDayIndex == Game1.Date.TotalDays;
-        if (member.HasOriginalPosition
-            && originalPositionStillRelevant
-            && !string.IsNullOrWhiteSpace(member.OriginalLocationName))
-        {
-            GameLocation? originalLocation = Game1.getLocationFromName(member.OriginalLocationName);
-            if (originalLocation is not null)
-            {
-                Vector2 originalTile = NormalizeTile(new Vector2(member.OriginalTileX, member.OriginalTileY));
-                this.PlaceNpc(npc, originalLocation, originalTile);
-            }
-        }
 
         if (!Context.IsWorldReady || Game1.eventUp || Game1.CurrentEvent is not null || Game1.isFestival())
+        {
+            if (!this.TryRestoreOriginalOrVanillaHome(npc, member))
+                throw new InvalidOperationException($"No safe fallback restoration tile was available for '{npc.Name}'.");
             return;
+        }
 
+        if (npc is Pet pet)
+        {
+            this.companionReleaseGuardDepth++;
+            try
+            {
+                if (Game1.timeOfDay >= 2000)
+                    pet.warpToFarmHouse(GetVanillaPetOwner(pet));
+                else if (this.TryRestoreOriginalNpcPosition(pet, member))
+                    pet.CurrentBehavior = string.IsNullOrWhiteSpace(member.OriginalPetBehavior) ? "Walk" : member.OriginalPetBehavior;
+                else
+                {
+                    pet.setAtFarmPosition();
+                    pet.CurrentBehavior = "Walk";
+                }
+            }
+            finally
+            {
+                this.companionReleaseGuardDepth--;
+            }
+
+            pet.ignoreScheduleToday = false;
+            return;
+        }
+
+        if (this.TryRestoreOriginalSpousePatioActivity(npc, member))
+        {
+            npc.lastAttemptedSchedule = Game1.timeOfDay;
+            npc.ignoreScheduleToday = false;
+            return;
+        }
+
+        npc.queuedSchedulePaths.Clear();
+        npc.lastAttemptedSchedule = -1;
+        npc.currentScheduleDelay = -1f;
+        GameLocation? locationBeforeScheduleLoad = npc.currentLocation;
+        Vector2 positionBeforeScheduleLoad = npc.Position;
+        bool scheduleLoaded = this.TryLoadRestorationSchedule(npc, member, liveScheduleKey);
+        bool scheduleLoadRepositioned = npc.currentLocation != locationBeforeScheduleLoad
+            || Vector2.DistanceSquared(npc.Position, positionBeforeScheduleLoad) > 1f;
+        bool TryFallbackFromCurrentState()
+        {
+            return this.TryCompleteScheduleFallback(
+                npc,
+                member,
+                locationBeforeScheduleLoad,
+                positionBeforeScheduleLoad / 64f);
+        }
+        // A schedule containing a time-zero command can warp synchronously while
+        // parsing. Arrival was suppressed above; remove any controller side
+        // effect before applying the actual current stop.
+        this.StopCompanionMovement(npc);
+        if (!scheduleLoaded || npc.Schedule is null)
+        {
+            if (!this.TryRestoreOriginalOrVanillaHome(npc, member))
+                throw new InvalidOperationException($"No safe vanilla home tile was available for '{npc.Name}'.");
+            npc.ignoreScheduleToday = false;
+            return;
+        }
+
+        if (npc.Schedule.Count == 0)
+        {
+            // A valid schedule may consist only of a time-zero placement. Its
+            // parser already moved the NPC to the intended location and there
+            // are no later route entries to resume.
+            npc.lastAttemptedSchedule = Game1.timeOfDay;
+            npc.ignoreScheduleToday = false;
+            return;
+        }
+
+        KeyValuePair<int, StardewValley.Pathfinding.SchedulePathDescription>? currentStopEntry = npc.Schedule
+            .Where(entry => entry.Key <= Game1.timeOfDay)
+            .OrderByDescending(entry => entry.Key)
+            .Select(entry => (KeyValuePair<int, StardewValley.Pathfinding.SchedulePathDescription>?)entry)
+            .FirstOrDefault();
+        StardewValley.Pathfinding.SchedulePathDescription? currentStop = currentStopEntry?.Value;
+        if (currentStopEntry is { } activeEntry && IsScheduleRouteStillInTransit(activeEntry))
+        {
+            if (!TryFallbackFromCurrentState())
+                throw new InvalidOperationException($"No safe in-transit restoration tile was available for '{npc.Name}'.");
+            return;
+        }
+
+        if (currentStop is not null && IsMarriedHomeScheduleStop(npc, currentStop))
+        {
+            bool scheduledLateArrival = currentStopEntry is { } homeEntry
+                && Utility.ConvertTimeToMinutes(homeEntry.Key) + GetScheduleRouteTravelMinutes(homeEntry.Value)
+                    >= Utility.ConvertTimeToMinutes(2130);
+            bool shouldSleep = scheduledLateArrival || Game1.timeOfDay >= 2200;
+            if (!this.TryRestoreMarriedNpcHome(npc, shouldSleep))
+            {
+                if (!TryFallbackFromCurrentState())
+                    throw new InvalidOperationException($"The spouse home destination could not be restored for '{npc.Name}'.");
+                return;
+            }
+
+            npc.lastAttemptedSchedule = Game1.timeOfDay;
+            npc.ignoreScheduleToday = false;
+            return;
+        }
+
+        if (currentStop is not null)
+        {
+            if (string.IsNullOrWhiteSpace(currentStop.targetLocationName)
+                || Game1.getLocationFromName(currentStop.targetLocationName) is not GameLocation scheduledLocation)
+            {
+                if (!TryFallbackFromCurrentState())
+                    throw new InvalidOperationException($"Schedule location '{currentStop.targetLocationName}' is unavailable for '{npc.Name}'.");
+                return;
+            }
+
+            Vector2 scheduledTile = new(currentStop.targetTile.X, currentStop.targetTile.Y);
+            if (!this.PlaceNpc(
+                npc,
+                scheduledLocation,
+                scheduledTile,
+                maintainCompanionControl: false,
+                suppressVanillaArrival: true))
+            {
+                if (!TryFallbackFromCurrentState())
+                    throw new InvalidOperationException($"No safe schedule restoration tile was available for '{npc.Name}'.");
+                return;
+            }
+
+            if (currentStop.facingDirection is >= 0 and <= 3)
+                npc.faceDirection(currentStop.facingDirection);
+
+            // Future ten-minute checks should only enqueue routes after the
+            // current point in the day, not replay the morning route chain.
+            npc.lastAttemptedSchedule = Game1.timeOfDay;
+            npc.ignoreScheduleToday = false;
+            if (!string.IsNullOrWhiteSpace(currentStop.endOfRouteBehavior))
+                this.StartRestoredRouteEndBehavior(npc, currentStop);
+
+            return;
+        }
+
+        if (hadLiveSchedule || scheduleLoadRepositioned)
+        {
+            npc.lastAttemptedSchedule = Game1.timeOfDay;
+            npc.ignoreScheduleToday = false;
+            return;
+        }
+
+        if (!this.TryRestoreOriginalOrVanillaHome(npc, member))
+            throw new InvalidOperationException($"No safe fallback restoration tile was available for '{npc.Name}'.");
+        npc.ignoreScheduleToday = false;
         npc.checkSchedule(Game1.timeOfDay);
+    }
+
+    private bool TryLoadRestorationSchedule(NPC npc, SquadMemberState member, string? liveScheduleKey)
+    {
+        bool sameDay = member.OriginalDayIndex < 0
+            || member.OriginalDayIndex == Game1.Date.TotalDays;
+        this.BeginSuppressingVanillaArrival(npc);
+        try
+        {
+            if (sameDay && member.OriginalScheduleCaptured)
+            {
+                if (string.IsNullOrWhiteSpace(member.OriginalScheduleKey))
+                {
+                    npc.ClearSchedule();
+                    return false;
+                }
+
+                return npc.TryLoadSchedule(member.OriginalScheduleKey);
+            }
+
+            if (!string.IsNullOrWhiteSpace(liveScheduleKey))
+                return npc.TryLoadSchedule(liveScheduleKey);
+
+            if (!string.IsNullOrWhiteSpace(npc.islandScheduleName.Value))
+                return npc.TryLoadSchedule(npc.islandScheduleName.Value);
+
+            return npc.TryLoadSchedule();
+        }
+        finally
+        {
+            this.EndSuppressingVanillaArrival(npc);
+        }
+    }
+
+    private static bool IsMarriedHomeScheduleStop(
+        NPC npc,
+        StardewValley.Pathfinding.SchedulePathDescription stop)
+    {
+        // Marriage schedules use the west BusStop exit as a logical farmhouse
+        // endpoint. PathFindController normally rewrites that warp to the
+        // spouse's actual home while walking the route.
+        return npc.isMarried()
+            && string.Equals(stop.targetLocationName, "BusStop", StringComparison.OrdinalIgnoreCase)
+            && stop.targetTile.X <= 9
+            && stop.targetTile.Y == 23
+            && stop.facingDirection == 3;
+    }
+
+    private static bool IsScheduleRouteStillInTransit(
+        KeyValuePair<int, StardewValley.Pathfinding.SchedulePathDescription> entry)
+    {
+        int travelMinutes = GetScheduleRouteTravelMinutes(entry.Value);
+        if (travelMinutes <= 0)
+            return false;
+
+        int departureMinutes = Utility.ConvertTimeToMinutes(entry.Key);
+        int currentMinutes = Utility.ConvertTimeToMinutes(Game1.timeOfDay);
+        return currentMinutes < departureMinutes + travelMinutes;
+    }
+
+    private static int GetScheduleRouteTravelMinutes(
+        StardewValley.Pathfinding.SchedulePathDescription stop)
+    {
+        Stack<Point>? route = stop.route;
+        if (route is null || route.Count < 2)
+            return 0;
+
+        int walkingPixels = 0;
+        Point? previous = null;
+        foreach (Point point in route)
+        {
+            if (previous.HasValue
+                && Math.Abs(previous.Value.X - point.X) + Math.Abs(previous.Value.Y - point.Y) == 1)
+            {
+                walkingPixels += 64;
+            }
+            previous = point;
+        }
+
+        int movementFrames = walkingPixels / DefaultCompanionMovementSpeed;
+        int framesPerTenMinutes = Math.Max(1, Game1.realMilliSecondsPerGameTenMinutes / 1000 * 60);
+        return (int)Math.Round((float)movementFrames / framesPerTenMinutes) * 10;
+    }
+
+    private void StartRestoredRouteEndBehavior(
+        NPC npc,
+        StardewValley.Pathfinding.SchedulePathDescription stop)
+    {
+        this.companionReleaseGuardDepth++;
+        try
+        {
+            npc.StartActivityRouteEndBehavior(
+                stop.endOfRouteBehavior,
+                stop.endOfRouteMessage ?? "");
+        }
+        finally
+        {
+            this.companionReleaseGuardDepth--;
+        }
+    }
+
+    private bool TryRestoreMarriedNpcHome(NPC npc, bool shouldSleep)
+    {
+        if (shouldSleep)
+            return this.TryRestoreMarriedNpcToBed(npc);
+
+        if (npc.getHome() is not StardewValley.Locations.FarmHouse farmHouse)
+            return false;
+
+        Point kitchenSpot = farmHouse.getKitchenStandingSpot();
+        if (!this.PlaceNpc(
+            npc,
+            farmHouse,
+            new Vector2(kitchenSpot.X, kitchenSpot.Y),
+            maintainCompanionControl: false,
+            suppressVanillaArrival: true))
+        {
+            return false;
+        }
+
+        npc.faceDirection(0);
+        return true;
+    }
+
+    private bool TryRestoreMarriedNpcToBed(NPC npc)
+    {
+        if (npc.getHome() is not StardewValley.Locations.FarmHouse farmHouse)
+            return false;
+
+        Point bedSpot = farmHouse.getSpouseBedSpot(npc.Name);
+        if (!this.PlaceNpc(
+            npc,
+            farmHouse,
+            new Vector2(bedSpot.X, bedSpot.Y),
+            maintainCompanionControl: false,
+            suppressVanillaArrival: true,
+            allowOccupiedExactTile: true))
+        {
+            return false;
+        }
+
+        npc.faceDirection(0);
+        if (farmHouse.GetSpouseBed() is null)
+            return true;
+
+        this.companionReleaseGuardDepth++;
+        try
+        {
+            StardewValley.Locations.FarmHouse.spouseSleepEndFunction(npc, farmHouse);
+        }
+        finally
+        {
+            this.companionReleaseGuardDepth--;
+        }
+
+        return true;
+    }
+
+    private static Farmer GetVanillaPetOwner(Pet pet)
+    {
+        List<Farmer> farmers = Game1.getAllFarmers().ToList();
+        return farmers.FirstOrDefault(farmer => string.Equals(
+                farmer.homeLocation.Value,
+                pet.homeLocationName.Value,
+                StringComparison.OrdinalIgnoreCase))
+            ?? farmers.FirstOrDefault(farmer => string.Equals(
+                farmer.getPetName(),
+                pet.Name,
+                StringComparison.OrdinalIgnoreCase))
+            ?? Game1.MasterPlayer;
+    }
+
+    private bool TryRestoreOriginalNpcPosition(NPC npc, SquadMemberState member)
+    {
+        bool originalPositionStillRelevant = member.OriginalDayIndex < 0
+            || member.OriginalDayIndex == Game1.Date.TotalDays;
+        if (!member.HasOriginalPosition
+            || !originalPositionStillRelevant
+            || string.IsNullOrWhiteSpace(member.OriginalLocationName)
+            || Game1.getLocationFromName(member.OriginalLocationName) is not GameLocation originalLocation)
+        {
+            return false;
+        }
+
+        Vector2 originalTile = NormalizeTile(new Vector2(member.OriginalTileX, member.OriginalTileY));
+        return this.PlaceNpc(
+            npc,
+            originalLocation,
+            originalTile,
+            maintainCompanionControl: false,
+            suppressVanillaArrival: true);
+    }
+
+    private bool TryRestoreOriginalSpousePatioActivity(NPC npc, SquadMemberState member)
+    {
+        bool sameDay = member.OriginalDayIndex < 0
+            || member.OriginalDayIndex == Game1.Date.TotalDays;
+        if (!sameDay
+            || !member.OriginalSpousePatioActivity
+            || !npc.isMarried()
+            || Game1.timeOfDay >= 2130
+            || !this.TryRestoreOriginalNpcPosition(npc, member))
+        {
+            return false;
+        }
+
+        Vector2 originalTile = NormalizeTile(new Vector2(member.OriginalTileX, member.OriginalTileY));
+        if (!string.Equals(npc.currentLocation?.NameOrUniqueName, member.OriginalLocationName, StringComparison.Ordinal)
+            || NormalizeTile(npc.Tile) != originalTile)
+        {
+            return false;
+        }
+
+        // Halt() clears the network flag but not necessarily the local mirror.
+        // Reset the mirror first so NPC.update rebuilds the patio sprite instead
+        // of interpreting the restored flag as an instruction to stop it.
+        this.Helper.Reflection
+            .GetField<bool>(npc, "isPlayingSpousePatioAnimation", required: false)
+            ?.SetValue(false);
+        npc.shouldPlaySpousePatioAnimation.Value = true;
+        npc.shouldPlaySpousePatioAnimation.CancelInterpolation();
+        return true;
+    }
+
+    private bool TryRestoreOriginalOrVanillaHome(NPC npc, SquadMemberState member)
+    {
+        // Restoring only the saved bed tile leaves a spouse awake and the bed
+        // unreserved, because DisableNpcSchedule deliberately cleared both
+        // states. Re-run the vanilla sleep end behavior once bedtime has begun.
+        if (npc.isMarried()
+            && Game1.timeOfDay >= 2130
+            && this.TryRestoreMarriedNpcToBed(npc))
+        {
+            return true;
+        }
+
+        return this.TryRestoreOriginalNpcPosition(npc, member)
+            || this.TryRestoreVanillaHome(npc);
+    }
+
+    private bool TryCompleteScheduleFallback(
+        NPC npc,
+        SquadMemberState member,
+        GameLocation? preferredLocation = null,
+        Vector2? preferredTile = null)
+    {
+        bool restoredPreferred = preferredLocation is not null
+            && preferredTile.HasValue
+            && this.PlaceNpc(
+                npc,
+                preferredLocation,
+                preferredTile.Value,
+                maintainCompanionControl: false,
+                suppressVanillaArrival: true);
+        if (!restoredPreferred && !this.TryRestoreOriginalOrVanillaHome(npc, member))
+            return false;
+
+        // A safe fallback is terminal for this dismissal. Repeatedly stopping
+        // and re-warping a released NPC every second is worse than skipping the
+        // unavailable current stop. The remaining routes were precomputed from
+        // that missing stop, so pause them until vanilla rebuilds next morning.
+        npc.ClearSchedule();
+        npc.ignoreScheduleToday = true;
+        return true;
+    }
+
+    private bool TryRestoreVanillaHome(NPC npc)
+    {
+        if (npc.isMarried() && npc.getHome() is StardewValley.Locations.FarmHouse farmHouse)
+        {
+            if (Game1.timeOfDay >= 2130)
+                return this.TryRestoreMarriedNpcToBed(npc);
+
+            Point kitchenSpot = farmHouse.getKitchenStandingSpot();
+            return this.PlaceNpc(
+                npc,
+                farmHouse,
+                new Vector2(kitchenSpot.X, kitchenSpot.Y),
+                maintainCompanionControl: false,
+                suppressVanillaArrival: true);
+        }
+
+        if (string.IsNullOrWhiteSpace(npc.DefaultMap)
+            || Game1.getLocationFromName(npc.DefaultMap) is not GameLocation homeLocation)
+        {
+            return false;
+        }
+
+        return this.PlaceNpc(
+            npc,
+            homeLocation,
+            npc.DefaultPosition / 64f,
+            maintainCompanionControl: false,
+            suppressVanillaArrival: true);
+    }
+
+    private bool IsOwnedCompanionController(NPC npc)
+    {
+        if (!this.companionMovementControllers.TryGetValue(npc.Name, out CompanionMovementControllerState state))
+            return false;
+
+        if (ReferenceEquals(npc.controller, state.Controller))
+            return true;
+
+        this.companionMovementControllers.Remove(npc.Name);
+        return false;
+    }
+
+    private bool HasCompanionController(
+        NPC npc,
+        CompanionMovementIntent intent,
+        GameLocation location,
+        Vector2 targetTile)
+    {
+        if (!this.companionMovementControllers.TryGetValue(npc.Name, out CompanionMovementControllerState state)
+            || !ReferenceEquals(npc.controller, state.Controller))
+        {
+            this.companionMovementControllers.Remove(npc.Name);
+            return false;
+        }
+
+        return state.Intent == intent
+            && string.Equals(state.LocationName, location.NameOrUniqueName, StringComparison.Ordinal)
+            && state.TargetTile == NormalizeTile(targetTile);
+    }
+
+    private bool TryStartCompanionPath(
+        NPC npc,
+        GameLocation location,
+        Vector2 targetTile,
+        CompanionMovementIntent intent)
+    {
+        targetTile = NormalizeTile(targetTile);
+        this.DisableNpcSchedule(npc, stopCurrentRoute: false);
+        this.StopCompanionMovement(npc);
+
+        try
+        {
+            CompanionPathFindController controller = new(
+                npc,
+                location,
+                new Point((int)targetTile.X, (int)targetTile.Y),
+                -1);
+            if (controller.pathToEndPoint is null)
+                return false;
+
+            npc.controller = controller;
+            this.companionMovementControllers[npc.Name] = new CompanionMovementControllerState(
+                controller,
+                intent,
+                location.NameOrUniqueName,
+                targetTile);
+            return true;
+        }
+        catch
+        {
+            this.companionMovementControllers.Remove(npc.Name);
+            npc.controller = null;
+            throw;
+        }
+    }
+
+    private void StopCompanionMovement(NPC npc)
+    {
+        this.companionMovementControllers.Remove(npc.Name);
+        npc.controller = null;
+        ResetCompanionMovementSpeed(npc);
+        npc.Halt();
+        npc.setTrajectory(0, 0);
     }
 
     private void RestoreNpcSchedule(NPC npc, DeferredNpcRestoreState restore)
@@ -383,7 +1141,11 @@ public sealed partial class ModEntry
                 OriginalTileX = restore.OriginalTileX,
                 OriginalTileY = restore.OriginalTileY,
                 HasOriginalPosition = restore.HasOriginalPosition,
-                OriginalDayIndex = restore.OriginalDayIndex
+                OriginalDayIndex = restore.OriginalDayIndex,
+                OriginalScheduleCaptured = restore.OriginalScheduleCaptured,
+                OriginalScheduleKey = restore.OriginalScheduleKey,
+                OriginalPetBehavior = restore.OriginalPetBehavior,
+                OriginalSpousePatioActivity = restore.OriginalSpousePatioActivity
             });
     }
 
@@ -466,10 +1228,15 @@ public sealed partial class ModEntry
         return true;
     }
 
-    private void ReleaseWorkTarget(string locationName, Vector2 tile)
+    private void ReleaseWorkTarget(string npcName, string locationName, Vector2 tile)
     {
-        if (this.workTargetReservations.Remove(this.GetWorkTargetKey(locationName, tile)))
+        string key = this.GetWorkTargetKey(locationName, tile);
+        if (this.workTargetReservations.TryGetValue(key, out string? reservedBy)
+            && string.Equals(reservedBy, npcName, StringComparison.OrdinalIgnoreCase)
+            && this.workTargetReservations.Remove(key))
+        {
             this.InvalidateTargetPreviews();
+        }
     }
 
     private bool IsStandTileReserved(GameLocation location, Vector2 tile, string npcName)
@@ -535,8 +1302,25 @@ public sealed partial class ModEntry
 
     private void RemovePendingTask(PendingCompanionTask task, string? failureKey = null, bool returning = false)
     {
+        if (!this.pendingTasks.TryGetValue(task.NpcName, out PendingCompanionTask? currentTask)
+            || !ReferenceEquals(currentTask, task))
+        {
+            return;
+        }
+
         this.pendingTasks.Remove(task.NpcName);
-        this.ReleaseWorkTarget(task.LocationName, task.TargetTile);
+        if (!task.Manual
+            && task.Kind is CompanionTaskKind.Lumbering or CompanionTaskKind.Mining
+            && (task.UsesWorkDirective || task.UsesConfiguredAutonomy)
+            && failureKey is "companion.task_failure.task_timeout"
+                or "companion.task_failure.no_safe_tile"
+                or "companion.task_failure.path_recovery"
+                or "companion.task_failure.unexpected_error")
+        {
+            this.workTargetRetryAfterTicks[this.GetWorkTargetKey(task.LocationName, task.TargetTile)] = Game1.ticks + FailedWorkTargetBackoffTicks;
+        }
+
+        this.ReleaseWorkTarget(task.NpcName, task.LocationName, task.TargetTile);
         this.ReleaseStandTile(task.NpcName, task.LocationName, task.StandTile);
         if (this.members.TryGetValue(task.NpcName, out SquadMemberState? member))
         {
@@ -545,9 +1329,7 @@ public sealed partial class ModEntry
             {
                 try
                 {
-                    npc.controller = null;
-                    ResetCompanionMovementSpeed(npc);
-                    npc.Halt();
+                    this.StopCompanionMovement(npc);
                 }
                 catch (Exception ex)
                 {
@@ -559,7 +1341,21 @@ public sealed partial class ModEntry
             if (!string.IsNullOrWhiteSpace(failureKey))
                 this.SetTaskFailure(member, failureKey);
 
-            this.SetCompanionActivity(member, returning ? "companion.status.returning" : "companion.status.following");
+            string nextActivity = member.Mode switch
+            {
+                CompanionMode.Waiting => "companion.status.waiting",
+                CompanionMode.ParkedForDisconnect => "companion.status.parked",
+                _ when returning => "companion.status.returning",
+                _ => "companion.status.following"
+            };
+            this.SetCompanionActivity(member, nextActivity);
+            if (!returning
+                && member.Mode == CompanionMode.Following
+                && (this.HasActiveWorkDirective(member) || task.UsesConfiguredAutonomy))
+            {
+                this.nextTaskScanTick = Math.Min(this.nextTaskScanTick, Game1.ticks);
+            }
+
             if (returning)
             {
                 if (npc?.currentLocation is not null)

@@ -26,44 +26,79 @@ public sealed partial class ModEntry
                 continue;
             }
 
+            if (HasIndependentNpcMovementSystem(npc))
+            {
+                if (member.Inventory is { Count: > 0 })
+                {
+                    this.legacyOverflowItems.AddRange(member.Inventory);
+                    member.Inventory.Clear();
+                }
+
+                this.members.Remove(member.NpcName);
+                this.deferredNpcRestores[member.NpcName] = CreateDeferredNpcRestore(member);
+                this.Monitor.Log(
+                    $"Saved companion '{member.NpcName}' uses an independent vanilla movement system and was safely dismissed; its items were preserved.",
+                    LogLevel.Warn);
+                continue;
+            }
+
             member.DisplayName = npc.displayName;
             if (member.LastFailureReasonKey == "companion.task_failure.npc_missing")
                 this.SetTaskFailure(member, "");
         }
     }
 
-    private void RestorePersistedMemberPositions()
+    private void RestorePersistedMemberPositions(bool logFailures = true)
     {
         foreach (SquadMemberState member in this.members.Values)
         {
-            if (member.Mode is not (CompanionMode.Waiting or CompanionMode.ParkedForDisconnect)
-                || string.IsNullOrWhiteSpace(member.WaitingLocationName))
+            try
             {
-                continue;
-            }
-
-            NPC? npc = this.GetNpcByName(member.NpcName);
-            GameLocation? location = Game1.getLocationFromName(member.WaitingLocationName);
-            if (npc is null || location is null)
-            {
-                this.Monitor.Log(
-                    $"Could not restore waiting position for '{member.NpcName}' in '{member.WaitingLocationName}'. The saved state was kept.",
-                    LogLevel.Warn);
-                continue;
-            }
-
-            Vector2 waitingTile = NormalizeTile(new Vector2(member.WaitingTileX, member.WaitingTileY));
-            if (npc.currentLocation != location || NormalizeTile(npc.Tile) != waitingTile)
-            {
-                if (!this.PlaceNpc(npc, location, waitingTile))
+                if (member.Mode is not (CompanionMode.Waiting or CompanionMode.ParkedForDisconnect)
+                    || string.IsNullOrWhiteSpace(member.WaitingLocationName))
                 {
-                    this.Monitor.Log($"Could not find a safe waiting tile for '{member.NpcName}' in '{member.WaitingLocationName}'.", LogLevel.Warn);
                     continue;
                 }
-            }
 
-            npc.controller = null;
-            npc.Halt();
+                NPC? npc = this.GetNpcByName(member.NpcName);
+                GameLocation? location = Game1.getLocationFromName(member.WaitingLocationName);
+                if (npc is null || location is null)
+                {
+                    if (logFailures)
+                    {
+                        this.Monitor.Log(
+                            $"Could not restore waiting position for '{member.NpcName}' in '{member.WaitingLocationName}'. The saved state was kept.",
+                            LogLevel.Warn);
+                    }
+                    continue;
+                }
+
+                Vector2 waitingTile = NormalizeTile(new Vector2(member.WaitingTileX, member.WaitingTileY));
+                if (npc.currentLocation != location || NormalizeTile(npc.Tile) != waitingTile)
+                {
+                    if (!this.PlaceNpc(npc, location, waitingTile))
+                    {
+                        if (logFailures)
+                            this.Monitor.Log($"Could not find a safe waiting tile for '{member.NpcName}' in '{member.WaitingLocationName}'.", LogLevel.Warn);
+                        continue;
+                    }
+
+                    Vector2 restoredTile = NormalizeTile(npc.Tile);
+                    if (restoredTile != waitingTile)
+                    {
+                        member.WaitingTileX = restoredTile.X;
+                        member.WaitingTileY = restoredTile.Y;
+                        this.MarkStateDirty();
+                    }
+                }
+
+                this.DisableNpcSchedule(npc, stopCurrentRoute: true);
+            }
+            catch (Exception ex)
+            {
+                if (logFailures)
+                    this.Monitor.Log($"Waiting position restoration failed for '{member.NpcName}' and was isolated: {ex}", LogLevel.Error);
+            }
         }
     }
 
@@ -78,6 +113,7 @@ public sealed partial class ModEntry
         this.followRecoveryUntilTick.Remove(npcName);
         this.disconnectedFollowRecovery.Remove(npcName);
         this.lastMovementDebugNoticeTicks.Remove(npcName);
+        this.companionMovementControllers.Remove(npcName);
     }
 
     private List<SavedItemStack> NormalizeLoadedMember(SquadMemberState member)
@@ -409,22 +445,44 @@ public sealed partial class ModEntry
     {
         if (!Context.IsMainPlayer || this.saveWritesBlocked || (!force && !this.stateSnapshotDirty))
             return;
-
-        if (!playerId.HasValue && Game1.getOnlineFarmers().Count() <= 1)
-        {
-            this.stateSnapshotDirty = false;
+        if (Game1.ticks < this.nextStateSnapshotRetryTick)
             return;
+
+        try
+        {
+            if (!playerId.HasValue && Game1.getOnlineFarmers().Count() <= 1)
+            {
+                this.stateSnapshotDirty = false;
+                this.stateSnapshotFailureLogged = false;
+                this.nextStateSnapshotRetryTick = 0;
+                return;
+            }
+
+            long[]? playerIds = playerId.HasValue ? new[] { playerId.Value } : null;
+            this.Helper.Multiplayer.SendMessage(
+                this.BuildSaveData(),
+                MessageStateSnapshot,
+                modIDs: new[] { this.ModManifest.UniqueID },
+                playerIDs: playerIds);
+
+            if (!playerId.HasValue)
+                this.stateSnapshotDirty = false;
+
+            this.stateSnapshotFailureLogged = false;
+            this.nextStateSnapshotRetryTick = 0;
         }
-
-        long[]? playerIds = playerId.HasValue ? new[] { playerId.Value } : null;
-        this.Helper.Multiplayer.SendMessage(
-            this.BuildSaveData(),
-            MessageStateSnapshot,
-            modIDs: new[] { this.ModManifest.UniqueID },
-            playerIDs: playerIds);
-
-        if (!playerId.HasValue)
-            this.stateSnapshotDirty = false;
+        catch (Exception ex)
+        {
+            // Retry on a later update, but don't turn one custom item or map
+            // into an exception every half-second in the SMAPI update loop.
+            this.stateSnapshotDirty = true;
+            this.nextStateSnapshotRetryTick = Game1.ticks + 600;
+            if (!this.stateSnapshotFailureLogged)
+            {
+                this.stateSnapshotFailureLogged = true;
+                this.Monitor.Log($"Companion multiplayer state could not be sent and will be retried: {ex}", LogLevel.Error);
+            }
+        }
     }
 
     private void SendStateUnavailable(long playerId)
@@ -583,7 +641,7 @@ public sealed partial class ModEntry
     private bool TryRegisterCommand(long playerId, string? commandId)
     {
         if (string.IsNullOrWhiteSpace(commandId))
-            return true;
+            return false;
         if (commandId.Length > 64)
             return false;
 

@@ -10,6 +10,13 @@ internal enum CompanionMode
     ParkedForDisconnect
 }
 
+internal enum CompanionMovementIntent
+{
+    Follow,
+    Recall,
+    Task
+}
+
 internal sealed class SquadMemberState
 {
     public string NpcName { get; set; } = "";
@@ -21,6 +28,10 @@ internal sealed class SquadMemberState
     public float OriginalTileY { get; set; }
     public bool HasOriginalPosition { get; set; }
     public int OriginalDayIndex { get; set; } = -1;
+    public bool OriginalScheduleCaptured { get; set; }
+    public string? OriginalScheduleKey { get; set; }
+    public string? OriginalPetBehavior { get; set; }
+    public bool OriginalSpousePatioActivity { get; set; }
     public string? WaitingLocationName { get; set; }
     public float WaitingTileX { get; set; }
     public float WaitingTileY { get; set; }
@@ -70,6 +81,10 @@ internal sealed class DeferredNpcRestoreState
     public float OriginalTileY { get; set; }
     public bool HasOriginalPosition { get; set; }
     public int OriginalDayIndex { get; set; } = -1;
+    public bool OriginalScheduleCaptured { get; set; }
+    public string? OriginalScheduleKey { get; set; }
+    public string? OriginalPetBehavior { get; set; }
+    public bool OriginalSpousePatioActivity { get; set; }
 }
 
 internal sealed class CompanionHostRules
@@ -174,9 +189,10 @@ internal sealed class PendingCompanionTask
     public int LastActionTick { get; set; }
     public int StartedTick { get; set; }
     public int LastProcessedTick { get; set; }
-    public int ActiveTicks { get; set; }
+    public int InactiveTicks { get; set; }
     public Vector2 StandTile { get; set; }
-    public float LastDistanceToStandTile { get; set; } = -1f;
+    public Vector2 LastProgressPosition { get; set; }
+    public bool HasLastProgressPosition { get; set; }
     public int NoProgressTicks { get; set; }
 }
 
