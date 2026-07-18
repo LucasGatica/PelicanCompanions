@@ -5,8 +5,9 @@ namespace PelicanCompanions;
 
 internal sealed class ModConfig
 {
-    public int ConfigVersion { get; set; } = 5;
+    public int ConfigVersion { get; set; } = 7;
 
+    public KeybindList QuickActionWheelKey { get; set; } = KeybindList.Parse("X");
     public KeybindList RecruitKey { get; set; } = KeybindList.Parse("F5");
     public KeybindList ManualTaskKey { get; set; } = KeybindList.Parse("F6");
     public KeybindList OpenSquadInventoryKey { get; set; } = KeybindList.Parse("F7");
@@ -15,7 +16,7 @@ internal sealed class ModConfig
     public KeybindList RecallAllCompanionsKey { get; set; } = KeybindList.Parse("");
     public bool ShowCompanionQuickHud { get; set; } = true;
     public CompanionQuickHudMode CompanionQuickHudMode { get; set; } = CompanionQuickHudMode.Detailed;
-    public CompanionQuickHudSide CompanionQuickHudSide { get; set; } = CompanionQuickHudSide.Right;
+    public CompanionQuickHudSide CompanionQuickHudSide { get; set; } = CompanionQuickHudSide.Left;
     public int CompanionQuickHudMaxRows { get; set; } = 6;
     public CompanionFormationMode CompanionFormationMode { get; set; } = CompanionFormationMode.Adaptive;
     public bool ShowCompanionMovementDebug { get; set; } = false;
@@ -61,6 +62,7 @@ internal sealed class ModConfig
 
     public void Validate()
     {
+        this.QuickActionWheelKey ??= KeybindList.Parse("X");
         this.RecruitKey ??= KeybindList.Parse("F5");
         this.ManualTaskKey ??= KeybindList.Parse("F6");
         this.OpenSquadInventoryKey ??= KeybindList.Parse("F7");
@@ -79,7 +81,7 @@ internal sealed class ModConfig
         if (!Enum.IsDefined(this.CompanionQuickHudMode))
             this.CompanionQuickHudMode = CompanionQuickHudMode.Detailed;
         if (!Enum.IsDefined(this.CompanionQuickHudSide))
-            this.CompanionQuickHudSide = CompanionQuickHudSide.Right;
+            this.CompanionQuickHudSide = CompanionQuickHudSide.Left;
         if (!Enum.IsDefined(this.CompanionFormationMode))
             this.CompanionFormationMode = CompanionFormationMode.Adaptive;
         if (!Enum.IsDefined(this.DisableInteraction))

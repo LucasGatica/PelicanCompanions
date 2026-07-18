@@ -85,7 +85,7 @@ public sealed partial class ModEntry
 
     private EligibilityResult CanRecruit(NPC npc, long ownerId)
     {
-        if (this.IsBlockedGameState(blockForMenu: false))
+        if (this.IsOwnerSimulationBlocked(ownerId, blockForMenu: false))
             return new EligibilityResult(false, "recruitment.blocked_state");
 
         if (this.members.TryGetValue(npc.Name, out SquadMemberState? existing))
@@ -247,7 +247,7 @@ public sealed partial class ModEntry
         }
 
         this.MarkStateDirty();
-        if (ownerId == Game1.player.UniqueMultiplayerID)
+        if (this.ShouldShowFeedbackFor(ownerId))
             this.Info("recruitment.dismissed_all");
     }
 
@@ -269,9 +269,12 @@ public sealed partial class ModEntry
             return;
         }
 
-        bool deferNpcRestore = silent && this.IsBlockedGameState(blockForMenu: false);
-
         NPC? npc = Game1.getCharacterFromName(npcName, mustBeVillager: false, includeEventActors: false);
+        // An unavailable custom NPC still needs a persisted vanilla-restore
+        // intent. Removing membership without it would permanently forget the
+        // schedule state captured when control was acquired.
+        bool deferNpcRestore = npc is null
+            || (silent && this.IsOwnerSimulationBlocked(requester, blockForMenu: false));
         if (npc is not null)
         {
             try
@@ -327,35 +330,47 @@ public sealed partial class ModEntry
             this.Info("recruitment.dismissed", new { npc = member.DisplayName });
     }
 
-    private void SetWaiting(string npcName, long ownerId)
+    private void SetWaiting(string npcName, long ownerId, bool showMessage = true)
     {
         if (!this.members.TryGetValue(npcName, out SquadMemberState? member) || !this.CanOwnerMutate(member, ownerId))
             return;
 
         if (!Context.IsMainPlayer && ownerId == Game1.player.UniqueMultiplayerID)
         {
-            this.SendActionRequest("Wait", npcName);
+            NPC? localNpc = this.GetNpcByName(npcName);
+            string? expectedLocationName = localNpc?.currentLocation?.NameOrUniqueName;
+            if (string.IsNullOrWhiteSpace(expectedLocationName))
+            {
+                this.Warn("commands.no_followers");
+                return;
+            }
+
+            this.SendActionRequest("Wait", npcName, expectedLocationName: expectedLocationName);
+            return;
+        }
+
+        NPC? npc = this.GetNpcByName(npcName);
+        if (npc is null || npc.currentLocation is null)
+        {
+            if (this.ShouldShowFeedbackFor(ownerId))
+                this.Warn("commands.no_followers");
             return;
         }
 
         this.RemovePendingTask(npcName);
         this.ClearFollowState(npcName);
-        NPC? npc = Game1.getCharacterFromName(npcName, mustBeVillager: false, includeEventActors: false);
-        if (npc is not null)
-        {
-            this.StoreWaitingPosition(member, npc);
-            this.DisableNpcSchedule(npc, stopCurrentRoute: true);
-        }
+        this.StoreWaitingPosition(member, npc);
+        this.DisableNpcSchedule(npc, stopCurrentRoute: true);
 
         member.Mode = CompanionMode.Waiting;
         this.ClearCompanionTarget(member);
         this.SetCompanionActivity(member, "companion.status.waiting");
         this.MarkStateDirty();
-        if (ownerId == Game1.player.UniqueMultiplayerID)
+        if (showMessage && this.ShouldShowFeedbackFor(ownerId))
             this.Info("management.waiting", new { npc = member.DisplayName });
     }
 
-    private void ResumeFollowing(string npcName, long ownerId)
+    private void ResumeFollowing(string npcName, long ownerId, bool showMessage = true)
     {
         if (!this.members.TryGetValue(npcName, out SquadMemberState? member) || !this.CanOwnerMutate(member, ownerId))
             return;
@@ -381,7 +396,7 @@ public sealed partial class ModEntry
 
         this.SetCompanionActivity(member, needsReturn ? "companion.status.returning" : "companion.status.following");
         this.MarkStateDirty();
-        if (ownerId == Game1.player.UniqueMultiplayerID)
+        if (showMessage && this.ShouldShowFeedbackFor(ownerId))
             this.Info("management.resumed", new { npc = member.DisplayName });
     }
 
@@ -405,7 +420,10 @@ public sealed partial class ModEntry
             OriginalScheduleCaptured = member.OriginalScheduleCaptured,
             OriginalScheduleKey = member.OriginalScheduleKey,
             OriginalPetBehavior = member.OriginalPetBehavior,
-            OriginalSpousePatioActivity = member.OriginalSpousePatioActivity
+            OriginalSpousePatioActivity = member.OriginalSpousePatioActivity,
+            OriginalMovementSpeedCaptured = member.OriginalMovementSpeedCaptured,
+            OriginalMovementSpeed = member.OriginalMovementSpeed,
+            OriginalAddedSpeed = member.OriginalAddedSpeed
         };
     }
 
@@ -425,5 +443,22 @@ public sealed partial class ModEntry
         member.OriginalScheduleKey = member.OriginalScheduleCaptured ? npc.ScheduleKey : null;
         member.OriginalPetBehavior = npc is Pet pet ? pet.CurrentBehavior : null;
         member.OriginalSpousePatioActivity = npc.shouldPlaySpousePatioAnimation.Value;
+        CaptureOriginalNpcMovementSpeed(member, npc);
+    }
+
+    private static void CaptureOriginalNpcMovementSpeed(SquadMemberState member, NPC npc)
+    {
+        member.OriginalMovementSpeedCaptured = true;
+        member.OriginalMovementSpeed = npc.speed;
+        member.OriginalAddedSpeed = npc.addedSpeed;
+    }
+
+    private void EnsureOriginalNpcMovementSpeedCaptured(SquadMemberState member, NPC npc)
+    {
+        if (member.OriginalMovementSpeedCaptured)
+            return;
+
+        CaptureOriginalNpcMovementSpeed(member, npc);
+        this.MarkStateDirty();
     }
 }

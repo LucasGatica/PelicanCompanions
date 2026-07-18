@@ -16,12 +16,13 @@ namespace PelicanCompanions;
 public sealed partial class ModEntry : Mod
 {
     private const string SaveKey = "pelican-companions-state";
-    private const int CurrentSaveVersion = 7;
+    private const int CurrentSaveVersion = 8;
     private const string NpcConfigAssetKey = "Lucas.PelicanCompanions/NpcConfig";
     private const string MessageActionRequest = "CompanionActionRequest";
     private const string MessageStateRequest = "CompanionStateRequest";
     private const string MessageStateSnapshot = "CompanionStateSnapshot";
     private const string MessageStateUnavailable = "CompanionStateUnavailable";
+    private const string MessageCommandFeedback = "CompanionCommandFeedback";
     private const int SquadInventoryCapacity = 36;
     private const int MaxTrailPointsPerOwner = 96;
     private const int FollowUpdateIntervalTicks = 5;
@@ -46,6 +47,7 @@ public sealed partial class ModEntry : Mod
     private const int FollowNoProgressUpdatesThreshold = 18;
     private const int FollowRecoveryDurationTicks = 90;
     private const int MaxFollowReachabilitySearchTiles = 2048;
+    private const int ReachabilityCacheTtlTicks = 15;
     private const int TaskNoProgressUpdatesThreshold = 18;
     private const int RecentLootLimit = 5;
     private const int CompanionHudNoticeDurationTicks = 260;
@@ -73,8 +75,9 @@ public sealed partial class ModEntry : Mod
     private readonly Dictionary<string, SquadMemberState> members = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PendingCompanionTask> pendingTasks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> workTargetReservations = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SharedWorkTargetReservation> sharedWorkTargetReservations = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> workStandReservations = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> followDestinationsThisUpdate = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> followDestinationsThisUpdate = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DeferredNpcRestoreState> deferredNpcRestores = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<long, bool> taskToggles = new();
     private readonly Dictionary<long, List<FollowTrailPoint>> ownerTrails = new();
@@ -96,12 +99,15 @@ public sealed partial class ModEntry : Mod
     private readonly List<SavedItemStack> legacyOverflowItems = new();
     private readonly List<CompanionHudNotice> companionHudNotices = new();
     private readonly Queue<DeferredActionRequest> deferredActionRequests = new();
-    private readonly Dictionary<long, Queue<string>> recentCommandIdsByPlayer = new();
-    private readonly Dictionary<long, HashSet<string>> recentCommandIdSetsByPlayer = new();
+    private readonly CommandReplayGuard commandReplayGuard = new();
+    private readonly Dictionary<NPC, int> vanillaMovementAllowances = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<NPC> controlledNpcLeases = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<long, LocalSimulationBlockState> localOwnerSimulationBlocks = new();
     private readonly Random random = new();
 
     private ModConfig config = new();
     private PerScreen<CompanionQuickHud>? companionQuickHuds;
+    private PerScreen<CompanionActionWheel>? companionActionWheels;
     private Dictionary<string, NpcCompanionProfile> npcProfiles = new(StringComparer.OrdinalIgnoreCase);
     private CompanionHostRules? replicatedHostRules;
     private int nextTaskScanTick;
@@ -112,8 +118,8 @@ public sealed partial class ModEntry : Mod
     private int nextStateSnapshotRetryTick;
     private bool saveWritesBlocked;
     private bool planningFollowDestinations;
-    private int companionReleaseGuardDepth;
     private bool pendingDailyCompanionRefresh;
+    private long? commandFeedbackTargetPlayerId;
     private Harmony? harmony;
 
     private readonly record struct FollowTrailPoint(string LocationName, Vector2 Tile, int Tick);
@@ -139,6 +145,7 @@ public sealed partial class ModEntry : Mod
         CompanionMode Mode);
     private readonly record struct TargetPreviewCacheEntry(int Tick, TargetPreview Preview);
     private readonly record struct DeferredActionRequest(long PlayerId, SquadActionMessage Message, int ReceivedTick);
+    private readonly record struct LocalSimulationBlockState(bool WithoutMenu, bool WithMenu, int Tick);
     private readonly record struct CompanionMovementControllerState(
         CompanionPathFindController Controller,
         CompanionMovementIntent Intent,
@@ -160,6 +167,7 @@ public sealed partial class ModEntry : Mod
         helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
         helper.Events.GameLoop.TimeChanged += this.OnTimeChanged;
         helper.Events.Input.ButtonPressed += this.OnButtonPressed;
+        helper.Events.Input.MouseWheelScrolled += this.OnMouseWheelScrolled;
         helper.Events.Display.RenderedHud += this.OnRenderedHud;
         helper.Events.Content.AssetRequested += this.OnAssetRequested;
         helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
@@ -169,7 +177,7 @@ public sealed partial class ModEntry : Mod
         CompanionBehaviorPatches.IsControlled = npc => Context.IsOnHostComputer
             && !this.pendingDailyCompanionRefresh
             && this.members.ContainsKey(npc.Name);
-        CompanionBehaviorPatches.IsVanillaMovementExplicitlyAllowed = () => this.companionReleaseGuardDepth > 0;
+        CompanionBehaviorPatches.IsVanillaMovementExplicitlyAllowed = this.IsVanillaMovementAllowed;
         CompanionBehaviorPatches.ShouldSuppressVanillaArrival = npc => this.suppressedVanillaArrivals.ContainsKey(npc);
         CompanionBehaviorPatches.NeutralizeVanillaBedtimeController = this.NeutralizeVanillaBedtimeController;
         this.harmony = new Harmony(this.ModManifest.UniqueID);
@@ -198,6 +206,8 @@ public sealed partial class ModEntry : Mod
             toggleWork: this.ToggleCompanionQuickWork,
             follow: this.FollowCompanionFromQuickHud,
             openPanel: member => this.OpenCompanionPanel(member.NpcName)));
+
+        this.companionActionWheels = new PerScreen<CompanionActionWheel>(() => new CompanionActionWheel());
     }
 
     private void OnGameLaunched(object? sender, GameLaunchedEventArgs e)
@@ -229,10 +239,22 @@ public sealed partial class ModEntry : Mod
 
         if (this.config.ConfigVersion < 5)
         {
-            // The redesigned dock is narrow enough for either edge; use the
-            // quieter right side by default while keeping it configurable.
-            this.config.CompanionQuickHudSide = CompanionQuickHudSide.Right;
+            this.config.CompanionQuickHudSide = CompanionQuickHudSide.Left;
             this.config.ConfigVersion = 5;
+        }
+
+        if (this.config.ConfigVersion < 6)
+        {
+            this.config.QuickActionWheelKey ??= KeybindList.Parse("X");
+            this.config.ConfigVersion = 6;
+        }
+
+        if (this.config.ConfigVersion < 7)
+        {
+            // Adopt the refreshed dock's new home once. The side remains
+            // configurable, so players can move it back after migration.
+            this.config.CompanionQuickHudSide = CompanionQuickHudSide.Left;
+            this.config.ConfigVersion = 7;
         }
     }
 

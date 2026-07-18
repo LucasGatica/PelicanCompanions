@@ -276,6 +276,7 @@ public sealed partial class ModEntry
 
         this.ResetRuntimeState(clearProfiles: true);
         this.companionQuickHuds?.ResetAllScreens();
+        this.companionActionWheels?.ResetAllScreens();
     }
 
     /// <summary>Clear every save-scoped collection in one place.</summary>
@@ -289,6 +290,7 @@ public sealed partial class ModEntry
         this.members.Clear();
         this.pendingTasks.Clear();
         this.workTargetReservations.Clear();
+        this.sharedWorkTargetReservations.Clear();
         this.taskToggles.Clear();
         this.ownerTrails.Clear();
         this.lastFollowTargets.Clear();
@@ -310,8 +312,10 @@ public sealed partial class ModEntry
         this.legacyOverflowItems.Clear();
         this.companionHudNotices.Clear();
         this.deferredActionRequests.Clear();
-        this.recentCommandIdsByPlayer.Clear();
-        this.recentCommandIdSetsByPlayer.Clear();
+        this.commandReplayGuard.Clear();
+        this.vanillaMovementAllowances.Clear();
+        this.controlledNpcLeases.Clear();
+        this.localOwnerSimulationBlocks.Clear();
         this.followDestinationsThisUpdate.Clear();
         this.workStandReservations.Clear();
         this.deferredNpcRestores.Clear();
@@ -323,8 +327,8 @@ public sealed partial class ModEntry
         this.nextStateSnapshotRetryTick = 0;
         this.saveWritesBlocked = false;
         this.planningFollowDestinations = false;
-        this.companionReleaseGuardDepth = 0;
         this.pendingDailyCompanionRefresh = false;
+        this.commandFeedbackTargetPlayerId = null;
         this.replicatedHostRules = null;
 
         if (clearProfiles)
@@ -336,7 +340,10 @@ public sealed partial class ModEntry
         if (!Context.IsWorldReady || this.saveWritesBlocked)
             return;
 
-        if (e.Button == SButton.MouseLeft && this.TryHandleCompanionQuickHudClick(e.Cursor.GetScaledScreenPixels()))
+        if (this.TryHandleCompanionActionWheelInput(e))
+            return;
+
+        if (e.Button == SButton.MouseLeft && this.TryHandleCompanionQuickHudClick(GetUiScreenPixels(e.Cursor)))
         {
             this.Helper.Input.Suppress(e.Button);
             return;
@@ -400,12 +407,18 @@ public sealed partial class ModEntry
         {
             this.DrawCompanionHudNotices(e.SpriteBatch);
             this.DrawCompanionMovementDebug(e.SpriteBatch);
+            this.DrawCompanionActionWheel(e.SpriteBatch);
         }
     }
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
-        if (!Context.IsWorldReady || this.saveWritesBlocked)
+        if (!Context.IsWorldReady)
+            return;
+
+        this.CaptureLocalOwnerSimulationBlockState();
+        this.UpdateCompanionActionWheel();
+        if (this.saveWritesBlocked)
             return;
 
         if (!Context.IsMainPlayer)
@@ -509,6 +522,8 @@ public sealed partial class ModEntry
         if (!Context.IsMainPlayer || this.saveWritesBlocked)
             return;
 
+        this.commandReplayGuard.RemovePlayer(e.Peer.PlayerID);
+        this.localOwnerSimulationBlocks.Remove(e.Peer.PlayerID);
         this.CancelPendingTasksForOwner(e.Peer.PlayerID, "companion.task_failure.owner_disconnected");
 
         foreach (SquadMemberState member in this.members.Values.Where(p => p.OwnerId == e.Peer.PlayerID).ToList())
@@ -550,6 +565,27 @@ public sealed partial class ModEntry
     {
         if (e.FromModID != this.ModManifest.UniqueID)
             return;
+
+        if (e.Type == MessageCommandFeedback
+            && !Context.IsMainPlayer
+            && e.FromPlayerID == Game1.MasterPlayer.UniqueMultiplayerID)
+        {
+            try
+            {
+                CompanionCommandFeedbackMessage feedback = e.ReadAs<CompanionCommandFeedbackMessage>();
+                if (feedback is not null && !string.IsNullOrWhiteSpace(feedback.Text) && feedback.Text.Length <= 1024)
+                {
+                    Game1.addHUDMessage(feedback.IsError
+                        ? new HUDMessage(feedback.Text, HUDMessage.error_type)
+                        : new HUDMessage(feedback.Text));
+                }
+            }
+            catch (Exception ex)
+            {
+                this.Monitor.Log($"Ignored invalid companion command feedback: {ex.Message}", LogLevel.Warn);
+            }
+            return;
+        }
 
         if (e.Type == MessageStateUnavailable
             && !Context.IsOnHostComputer
@@ -613,7 +649,7 @@ public sealed partial class ModEntry
             return;
         }
 
-        if (this.IsBlockedGameState(blockForMenu: false))
+        if (this.IsOwnerSimulationBlocked(e.FromPlayerID, blockForMenu: false))
         {
             if (this.deferredActionRequests.Count < 64)
                 this.deferredActionRequests.Enqueue(new DeferredActionRequest(e.FromPlayerID, message, Game1.ticks));
@@ -631,22 +667,31 @@ public sealed partial class ModEntry
     {
         if (!Context.IsMainPlayer
             || this.deferredActionRequests.Count == 0
-            || this.IsBlockedGameState(blockForMenu: false))
+            || this.IsGlobalSimulationBlocked())
         {
             return;
         }
 
         int requestsToProcess = Math.Min(8, this.deferredActionRequests.Count);
+        bool handledAny = false;
         for (int i = 0; i < requestsToProcess; i++)
         {
             DeferredActionRequest request = this.deferredActionRequests.Dequeue();
             if (Game1.ticks - request.ReceivedTick > DeferredActionMaxAgeTicks)
                 continue;
 
+            if (this.IsOwnerSimulationBlocked(request.PlayerId, blockForMenu: false))
+            {
+                this.deferredActionRequests.Enqueue(request);
+                continue;
+            }
+
             this.HandleActionRequestSafely(request.PlayerId, request.Message);
+            handledAny = true;
         }
 
-        this.SendStateSnapshot(force: true);
+        if (handledAny)
+            this.SendStateSnapshot(force: true);
     }
 
     private void HandleActionRequest(long playerId, SquadActionMessage message)
@@ -655,20 +700,24 @@ public sealed partial class ModEntry
         message.NpcName ??= "";
         message.Argument ??= "";
         message.LocationName ??= "";
+        message.ExpectedItemToken ??= "";
         if (action.Length > 64
             || message.NpcName.Length > 128
             || message.Argument.Length > 512
-            || message.LocationName.Length > 256)
+            || message.LocationName.Length > 256
+            || message.ExpectedItemToken.Length > 128)
         {
             return;
         }
 
-        if (action is "ManualTask" or "MimicToolUse" or "MimicAction")
+        if (action is "ManualTask" or "MimicToolUse" or "MimicAction" or "ContextTask" or "MoveToWait")
         {
             Farmer? owner = this.GetOwnerFarmer(playerId);
             if (owner?.currentLocation is null
                 || !string.Equals(owner.currentLocation.NameOrUniqueName, message.LocationName, StringComparison.Ordinal))
             {
+                if (action is "ContextTask" or "MoveToWait")
+                    this.Warn("multiplayer.command_stale");
                 return;
             }
         }
@@ -690,7 +739,20 @@ public sealed partial class ModEntry
                 break;
 
             case "Wait":
-                this.SetWaiting(message.NpcName, playerId);
+                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? waitingMember)
+                    && this.CanOwnerMutate(waitingMember, playerId))
+                {
+                    NPC? waitingNpc = this.GetNpcByName(message.NpcName);
+                    if (waitingNpc?.currentLocation?.NameOrUniqueName == message.LocationName
+                        && !string.IsNullOrWhiteSpace(message.LocationName))
+                    {
+                        this.SetWaiting(message.NpcName, playerId);
+                    }
+                    else
+                    {
+                        this.Warn("multiplayer.command_stale");
+                    }
+                }
                 break;
 
             case "Resume":
@@ -698,19 +760,42 @@ public sealed partial class ModEntry
                 break;
 
             case "Recall":
-                this.RecallCompanion(message.NpcName, playerId, showMessage: false);
+                this.RecallCompanion(message.NpcName, playerId, showMessage: true);
                 break;
 
             case "RecallAll":
-                this.RecallAllCompanions(playerId, showMessage: false);
+                this.RecallAllCompanions(playerId, showMessage: true);
                 break;
 
-            case "ToggleTasks":
-                this.ToggleTasks(playerId);
+            case "SetTasksEnabled":
+                if (message.DesiredEnabled is bool tasksEnabled)
+                    this.SetTasksEnabled(playerId, tasksEnabled);
                 break;
 
             case "ManualTask":
                 this.TryManualTask(playerId, new Vector2(message.TileX, message.TileY));
+                break;
+
+            case "ContextTask":
+                if (Enum.TryParse(message.Argument, ignoreCase: true, out CompanionTaskKind contextKind)
+                    && Enum.IsDefined(contextKind))
+                {
+                    this.TryAssignContextTask(
+                        playerId,
+                        string.IsNullOrWhiteSpace(message.NpcName) ? null : message.NpcName,
+                        contextKind,
+                        message.LocationName,
+                        new Vector2(message.TileX, message.TileY),
+                        message.ExpectedItemToken);
+                }
+                break;
+
+            case "MoveToWait":
+                this.TryMoveCompanionToWait(
+                    playerId,
+                    message.NpcName,
+                    message.LocationName,
+                    new Vector2(message.TileX, message.TileY));
                 break;
 
             case "MimicToolUse":
@@ -721,17 +806,21 @@ public sealed partial class ModEntry
                 this.TryMimicAction(playerId, new Vector2(message.TileX, message.TileY));
                 break;
 
-            case "ToggleQuickWork":
-                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? quickMember))
-                    this.ToggleCompanionQuickWork(quickMember, playerId);
+            case "SetQuickWork":
+                if (message.DesiredEnabled is bool quickWorkEnabled
+                    && this.members.TryGetValue(message.NpcName, out SquadMemberState? quickMember))
+                {
+                    this.SetCompanionQuickWork(quickMember, playerId, quickWorkEnabled);
+                }
                 break;
 
-            case "ToggleDirective":
-                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? directiveMember)
+            case "SetDirective":
+                if (message.DesiredEnabled is bool directiveEnabled
+                    && this.members.TryGetValue(message.NpcName, out SquadMemberState? directiveMember)
                     && Enum.TryParse(message.Argument, ignoreCase: true, out CompanionDirective directive)
                     && Enum.IsDefined(directive))
                 {
-                    this.ToggleCompanionDirective(directiveMember, directive, playerId);
+                    this.SetCompanionDirective(directiveMember, directive, playerId, directiveEnabled);
                 }
                 break;
 
@@ -742,7 +831,14 @@ public sealed partial class ModEntry
 
             case "WithdrawCompanionSavedItem":
                 if (this.members.TryGetValue(message.NpcName, out SquadMemberState? itemMember))
-                    this.WithdrawCompanionInventorySavedItem(itemMember, message.Index, message.Argument, playerId);
+                {
+                    this.WithdrawCompanionInventorySavedItem(
+                        itemMember,
+                        message.Index,
+                        message.Argument,
+                        playerId,
+                        message.ExpectedItemToken);
+                }
                 break;
 
             case "WithdrawAllCompanionItems":
@@ -757,12 +853,12 @@ public sealed partial class ModEntry
             default:
                 return;
         }
-
-        this.MarkStateDirty();
     }
 
     private void HandleActionRequestSafely(long playerId, SquadActionMessage message)
     {
+        long? previousFeedbackTarget = this.commandFeedbackTargetPlayerId;
+        this.commandFeedbackTargetPlayerId = playerId;
         try
         {
             this.HandleActionRequest(playerId, message);
@@ -772,6 +868,11 @@ public sealed partial class ModEntry
             this.Monitor.Log(
                 $"Rejected companion command '{message.Action}' from player {playerId} after an unexpected error. {ex}",
                 LogLevel.Error);
+            this.Warn("multiplayer.command_failed");
+        }
+        finally
+        {
+            this.commandFeedbackTargetPlayerId = previousFeedbackTarget;
         }
     }
 }

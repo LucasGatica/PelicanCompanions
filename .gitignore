@@ -1,8 +1,10 @@
-# Documentation and release notes are kept locally, not versioned in this runtime repository.
-docs/
+# Keep maintained project documentation, while leaving local notes/release drafts untracked.
+docs/*
 *.md
 !README.md
 !CHANGELOG.md
+!docs/ARCHITECTURE.md
+!docs/MANUAL_QA.md
 
 # Build output and generated mod packages.
 bin/

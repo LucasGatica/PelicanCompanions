@@ -43,6 +43,7 @@ public sealed partial class ModEntry
             }
 
             member.DisplayName = npc.displayName;
+            this.EnsureOriginalNpcMovementSpeedCaptured(member, npc);
             if (member.LastFailureReasonKey == "companion.task_failure.npc_missing")
                 this.SetTaskFailure(member, "");
         }
@@ -104,6 +105,7 @@ public sealed partial class ModEntry
 
     private void ClearFollowState(string npcName)
     {
+        this.controlledNpcLeases.RemoveWhere(npc => string.Equals(npc.Name, npcName, StringComparison.OrdinalIgnoreCase));
         this.lastFollowTargets.Remove(npcName);
         this.lastFollowTargetDistances.Remove(npcName);
         this.lastFollowPathTicks.Remove(npcName);
@@ -114,6 +116,13 @@ public sealed partial class ModEntry
         this.disconnectedFollowRecovery.Remove(npcName);
         this.lastMovementDebugNoticeTicks.Remove(npcName);
         this.companionMovementControllers.Remove(npcName);
+        foreach (string key in this.followDestinationsThisUpdate
+            .Where(pair => string.Equals(pair.Value, npcName, StringComparison.OrdinalIgnoreCase))
+            .Select(pair => pair.Key)
+            .ToList())
+        {
+            this.followDestinationsThisUpdate.Remove(key);
+        }
     }
 
     private List<SavedItemStack> NormalizeLoadedMember(SquadMemberState member)
@@ -306,25 +315,27 @@ public sealed partial class ModEntry
 
     private SavedModState BuildSaveData()
     {
-        foreach (SquadMemberState member in this.members.Values)
-        {
-            member.CurrentWorkIsDirect = this.HasActiveWorkDirective(member)
-                || (this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? task)
-                    && !task.UsesConfiguredAutonomy);
-
-            if (Context.IsWorldReady)
-                this.UpdateTargetPreview(member, this.BuildTargetPreview(member, null));
-        }
+        List<SquadMemberState> detachedMembers = this.members.Values
+            .Select(member =>
+            {
+                SquadMemberState copy = CompanionStateCopy.CloneMember(member);
+                copy.CurrentWorkIsDirect = this.HasActiveWorkDirective(member)
+                    || (this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? task)
+                        && task.Kind != CompanionTaskKind.MovingToWait
+                        && !task.UsesConfiguredAutonomy);
+                return copy;
+            })
+            .ToList();
 
         return new SavedModState
         {
             Version = CurrentSaveVersion,
             Revision = this.stateRevision,
-            Members = this.members.Values.ToList(),
+            Members = detachedMembers,
             TaskTogglesByPlayer = this.taskToggles.ToDictionary(p => p.Key.ToString(), p => p.Value),
             SquadInventory = this.squadInventory.Select(this.ToSavedItem).Where(p => p is not null).Cast<SavedItemStack>().ToList(),
-            LegacyOverflowItems = this.legacyOverflowItems.ToList(),
-            PendingNpcRestores = this.deferredNpcRestores.Values.ToList(),
+            LegacyOverflowItems = this.legacyOverflowItems.Select(CompanionStateCopy.CloneItem).ToList(),
+            PendingNpcRestores = this.deferredNpcRestores.Values.Select(CompanionStateCopy.CloneRestore).ToList(),
             HostRules = this.BuildHostRules()
         };
     }
@@ -499,69 +510,115 @@ public sealed partial class ModEntry
 
     private void ApplyStateSnapshot(SavedModState data)
     {
+        ArgumentNullException.ThrowIfNull(data);
+
         if (Context.IsOnHostComputer || data.Revision <= this.lastAppliedStateRevision)
             return;
-        if (data.Version < 1 || data.Version > CurrentSaveVersion)
-        {
-            this.Monitor.Log(
-                $"Ignored multiplayer snapshot schema {data.Version}; this version supports schemas 1-{CurrentSaveVersion}.",
-                LogLevel.Error);
-            return;
-        }
 
+        PreparedStateSnapshot prepared = this.PrepareStateSnapshot(data);
 
-        List<SquadMemberState> incomingMembers = (data.Members ?? new List<SquadMemberState>()).ToList();
-        HashSet<string> incomingNames = new(StringComparer.OrdinalIgnoreCase);
-        foreach (SquadMemberState? member in incomingMembers)
-        {
-            if (member is null || string.IsNullOrWhiteSpace(member.NpcName) || !incomingNames.Add(member.NpcName))
-                throw new InvalidDataException("The multiplayer snapshot contains an invalid or duplicate companion entry.");
-        }
-
-        long incomingRevision = data.Revision;
+        // Commit only after the full payload has been validated, normalized, and
+        // materialized. A malformed custom item or member can no longer clear a
+        // client's last known-good snapshot or consume its revision.
         this.ResetRuntimeState(clearProfiles: false);
-        this.stateRevision = incomingRevision;
-        this.lastAppliedStateRevision = incomingRevision;
+        foreach ((string npcName, SquadMemberState member) in prepared.Members)
+            this.members.Add(npcName, member);
+        foreach ((long ownerId, bool enabled) in prepared.TaskToggles)
+            this.taskToggles.Add(ownerId, enabled);
+        this.squadInventory.AddRange(prepared.SquadInventory);
+        this.legacyOverflowItems.AddRange(prepared.OverflowItems);
+        this.replicatedHostRules = prepared.HostRules;
+        this.stateRevision = prepared.Revision;
         this.stateSnapshotDirty = false;
-
-        if (data.HostRules is not null)
-            this.ApplyHostRules(data.HostRules);
-
-        foreach (SquadMemberState member in incomingMembers)
-        {
-            this.NormalizeReplicatedMember(member);
-            this.members.Add(member.NpcName, member);
-        }
-
-        foreach ((string key, bool value) in data.TaskTogglesByPlayer ?? new Dictionary<string, bool>())
-        {
-            if (long.TryParse(key, out long ownerId))
-                this.taskToggles[ownerId] = value;
-        }
-
-        foreach (SavedItemStack? saved in data.SquadInventory ?? new List<SavedItemStack>())
-        {
-            if (saved is null || string.IsNullOrWhiteSpace(saved.QualifiedItemId) || saved.Stack <= 0)
-                continue;
-
-            Item? item = this.TryCreateItem(saved);
-            if (item is not null)
-                this.squadInventory.Add(item);
-            else
-                this.legacyOverflowItems.Add(saved);
-        }
-
-        foreach (SavedItemStack? saved in data.LegacyOverflowItems ?? new List<SavedItemStack>())
-        {
-            if (saved is not null && !string.IsNullOrWhiteSpace(saved.QualifiedItemId) && saved.Stack > 0)
-                this.legacyOverflowItems.Add(saved);
-        }
-
+        this.lastAppliedStateRevision = prepared.Revision;
         this.InvalidateTargetPreviews();
     }
 
-    private void ApplyHostRules(CompanionHostRules rules)
+    private PreparedStateSnapshot PrepareStateSnapshot(SavedModState data)
     {
+        if (data.Version < 1 || data.Version > CurrentSaveVersion)
+        {
+            throw new InvalidDataException(
+                $"Snapshot schema {data.Version} is outside the supported range 1-{CurrentSaveVersion}.");
+        }
+
+        if (data.Revision < 0)
+            throw new InvalidDataException("The multiplayer snapshot has a negative revision.");
+
+        List<SquadMemberState> incomingMembers = data.Members ?? new List<SquadMemberState>();
+        if (incomingMembers.Count > 256)
+            throw new InvalidDataException("The multiplayer snapshot contains too many companions.");
+
+        Dictionary<string, SquadMemberState> preparedMembers = new(StringComparer.OrdinalIgnoreCase);
+        foreach (SquadMemberState? incomingMember in incomingMembers)
+        {
+            if (incomingMember is null || string.IsNullOrWhiteSpace(incomingMember.NpcName))
+                throw new InvalidDataException("The multiplayer snapshot contains an invalid or duplicate companion entry.");
+
+            SquadMemberState member = CompanionStateCopy.CloneMember(incomingMember);
+            NormalizeReplicatedMember(member);
+            if (!preparedMembers.TryAdd(member.NpcName, member))
+                throw new InvalidDataException($"The multiplayer snapshot contains duplicate NPC key '{member.NpcName}'.");
+        }
+
+        Dictionary<long, bool> preparedToggles = new();
+        foreach ((string key, bool value) in data.TaskTogglesByPlayer ?? new Dictionary<string, bool>())
+        {
+            if (long.TryParse(key, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long ownerId))
+                preparedToggles[ownerId] = value;
+        }
+
+        List<SavedItemStack> incomingSquadInventory = data.SquadInventory ?? new List<SavedItemStack>();
+        List<SavedItemStack> incomingOverflow = data.LegacyOverflowItems ?? new List<SavedItemStack>();
+        if (incomingSquadInventory.Count > 4096 || incomingOverflow.Count > 4096)
+            throw new InvalidDataException("The multiplayer snapshot contains an unreasonable number of item stacks.");
+
+        List<Item> preparedInventory = new();
+        List<SavedItemStack> preparedOverflow = new();
+        foreach (SavedItemStack? incoming in incomingSquadInventory)
+        {
+            SavedItemStack saved = ValidateSnapshotItem(incoming);
+            Item? item = this.TryCreateItem(saved);
+            if (item is not null)
+                preparedInventory.Add(item);
+            else
+                preparedOverflow.Add(saved);
+        }
+
+        foreach (SavedItemStack? incoming in incomingOverflow)
+            preparedOverflow.Add(ValidateSnapshotItem(incoming));
+
+        CompanionHostRules? hostRules = data.HostRules is null
+            ? null
+            : NormalizeHostRules(data.HostRules);
+        return new PreparedStateSnapshot(
+            data.Revision,
+            preparedMembers,
+            preparedToggles,
+            preparedInventory,
+            preparedOverflow,
+            hostRules);
+    }
+
+    private static SavedItemStack ValidateSnapshotItem(SavedItemStack? incoming)
+    {
+        if (incoming is null || string.IsNullOrWhiteSpace(incoming.QualifiedItemId) || incoming.Stack <= 0)
+            throw new InvalidDataException("The multiplayer snapshot contains an invalid item stack.");
+
+        return CompanionStateCopy.CloneItem(incoming);
+    }
+
+    private sealed record PreparedStateSnapshot(
+        long Revision,
+        Dictionary<string, SquadMemberState> Members,
+        Dictionary<long, bool> TaskToggles,
+        List<Item> SquadInventory,
+        List<SavedItemStack> OverflowItems,
+        CompanionHostRules? HostRules);
+
+    private static CompanionHostRules NormalizeHostRules(CompanionHostRules source)
+    {
+        CompanionHostRules rules = CompanionStateCopy.CloneHostRules(source);
         rules.CompanionInventorySlots = Math.Clamp(rules.CompanionInventorySlots, 1, 10);
         rules.CompanionWorkRadius = Math.Clamp(rules.CompanionWorkRadius, 3, 20);
         rules.CompanionWorkReturnDistance = Math.Clamp(rules.CompanionWorkReturnDistance, rules.CompanionWorkRadius, 40);
@@ -574,7 +631,44 @@ public sealed partial class ModEntry
         rules.MiningMode = Enum.IsDefined(rules.MiningMode) ? rules.MiningMode : TaskMode.Disabled;
         rules.WateringMode = Enum.IsDefined(rules.WateringMode) ? rules.WateringMode : TaskMode.Disabled;
         rules.PettingMode = Enum.IsDefined(rules.PettingMode) ? rules.PettingMode : TaskMode.Disabled;
-        this.replicatedHostRules = rules;
+        return rules;
+    }
+
+    /*
+     * Keep the helpers below close to snapshot application: they are the only
+     * bridge from an untrusted network DTO into client-visible runtime state.
+     */
+    private static void NormalizeReplicatedMember(SquadMemberState member)
+    {
+        if (!Enum.IsDefined(member.Mode))
+            member.Mode = CompanionMode.Following;
+        if (!Enum.IsDefined(member.PreferredWorkSpecialty))
+            member.PreferredWorkSpecialty = CompanionWorkSpecialty.ClearArea;
+
+        member.DisplayName ??= member.NpcName;
+        member.Level = Math.Clamp(member.Level, 1, CompanionProgression.MaxLevel);
+        member.Xp = Math.Max(0, member.Xp);
+        member.UnspentSkillPoints = Math.Max(0, member.UnspentSkillPoints);
+        member.UnlockedSkillIds = (member.UnlockedSkillIds ?? new List<string>())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        member.Inventory = (member.Inventory ?? new List<SavedItemStack>())
+            .Where(saved => saved is not null && !string.IsNullOrWhiteSpace(saved.QualifiedItemId) && saved.Stack > 0)
+            .Select(CompanionStateCopy.CloneItem)
+            .ToList();
+        member.RecentLoot = (member.RecentLoot ?? new List<RecentCompanionLoot>())
+            .Where(loot => loot is not null && !string.IsNullOrWhiteSpace(loot.QualifiedItemId) && loot.Stack > 0)
+            .OrderByDescending(loot => loot.AddedAtUtcTicks)
+            .Take(RecentLootLimit)
+            .Select(CompanionStateCopy.CloneLoot)
+            .ToList();
+        member.CurrentActivityKey ??= "companion.status.following";
+        member.LastTaskResultKey ??= "";
+        member.LastFailureReasonKey ??= "";
+        member.CurrentTargetKey ??= "";
+        member.PreviewTargetKey ??= "";
+        member.PreviewReasonKey ??= "";
     }
 
     private bool IsCompanionProgressionEnabled()
@@ -607,60 +701,10 @@ public sealed partial class ModEntry
         };
     }
 
-    private void NormalizeReplicatedMember(SquadMemberState member)
-    {
-        if (!Enum.IsDefined(member.Mode))
-            member.Mode = CompanionMode.Following;
-        if (!Enum.IsDefined(member.PreferredWorkSpecialty))
-            member.PreferredWorkSpecialty = CompanionWorkSpecialty.ClearArea;
-
-        member.DisplayName ??= member.NpcName;
-        member.Level = Math.Clamp(member.Level, 1, CompanionProgression.MaxLevel);
-        member.Xp = Math.Max(0, member.Xp);
-        member.UnspentSkillPoints = Math.Max(0, member.UnspentSkillPoints);
-        member.UnlockedSkillIds = (member.UnlockedSkillIds ?? new List<string>())
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        member.Inventory = (member.Inventory ?? new List<SavedItemStack>())
-            .Where(saved => saved is not null && !string.IsNullOrWhiteSpace(saved.QualifiedItemId) && saved.Stack > 0)
-            .ToList();
-        member.RecentLoot = (member.RecentLoot ?? new List<RecentCompanionLoot>())
-            .Where(loot => loot is not null && !string.IsNullOrWhiteSpace(loot.QualifiedItemId) && loot.Stack > 0)
-            .OrderByDescending(loot => loot.AddedAtUtcTicks)
-            .Take(RecentLootLimit)
-            .ToList();
-        member.CurrentActivityKey ??= "companion.status.following";
-        member.LastTaskResultKey ??= "";
-        member.LastFailureReasonKey ??= "";
-        member.CurrentTargetKey ??= "";
-        member.PreviewTargetKey ??= "";
-        member.PreviewReasonKey ??= "";
-    }
 
     private bool TryRegisterCommand(long playerId, string? commandId)
     {
-        if (string.IsNullOrWhiteSpace(commandId))
-            return false;
-        if (commandId.Length > 64)
-            return false;
-
-        if (!this.recentCommandIdSetsByPlayer.TryGetValue(playerId, out HashSet<string>? ids))
-        {
-            ids = new HashSet<string>(StringComparer.Ordinal);
-            this.recentCommandIdSetsByPlayer[playerId] = ids;
-            this.recentCommandIdsByPlayer[playerId] = new Queue<string>();
-        }
-
-        if (!ids.Add(commandId))
-            return false;
-
-        Queue<string> orderedIds = this.recentCommandIdsByPlayer[playerId];
-        orderedIds.Enqueue(commandId);
-        while (orderedIds.Count > 128)
-            ids.Remove(orderedIds.Dequeue());
-
-        return true;
+        return this.commandReplayGuard.TryRegister(playerId, commandId);
     }
 
     private void SendActionRequest(
@@ -668,7 +712,10 @@ public sealed partial class ModEntry
         string npcName = "",
         string argument = "",
         Vector2? tile = null,
-        int index = -1)
+        int index = -1,
+        string expectedItemToken = "",
+        bool? desiredEnabled = null,
+        string? expectedLocationName = null)
     {
         Vector2 normalizedTile = NormalizeTile(tile ?? Vector2.Zero);
         this.Helper.Multiplayer.SendMessage(
@@ -678,10 +725,12 @@ public sealed partial class ModEntry
                 Action = action,
                 NpcName = npcName,
                 Argument = argument,
-                LocationName = Game1.currentLocation?.NameOrUniqueName ?? "",
+                LocationName = expectedLocationName ?? Game1.currentLocation?.NameOrUniqueName ?? "",
                 TileX = (int)normalizedTile.X,
                 TileY = (int)normalizedTile.Y,
-                Index = index
+                Index = index,
+                ExpectedItemToken = expectedItemToken,
+                DesiredEnabled = desiredEnabled
             },
             MessageActionRequest,
             modIDs: new[] { this.ModManifest.UniqueID },

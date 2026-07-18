@@ -17,7 +17,7 @@ public sealed partial class ModEntry
 {
     private void ProcessPendingTasks()
     {
-        if (this.IsBlockedGameState(blockForMenu: true))
+        if (this.IsGlobalSimulationBlocked())
         {
             foreach (PendingCompanionTask pausedTask in this.pendingTasks.Values)
                 pausedTask.LastProcessedTick = Game1.ticks;
@@ -26,8 +26,24 @@ public sealed partial class ModEntry
 
         foreach (PendingCompanionTask task in this.pendingTasks.Values.ToList())
         {
+            if (!this.pendingTasks.TryGetValue(task.NpcName, out PendingCompanionTask? currentTask)
+                || !ReferenceEquals(currentTask, task))
+            {
+                continue;
+            }
+
             try
             {
+                if (this.members.TryGetValue(task.NpcName, out SquadMemberState? taskMember)
+                    && this.IsOwnerSimulationBlocked(taskMember.OwnerId, blockForMenu: true))
+                {
+                    task.LastProcessedTick = Game1.ticks;
+                    NPC? pausedNpc = this.GetNpcByName(task.NpcName);
+                    if (pausedNpc is not null && this.IsOwnedCompanionController(pausedNpc))
+                        this.StopCompanionMovement(pausedNpc);
+                    continue;
+                }
+
                 int lastProcessedTick = task.LastProcessedTick <= 0 ? Game1.ticks : task.LastProcessedTick;
                 // This is an inactivity budget, not an absolute task duration.
                 // Routing progress and successful hits reset it below.
@@ -40,7 +56,19 @@ public sealed partial class ModEntry
                 this.Monitor.Log(
                     $"Companion task '{task.Kind}' for '{task.NpcName}' failed unexpectedly at {task.LocationName} ({task.TargetTile.X}, {task.TargetTile.Y}). The task was cancelled safely. {ex}",
                     LogLevel.Error);
-                this.RemovePendingTask(task, "companion.task_failure.unexpected_error", returning: true);
+                if (task.Kind == CompanionTaskKind.MovingToWait
+                    && this.members.TryGetValue(task.NpcName, out SquadMemberState? movementMember))
+                {
+                    this.FailMoveCompanionToWait(
+                        task,
+                        movementMember,
+                        this.GetNpcByName(task.NpcName),
+                        "companion.task_failure.unexpected_error");
+                }
+                else
+                {
+                    this.RemovePendingTask(task, "companion.task_failure.unexpected_error", returning: true);
+                }
             }
         }
     }
@@ -48,7 +76,7 @@ public sealed partial class ModEntry
     private void ProcessPendingTask(PendingCompanionTask task)
     {
         if (!this.members.TryGetValue(task.NpcName, out SquadMemberState? member)
-            || !this.AreTasksEnabled(member.OwnerId))
+            || (!task.IgnoresTaskToggle && !this.AreTasksEnabled(member.OwnerId)))
         {
             this.RemovePendingTask(task, "companion.task_failure.tasks_disabled", returning: true);
             return;
@@ -64,7 +92,7 @@ public sealed partial class ModEntry
             CompanionTaskKind.Petting => this.config.PettingMode == TaskMode.Disabled,
             _ => false
         };
-        if (taskModeDisabled)
+        if (taskModeDisabled && !task.IgnoresTaskMode)
         {
             this.RemovePendingTask(task, "companion.task_failure.tasks_disabled", returning: true);
             return;
@@ -72,6 +100,10 @@ public sealed partial class ModEntry
 
         switch (task.Kind)
         {
+            case CompanionTaskKind.MovingToWait:
+                this.ProcessPendingMoveToWaitTask(task);
+                break;
+
             case CompanionTaskKind.Lumbering:
                 this.ProcessPendingLumberTask(task);
                 break;
@@ -101,7 +133,7 @@ public sealed partial class ModEntry
         {
             this.RemovePendingTask(task, "companion.task_failure.task_timeout", returning: true);
             if (task.Manual)
-                this.Warn("tasks.no_valid_target");
+                this.WarnForPlayer(member.OwnerId, "tasks.no_valid_target");
 
             return;
         }
@@ -117,6 +149,14 @@ public sealed partial class ModEntry
         if (location.NameOrUniqueName != task.LocationName)
         {
             this.RemovePendingTask(task, "companion.task_failure.location_changed", returning: true);
+            return;
+        }
+
+        if (!this.IsExpectedContextTargetCurrent(task, location))
+        {
+            this.RemovePendingTask(task, "companion.task_failure.target_lost", returning: true);
+            if (task.Manual)
+                this.WarnForPlayer(member.OwnerId, "tasks.no_valid_target");
             return;
         }
 
@@ -173,7 +213,7 @@ public sealed partial class ModEntry
                 {
                     this.RemovePendingTask(task, "companion.task_failure.bee_flower_protected", returning: true);
                     if (task.Manual)
-                        this.Warn("tasks.bee_flower_protected");
+                        this.WarnForPlayer(member.OwnerId, "tasks.bee_flower_protected");
 
                     return;
                 }
@@ -235,7 +275,7 @@ public sealed partial class ModEntry
                 if (task.Manual)
                 {
                     this.Say(npc, "Watering", force: false);
-                    this.Info("tasks.watered", new { npc = member.DisplayName });
+                    this.InfoForPlayer(member.OwnerId, "tasks.watered", new { npc = member.DisplayName });
                 }
 
                 break;
@@ -259,7 +299,7 @@ public sealed partial class ModEntry
                 if (task.Manual)
                 {
                     this.Say(npc, "Foraging", force: false);
-                    this.Info("tasks.gathered", new { npc = member.DisplayName, item = item.DisplayName });
+                    this.InfoForPlayer(member.OwnerId, "tasks.gathered", new { npc = member.DisplayName, item = item.DisplayName });
                 }
 
                 break;
@@ -288,7 +328,7 @@ public sealed partial class ModEntry
                 if (task.Manual)
                 {
                     this.Say(npc, "Harvesting", force: false);
-                    this.Info("tasks.harvested", new { npc = member.DisplayName });
+                    this.InfoForPlayer(member.OwnerId, "tasks.harvested", new { npc = member.DisplayName });
                 }
 
                 break;
@@ -301,12 +341,13 @@ public sealed partial class ModEntry
                 if (task.Manual)
                 {
                     this.Say(npc, "Petting", force: false);
-                    this.Info("tasks.petted", new { npc = member.DisplayName, animal = animal.displayName });
+                    this.InfoForPlayer(member.OwnerId, "tasks.petted", new { npc = member.DisplayName, animal = animal.displayName });
                 }
 
                 break;
         }
 
+        this.CompleteSharedTargetPeers(task);
         this.RemovePendingTask(task);
     }
 
@@ -332,7 +373,7 @@ public sealed partial class ModEntry
         {
             this.RemovePendingTask(task, "companion.task_failure.task_timeout");
             if (task.Manual)
-                this.Warn("tasks.no_valid_target");
+                this.WarnForPlayer(member.OwnerId, "tasks.no_valid_target");
 
             return;
         }
@@ -348,6 +389,14 @@ public sealed partial class ModEntry
         if (location.NameOrUniqueName != task.LocationName)
         {
             this.RemovePendingTask(task, "companion.task_failure.location_changed", returning: true);
+            return;
+        }
+
+        if (!this.IsExpectedContextTargetCurrent(task, location))
+        {
+            this.RemovePendingTask(task, "companion.task_failure.target_lost", returning: true);
+            if (task.Manual)
+                this.WarnForPlayer(member.OwnerId, "tasks.no_valid_target");
             return;
         }
 
@@ -382,7 +431,7 @@ public sealed partial class ModEntry
         if (task.RequiresPlayerTool && axe is null)
         {
             if (task.Manual)
-                this.Warn("tasks.need_axe");
+                this.WarnForPlayer(member.OwnerId, "tasks.need_axe");
 
             this.RemovePendingTask(task, "companion.task_failure.need_axe");
             return;
@@ -421,7 +470,10 @@ public sealed partial class ModEntry
         task.InactiveTicks = 0;
         task.LastActionTick = Game1.ticks;
         if (finished)
+        {
+            this.CompleteSharedTargetPeers(task);
             this.RemovePendingTask(task);
+        }
     }
 
     private void ProcessPendingMiningTask(PendingCompanionTask task)
@@ -449,6 +501,14 @@ public sealed partial class ModEntry
         if (location.NameOrUniqueName != task.LocationName)
         {
             this.RemovePendingTask(task, "companion.task_failure.location_changed", returning: true);
+            return;
+        }
+
+        if (!this.IsExpectedContextTargetCurrent(task, location))
+        {
+            this.RemovePendingTask(task, "companion.task_failure.target_lost", returning: true);
+            if (task.Manual)
+                this.WarnForPlayer(member.OwnerId, "tasks.no_valid_target");
             return;
         }
 
@@ -507,7 +567,10 @@ public sealed partial class ModEntry
         task.InactiveTicks = 0;
         task.LastActionTick = Game1.ticks;
         if (finished)
+        {
+            this.CompleteSharedTargetPeers(task);
             this.RemovePendingTask(task);
+        }
     }
 
     private bool TryResolveTaskStandTile(
@@ -680,7 +743,13 @@ public sealed partial class ModEntry
 
         task.LastPathTick = Game1.ticks;
         if (member is not null && member.CurrentActivityKey == "companion.status.stuck")
-            this.SetCompanionActivity(member, "companion.status.working");
+        {
+            this.SetCompanionActivity(
+                member,
+                task.Kind == CompanionTaskKind.MovingToWait
+                    ? "companion.status.moving_to_wait"
+                    : "companion.status.working");
+        }
         if (member?.LastFailureReasonKey == "companion.task_failure.path_recovery")
             this.SetTaskFailure(member, "");
 
@@ -698,7 +767,18 @@ public sealed partial class ModEntry
         {
             this.StopCompanionMovement(npc);
             this.Monitor.Log($"Could not route '{task.NpcName}' to task tile {standTile}: {ex.Message}", LogLevel.Warn);
-            this.RemovePendingTask(task, "companion.task_failure.unexpected_error", returning: true);
+            if (task.Kind == CompanionTaskKind.MovingToWait && member is not null)
+            {
+                this.FailMoveCompanionToWait(
+                    task,
+                    member,
+                    npc,
+                    "companion.task_failure.unexpected_error");
+            }
+            else
+            {
+                this.RemovePendingTask(task, "companion.task_failure.unexpected_error", returning: true);
+            }
         }
     }
 
@@ -743,7 +823,7 @@ public sealed partial class ModEntry
             this.SetTaskResult(member, "companion.task_result.lumbered");
 
             if (manual)
-                this.Info("tasks.lumbered", new { npc = member.DisplayName });
+                this.InfoForPlayer(member.OwnerId, "tasks.lumbered", new { npc = member.DisplayName });
 
             return true;
         }

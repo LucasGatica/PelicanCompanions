@@ -6,9 +6,6 @@ Release documentation:
 
 - [Architecture and extension guide](docs/ARCHITECTURE.md)
 - [Current manual QA checklist](docs/MANUAL_QA.md)
-- [Nexus description for 0.2.0](docs/nexus-description-0.2.0.md)
-- [0.2.0 manual release checklist](docs/manual-qa-0.2.0.md)
-- [Implementation status](docs/implementation-status.md)
 - [Changelog](CHANGELOG.md)
 
 ## Identity and requirements
@@ -25,6 +22,7 @@ Release documentation:
 
 | Default | Action |
 | --- | --- |
+| `X` | Open the contextual radial wheel for the NPC, resource, or safe empty ground under the cursor. |
 | `F5` | Recruit/manage a nearby NPC or pet. |
 | `F6` | Run an enabled safe manual task at the aimed tile. |
 | `F7` | Open the shared squad inventory summary. |
@@ -38,7 +36,7 @@ All bindings can be changed in `config.json` or through GMCM.
 
 - Recruit, dismiss, wait, resume, and recall companions with friendship, capacity, ownership, and safe-game-state checks.
 - Natural follower pathing at a conservative fixed NPC speed, location-change placement, visible recovery, and Adaptive/Behind/Compact formations.
-- Grouped quick-HUD dock (left or right, detailed or compact) plus a responsive F9 panel with Overview, Work, Skills, and Inventory tabs, keyboard/controller navigation, target previews, and direct management actions.
+- Mouse-centered contextual wheel: owned companions expose Profile, Work, Stop, Dismiss, and Follow; unrecruited NPCs expose Recruit; mature trees, breakable stones, and mature grab-crops expose Send all plus up to three named local companions. Safe empty ground exposes Dismiss all plus up to three named companions; choosing one sends them to that tile and leaves them waiting there after arrival. A polished quick-HUD dock sits on the left by default, and the responsive F9 panel remains available for full management.
 - Per-companion XP, ten levels, skill points, useful Lumbering/Mining/Utility skill effects, and saved recent-loot history.
 - Per-member inventory and shared squad inventory with conservative fallback routing.
 - Manual/mimic/autonomous support where applicable for watering, safe forage pickup, mature grab-crop harvesting, mature untapped tree chopping, breakable-stone mining, and animal petting.
@@ -58,8 +56,12 @@ dotnet build -c Release -p:EnableModDeploy=false -p:EnableModZip=true
 
 Expected release zip after the release build:
 
-`bin/Release/net6.0/PelicanCompanions 1.1.2.zip`
+`bin/Release/net6.0/PelicanCompanions 1.5.0.zip`
 
 ## Verification status
 
-Run `scripts/validate.sh` to compile the mod, validate all JSON files, and verify English/PT-BR key and interpolation-token parity. The 1.1.2 automated validation completes with 0 build warnings/errors. The current in-game checklist has not yet been run; multiplayer remains explicitly experimental.
+Run `scripts/validate.sh` to restore/build the mod, execute the package-free
+18-test regression harness, validate all JSON files, and verify English/PT-BR
+key and interpolation-token parity. The current in-game checklist still needs
+to be run before release; multiplayer remains explicitly experimental until
+that pass is complete.

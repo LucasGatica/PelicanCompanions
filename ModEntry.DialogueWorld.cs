@@ -195,6 +195,14 @@ public sealed partial class ModEntry
 
             try
             {
+                if (!restore.OriginalMovementSpeedCaptured)
+                {
+                    restore.OriginalMovementSpeedCaptured = true;
+                    restore.OriginalMovementSpeed = npc.speed;
+                    restore.OriginalAddedSpeed = npc.addedSpeed;
+                    this.MarkStateDirty();
+                }
+
                 this.StopCompanionMovement(npc);
                 this.RestoreNpcSchedule(npc, restore);
                 this.deferredNpcRestores.Remove(npcName);
@@ -288,7 +296,7 @@ public sealed partial class ModEntry
         if (member.OwnerId == ownerId)
             return true;
 
-        if (showWarning && ownerId == Game1.player.UniqueMultiplayerID)
+        if (showWarning && this.ShouldShowFeedbackFor(ownerId))
             this.Warn("recruitment.not_owner", new { npc = member.DisplayName });
         return false;
     }
@@ -320,21 +328,57 @@ public sealed partial class ModEntry
 
     private bool IsBlockedGameState(bool blockForMenu)
     {
-        return !Context.IsWorldReady
+        return this.IsGlobalSimulationBlocked()
             || Game1.currentLocation is null
             || Game1.eventUp
             || Game1.CurrentEvent is not null
             || Game1.fadeToBlack
-            || Game1.showingEndOfNightStuff
-            || this.pendingDailyCompanionRefresh
             || Game1.currentMinigame is not null
-            || Game1.isFestival()
             || (blockForMenu && Game1.activeClickableMenu is not null);
     }
 
-    private bool AreTaskActionsSafe()
+    private bool IsGlobalSimulationBlocked()
     {
-        return !this.IsBlockedGameState(blockForMenu: true);
+        return !Context.IsWorldReady
+            || Game1.showingEndOfNightStuff
+            || this.pendingDailyCompanionRefresh
+            || Game1.isFestival();
+    }
+
+    private bool IsOwnerSimulationBlocked(long ownerId, bool blockForMenu)
+    {
+        if (this.IsGlobalSimulationBlocked())
+            return true;
+
+        // Each local split-screen records its own UI/event state before the
+        // secondary screen exits the authoritative update loop. Remote
+        // farmhands aren't represented here, so the host's local state must not
+        // pause them.
+        if (this.localOwnerSimulationBlocks.TryGetValue(ownerId, out LocalSimulationBlockState localState)
+            && unchecked((uint)(Game1.ticks - localState.Tick)) <= 120)
+        {
+            return blockForMenu ? localState.WithMenu : localState.WithoutMenu;
+        }
+
+        if (Context.IsMultiplayer && ownerId != Game1.player.UniqueMultiplayerID)
+            return false;
+
+        return this.IsBlockedGameState(blockForMenu);
+    }
+
+    private void CaptureLocalOwnerSimulationBlockState()
+    {
+        this.localOwnerSimulationBlocks[Game1.player.UniqueMultiplayerID] = new LocalSimulationBlockState(
+            this.IsBlockedGameState(blockForMenu: false),
+            this.IsBlockedGameState(blockForMenu: true),
+            Game1.ticks);
+    }
+
+    private bool AreTaskActionsSafe(long? ownerId = null)
+    {
+        return ownerId.HasValue
+            ? !this.IsOwnerSimulationBlocked(ownerId.Value, blockForMenu: true)
+            : !this.IsBlockedGameState(blockForMenu: true);
     }
 
     private void MaintainCompanionScheduleLocks(bool stopCurrentRoutes)
@@ -375,7 +419,39 @@ public sealed partial class ModEntry
 
     private void DisableNpcSchedule(NPC npc, bool stopCurrentRoute)
     {
+        if (this.members.TryGetValue(npc.Name, out SquadMemberState? controlledMember))
+            this.EnsureOriginalNpcMovementSpeedCaptured(controlledMember, npc);
+
         bool controllerBelongsToMod = this.IsOwnedCompanionController(npc);
+        bool hasExternalController = npc.controller is not null && !controllerBelongsToMod;
+        bool hasVanillaStateToClear = npc.Schedule is { Count: > 0 }
+            || npc.queuedSchedulePaths.Count > 0
+            || npc.currentScheduleDelay >= 0f
+            || npc.DirectionsToNewLocation is not null
+            || npc.temporaryController is not null
+            || npc.IsWalkingInSquare
+            || npc.IsReturningToEndPoint()
+            || npc.doingEndOfRouteAnimation.Value
+            || npc.goingToDoEndOfRouteAnimation.Value
+            || !string.IsNullOrWhiteSpace(npc.endOfRouteBehaviorName.Value)
+            || npc.shouldPlayRobinHammerAnimation.Value
+            || npc.shouldPlaySpousePatioAnimation.Value
+            || npc.isSleeping.Value
+            || npc.layingDown;
+
+        // The expensive reflection/animation/bed cleanup is an acquisition
+        // operation, not per-tick maintenance. Once control is cleanly held,
+        // the hot path only needs to preserve ignoreScheduleToday. If another
+        // system reintroduces vanilla state, fall through and reacquire it.
+        if (!stopCurrentRoute
+            && this.controlledNpcLeases.Contains(npc)
+            && !hasExternalController
+            && !hasVanillaStateToClear)
+        {
+            npc.ignoreScheduleToday = true;
+            return;
+        }
+
         StardewValley.Pathfinding.PathFindController? externalController = controllerBelongsToMod
             ? null
             : npc.controller;
@@ -502,6 +578,8 @@ public sealed partial class ModEntry
                 }
             }
         }
+
+        this.controlledNpcLeases.Add(npc);
     }
 
     private void ReleaseCompanionBedReservation(
@@ -599,13 +677,26 @@ public sealed partial class ModEntry
 
     private void RestoreNpcSchedule(NPC npc, SquadMemberState member)
     {
+        try
+        {
+            this.RestoreNpcScheduleCore(npc, member);
+        }
+        finally
+        {
+            RestoreOriginalNpcMovementSpeed(npc, member);
+            this.controlledNpcLeases.Remove(npc);
+        }
+    }
+
+    private void RestoreNpcScheduleCore(NPC npc, SquadMemberState member)
+    {
         string? liveScheduleKey = npc.ScheduleKey;
         bool hadLiveSchedule = npc.Schedule is not null;
         this.StopCompanionMovement(npc);
         this.DisableNpcSchedule(npc, stopCurrentRoute: true);
         npc.ignoreScheduleToday = false;
 
-        if (!Context.IsWorldReady || Game1.eventUp || Game1.CurrentEvent is not null || Game1.isFestival())
+        if (this.IsOwnerSimulationBlocked(member.OwnerId, blockForMenu: false))
         {
             if (!this.TryRestoreOriginalOrVanillaHome(npc, member))
                 throw new InvalidOperationException($"No safe fallback restoration tile was available for '{npc.Name}'.");
@@ -614,7 +705,7 @@ public sealed partial class ModEntry
 
         if (npc is Pet pet)
         {
-            this.companionReleaseGuardDepth++;
+            this.BeginAllowingVanillaMovement(pet);
             try
             {
                 if (Game1.timeOfDay >= 2000)
@@ -629,7 +720,7 @@ public sealed partial class ModEntry
             }
             finally
             {
-                this.companionReleaseGuardDepth--;
+                this.EndAllowingVanillaMovement(pet);
             }
 
             pet.ignoreScheduleToday = false;
@@ -847,7 +938,7 @@ public sealed partial class ModEntry
         NPC npc,
         StardewValley.Pathfinding.SchedulePathDescription stop)
     {
-        this.companionReleaseGuardDepth++;
+        this.BeginAllowingVanillaMovement(npc);
         try
         {
             npc.StartActivityRouteEndBehavior(
@@ -856,7 +947,7 @@ public sealed partial class ModEntry
         }
         finally
         {
-            this.companionReleaseGuardDepth--;
+            this.EndAllowingVanillaMovement(npc);
         }
     }
 
@@ -904,14 +995,14 @@ public sealed partial class ModEntry
         if (farmHouse.GetSpouseBed() is null)
             return true;
 
-        this.companionReleaseGuardDepth++;
+        this.BeginAllowingVanillaMovement(npc);
         try
         {
             StardewValley.Locations.FarmHouse.spouseSleepEndFunction(npc, farmHouse);
         }
         finally
         {
-            this.companionReleaseGuardDepth--;
+            this.EndAllowingVanillaMovement(npc);
         }
 
         return true;
@@ -1123,6 +1214,9 @@ public sealed partial class ModEntry
 
     private void StopCompanionMovement(NPC npc)
     {
+        if (this.members.TryGetValue(npc.Name, out SquadMemberState? controlledMember))
+            this.EnsureOriginalNpcMovementSpeedCaptured(controlledMember, npc);
+
         this.companionMovementControllers.Remove(npc.Name);
         npc.controller = null;
         ResetCompanionMovementSpeed(npc);
@@ -1145,8 +1239,20 @@ public sealed partial class ModEntry
                 OriginalScheduleCaptured = restore.OriginalScheduleCaptured,
                 OriginalScheduleKey = restore.OriginalScheduleKey,
                 OriginalPetBehavior = restore.OriginalPetBehavior,
-                OriginalSpousePatioActivity = restore.OriginalSpousePatioActivity
+                OriginalSpousePatioActivity = restore.OriginalSpousePatioActivity,
+                OriginalMovementSpeedCaptured = restore.OriginalMovementSpeedCaptured,
+                OriginalMovementSpeed = restore.OriginalMovementSpeed,
+                OriginalAddedSpeed = restore.OriginalAddedSpeed
             });
+    }
+
+    private static void RestoreOriginalNpcMovementSpeed(NPC npc, SquadMemberState member)
+    {
+        if (!member.OriginalMovementSpeedCaptured)
+            return;
+
+        npc.speed = member.OriginalMovementSpeed;
+        npc.addedSpeed = member.OriginalAddedSpeed;
     }
 
     private void SetCompanionActivity(SquadMemberState member, string activityKey)
@@ -1165,6 +1271,7 @@ public sealed partial class ModEntry
     {
         string key = kind switch
         {
+            CompanionTaskKind.MovingToWait => "companion.target.marked_spot",
             CompanionTaskKind.Lumbering => "companion.target.wood",
             CompanionTaskKind.Mining => "companion.target.mining",
             CompanionTaskKind.Watering => "companion.target.watering",
@@ -1220,10 +1327,35 @@ public sealed partial class ModEntry
     private bool TryReserveWorkTarget(string npcName, string locationName, Vector2 tile)
     {
         string key = this.GetWorkTargetKey(locationName, tile);
+        if (this.sharedWorkTargetReservations.ContainsKey(key))
+            return false;
+
         if (this.workTargetReservations.TryGetValue(key, out string? owner) && !string.Equals(owner, npcName, StringComparison.OrdinalIgnoreCase))
             return false;
 
         this.workTargetReservations[key] = npcName;
+        this.InvalidateTargetPreviews();
+        return true;
+    }
+
+    private bool TryReserveSharedWorkTarget(string npcName, string locationName, Vector2 tile, string groupId)
+    {
+        if (string.IsNullOrWhiteSpace(groupId))
+            return false;
+
+        string key = this.GetWorkTargetKey(locationName, tile);
+        if (this.workTargetReservations.ContainsKey(key))
+            return false;
+
+        if (!this.sharedWorkTargetReservations.TryGetValue(key, out SharedWorkTargetReservation? reservation))
+        {
+            reservation = new SharedWorkTargetReservation { GroupId = groupId };
+            this.sharedWorkTargetReservations[key] = reservation;
+        }
+        else if (!string.Equals(reservation.GroupId, groupId, StringComparison.Ordinal))
+            return false;
+
+        reservation.NpcNames.Add(npcName);
         this.InvalidateTargetPreviews();
         return true;
     }
@@ -1237,6 +1369,14 @@ public sealed partial class ModEntry
         {
             this.InvalidateTargetPreviews();
         }
+
+        if (this.sharedWorkTargetReservations.TryGetValue(key, out SharedWorkTargetReservation? sharedReservation)
+            && sharedReservation.NpcNames.Remove(npcName))
+        {
+            if (sharedReservation.NpcNames.Count == 0)
+                this.sharedWorkTargetReservations.Remove(key);
+            this.InvalidateTargetPreviews();
+        }
     }
 
     private bool IsStandTileReserved(GameLocation location, Vector2 tile, string npcName)
@@ -1244,7 +1384,9 @@ public sealed partial class ModEntry
         string key = this.GetWorkTargetKey(location.NameOrUniqueName, tile);
         bool reservedForWork = this.workStandReservations.TryGetValue(key, out string? reservedBy)
             && !string.Equals(reservedBy, npcName, StringComparison.OrdinalIgnoreCase);
-        return reservedForWork || this.followDestinationsThisUpdate.Contains(key);
+        bool reservedForFollow = this.followDestinationsThisUpdate.TryGetValue(key, out string? followOwner)
+            && !string.Equals(followOwner, npcName, StringComparison.OrdinalIgnoreCase);
+        return reservedForWork || reservedForFollow;
     }
 
     private bool TryReserveStandTile(string npcName, string locationName, Vector2 tile)
@@ -1282,6 +1424,16 @@ public sealed partial class ModEntry
             }
         }
 
+        foreach (KeyValuePair<string, SharedWorkTargetReservation> reservation in this.sharedWorkTargetReservations.ToList())
+        {
+            if (!reservation.Value.NpcNames.Remove(npcName))
+                continue;
+
+            if (reservation.Value.NpcNames.Count == 0)
+                this.sharedWorkTargetReservations.Remove(reservation.Key);
+            removedAny = true;
+        }
+
         foreach (KeyValuePair<string, string> reservation in this.workStandReservations.ToList())
         {
             if (string.Equals(reservation.Value, npcName, StringComparison.OrdinalIgnoreCase))
@@ -1298,6 +1450,34 @@ public sealed partial class ModEntry
             return;
 
         this.RemovePendingTask(task);
+    }
+
+    private void CompleteSharedTargetPeers(PendingCompanionTask completedTask)
+    {
+        if (string.IsNullOrWhiteSpace(completedTask.SharedTargetGroupId))
+            return;
+
+        string resultKey = this.members.TryGetValue(completedTask.NpcName, out SquadMemberState? completedMember)
+            ? completedMember.LastTaskResultKey
+            : "";
+
+        foreach (PendingCompanionTask peer in this.pendingTasks.Values
+            .Where(candidate => !ReferenceEquals(candidate, completedTask)
+                && string.Equals(candidate.SharedTargetGroupId, completedTask.SharedTargetGroupId, StringComparison.Ordinal)
+                && string.Equals(candidate.LocationName, completedTask.LocationName, StringComparison.Ordinal)
+                && NormalizeTile(candidate.TargetTile) == NormalizeTile(completedTask.TargetTile))
+            .ToList())
+        {
+            if (this.members.TryGetValue(peer.NpcName, out SquadMemberState? peerMember))
+            {
+                if (!string.IsNullOrWhiteSpace(resultKey))
+                    this.SetTaskResult(peerMember, resultKey);
+                else
+                    this.SetTaskFailure(peerMember, "");
+            }
+
+            this.RemovePendingTask(peer);
+        }
     }
 
     private void RemovePendingTask(PendingCompanionTask task, string? failureKey = null, bool returning = false)

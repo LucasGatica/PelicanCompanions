@@ -39,6 +39,7 @@ public sealed partial class ModEntry
 
         this.AddSection(gmcm, "config.section.controls");
         this.AddParagraph(gmcm, "config.section.controls.description");
+        this.AddKeybindOption(gmcm, "quickActionWheelKey", () => this.config.QuickActionWheelKey, value => this.config.QuickActionWheelKey = value);
         this.AddKeybindOption(gmcm, "recruitKey", () => this.config.RecruitKey, value => this.config.RecruitKey = value);
         this.AddKeybindOption(gmcm, "manualTaskKey", () => this.config.ManualTaskKey, value => this.config.ManualTaskKey = value);
         this.AddKeybindOption(gmcm, "openSquadInventoryKey", () => this.config.OpenSquadInventoryKey, value => this.config.OpenSquadInventoryKey = value);
@@ -188,12 +189,68 @@ public sealed partial class ModEntry
 
     private void Info(string key, object? tokens = null)
     {
-        Game1.addHUDMessage(new HUDMessage(this.Tr(key, tokens)));
+        this.ShowFeedback(this.Tr(key, tokens), isError: false);
     }
 
     private void Warn(string key, object? tokens = null)
     {
-        Game1.addHUDMessage(new HUDMessage(this.Tr(key, tokens), HUDMessage.error_type));
+        this.ShowFeedback(this.Tr(key, tokens), isError: true);
+    }
+
+    private void InfoForPlayer(long playerId, string key, object? tokens = null)
+    {
+        this.ShowFeedbackForPlayer(playerId, this.Tr(key, tokens), isError: false);
+    }
+
+    private void WarnForPlayer(long playerId, string key, object? tokens = null)
+    {
+        this.ShowFeedbackForPlayer(playerId, this.Tr(key, tokens), isError: true);
+    }
+
+    private void ShowFeedbackForPlayer(long playerId, string text, bool isError)
+    {
+        long? previousTarget = this.commandFeedbackTargetPlayerId;
+        this.commandFeedbackTargetPlayerId = playerId;
+        try
+        {
+            this.ShowFeedback(text, isError);
+        }
+        finally
+        {
+            this.commandFeedbackTargetPlayerId = previousTarget;
+        }
+    }
+
+    private void ShowFeedback(string text, bool isError)
+    {
+        if (this.commandFeedbackTargetPlayerId is long targetPlayerId
+            && Context.IsMainPlayer
+            && targetPlayerId != Game1.player.UniqueMultiplayerID)
+        {
+            try
+            {
+                this.Helper.Multiplayer.SendMessage(
+                    new CompanionCommandFeedbackMessage { Text = text, IsError = isError },
+                    MessageCommandFeedback,
+                    modIDs: new[] { this.ModManifest.UniqueID },
+                    playerIDs: new[] { targetPlayerId });
+            }
+            catch (Exception ex)
+            {
+                this.Monitor.Log($"Could not send companion command feedback to player {targetPlayerId}: {ex.Message}", LogLevel.Warn);
+            }
+            return;
+        }
+
+        Game1.addHUDMessage(isError
+            ? new HUDMessage(text, HUDMessage.error_type)
+            : new HUDMessage(text));
+    }
+
+    private bool ShouldShowFeedbackFor(long playerId)
+    {
+        return playerId == Game1.player.UniqueMultiplayerID
+            || this.commandFeedbackTargetPlayerId == playerId;
     }
 
     private string Tr(string key, object? tokens = null)
@@ -209,7 +266,7 @@ public sealed partial class ModEntry
 /// this contract local avoids a runtime dependency on SMAPI's newer convenience
 /// interface while still exposing GMCM's native keybind-list widget.
 /// </summary>
-internal interface IGenericModConfigMenuApiCompat
+public interface IGenericModConfigMenuApiCompat
 {
     void Register(IManifest mod, Action reset, Action save, bool titleScreenOnly = false);
 

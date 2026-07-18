@@ -1,0 +1,15 @@
+<Project>
+
+  <!-- Keep generated test artifacts outside the mod source tree. The main SDK
+       project uses recursive compile globs, so nested obj/*.cs files would
+       otherwise be mistaken for mod sources on a later build. -->
+  <PropertyGroup>
+    <BaseOutputPath>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'PelicanCompanions.Tests', 'bin', '$(MSBuildProjectName)'))/</BaseOutputPath>
+    <BaseIntermediateOutputPath>$([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'PelicanCompanions.Tests', 'obj', '$(MSBuildProjectName)'))/</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+    <!-- Stardew/SMAPI still require net6.0; suppress the SDK lifecycle notice
+         for this compatibility-targeted harness. -->
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
+  </PropertyGroup>
+
+</Project>

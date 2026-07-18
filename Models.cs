@@ -32,6 +32,9 @@ internal sealed class SquadMemberState
     public string? OriginalScheduleKey { get; set; }
     public string? OriginalPetBehavior { get; set; }
     public bool OriginalSpousePatioActivity { get; set; }
+    public bool OriginalMovementSpeedCaptured { get; set; }
+    public int OriginalMovementSpeed { get; set; }
+    public float OriginalAddedSpeed { get; set; }
     public string? WaitingLocationName { get; set; }
     public float WaitingTileX { get; set; }
     public float WaitingTileY { get; set; }
@@ -85,6 +88,9 @@ internal sealed class DeferredNpcRestoreState
     public string? OriginalScheduleKey { get; set; }
     public string? OriginalPetBehavior { get; set; }
     public bool OriginalSpousePatioActivity { get; set; }
+    public bool OriginalMovementSpeedCaptured { get; set; }
+    public int OriginalMovementSpeed { get; set; }
+    public float OriginalAddedSpeed { get; set; }
 }
 
 internal sealed class CompanionHostRules
@@ -160,10 +166,19 @@ internal sealed class SquadActionMessage
     public int TileX { get; set; }
     public int TileY { get; set; }
     public int Index { get; set; } = -1;
+    public string ExpectedItemToken { get; set; } = "";
+    public bool? DesiredEnabled { get; set; }
+}
+
+internal sealed class CompanionCommandFeedbackMessage
+{
+    public string Text { get; set; } = "";
+    public bool IsError { get; set; }
 }
 
 internal enum CompanionTaskKind
 {
+    MovingToWait,
     Lumbering,
     Mining,
     Watering,
@@ -183,6 +198,11 @@ internal sealed class PendingCompanionTask
     public bool UsesWorkDirective { get; set; }
     public bool UsesConfiguredAutonomy { get; set; }
     public bool RequiresPlayerTool { get; set; }
+    public bool IgnoresTaskMode { get; set; }
+    public bool IgnoresTaskToggle { get; set; }
+    public string ExpectedTargetToken { get; set; } = "";
+    public object? ExpectedTargetInstance { get; set; }
+    public string SharedTargetGroupId { get; set; } = "";
     public int WorkRadius { get; set; }
     public int ReturnDistance { get; set; }
     public int LastPathTick { get; set; }
@@ -194,6 +214,12 @@ internal sealed class PendingCompanionTask
     public Vector2 LastProgressPosition { get; set; }
     public bool HasLastProgressPosition { get; set; }
     public int NoProgressTicks { get; set; }
+}
+
+internal sealed class SharedWorkTargetReservation
+{
+    public string GroupId { get; init; } = "";
+    public HashSet<string> NpcNames { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 internal readonly record struct EligibilityResult(bool Allowed, string ReasonKey)

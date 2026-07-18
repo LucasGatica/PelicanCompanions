@@ -5,7 +5,19 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-dotnet build --no-restore -p:EnableModDeploy=false -p:EnableModZip=false
+dotnet build -p:EnableModDeploy=false -p:EnableModZip=false
+
+dotnet msbuild tests/PelicanCompanions.Tests/PelicanCompanions.Tests.csproj \
+    -target:Build \
+    -property:EnableModDeploy=false \
+    -property:EnableModZip=false \
+    -property:UseSharedCompilation=false \
+    -nodeReuse:false \
+    -maxcpucount:1 \
+    -verbosity:minimal
+dotnet run --project tests/PelicanCompanions.Tests/PelicanCompanions.Tests.csproj \
+    --no-build \
+    --no-restore
 
 jq -e . manifest.json assets/NpcConfig.json i18n/default.json i18n/pt-BR.json >/dev/null
 
@@ -32,4 +44,4 @@ if ! diff -u "$default_tokens" "$ptbr_tokens"; then
     exit 1
 fi
 
-echo "Validation passed: build, JSON syntax, translation keys, and token parity."
+echo "Validation passed: build, 18 tests, JSON syntax, translation keys, and token parity."

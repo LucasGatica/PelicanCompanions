@@ -31,16 +31,22 @@ public sealed partial class ModEntry
 
     private bool IsCompanionQuickWorkActive(SquadMemberState member)
     {
-        return this.HasActiveWorkDirective(member)
-            || (this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? task) && !task.UsesConfiguredAutonomy)
-            || (!Context.IsOnHostComputer && member.CurrentWorkIsDirect);
+        return member.Mode == CompanionMode.Following
+            && (this.HasActiveWorkDirective(member)
+            || (this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? task)
+                && task.Kind != CompanionTaskKind.MovingToWait
+                && !task.UsesConfiguredAutonomy)
+            || (!Context.IsOnHostComputer && member.CurrentWorkIsDirect));
     }
 
     private void ToggleCompanionQuickWork(SquadMemberState member)
     {
         if (!Context.IsMainPlayer)
         {
-            this.SendActionRequest("ToggleQuickWork", member.NpcName);
+            this.SendActionRequest(
+                "SetQuickWork",
+                member.NpcName,
+                desiredEnabled: !this.IsCompanionQuickWorkActive(member));
             return;
         }
 
@@ -49,11 +55,20 @@ public sealed partial class ModEntry
 
     private void ToggleCompanionQuickWork(SquadMemberState member, long ownerId)
     {
+        this.SetCompanionQuickWork(member, ownerId, !this.IsCompanionQuickWorkActive(member));
+    }
+
+    private void SetCompanionQuickWork(SquadMemberState member, long ownerId, bool enabled)
+    {
         if (!this.CanOwnerMutate(member, ownerId))
             return;
 
-        if (this.IsCompanionQuickWorkActive(member))
+        bool isActive = this.IsCompanionQuickWorkActive(member);
+        if (!enabled)
         {
+            if (!isActive)
+                return;
+
             member.SearchWood = false;
             member.SearchMining = false;
             member.ClearArea = false;
@@ -62,16 +77,54 @@ public sealed partial class ModEntry
             this.ClearCompanionTarget(member);
             this.InvalidateTargetPreviews();
             this.MarkStateDirty();
-            if (ownerId == Game1.player.UniqueMultiplayerID)
+            if (this.ShouldShowFeedbackFor(ownerId))
                 this.Info("companion.quick.work_disabled", new { npc = member.DisplayName });
             return;
         }
 
+        bool restoredWorkState = false;
+        bool reenabledOwnerTasks = false;
         if (!this.AreTasksEnabled(ownerId))
+        {
             this.taskToggles[ownerId] = true;
+            restoredWorkState = true;
+            reenabledOwnerTasks = true;
+        }
 
         if (member.Mode != CompanionMode.Following)
-            this.ResumeFollowing(member.NpcName, ownerId);
+        {
+            this.ResumeFollowing(member.NpcName, ownerId, showMessage: false);
+            restoredWorkState = true;
+        }
+
+        if (this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? movementTask)
+            && movementTask.Kind == CompanionTaskKind.MovingToWait)
+        {
+            this.RemovePendingTask(movementTask);
+            restoredWorkState = true;
+        }
+
+        // Even if the selected companion is already working, an explicit Work
+        // command must restore the owner's global task gate before returning.
+        if (isActive)
+        {
+            if (restoredWorkState)
+            {
+                this.MarkStateDirty();
+                if (this.ShouldShowFeedbackFor(ownerId))
+                {
+                    this.Info(reenabledOwnerTasks
+                        ? "companion.quick.work_enabled_tasks"
+                        : "companion.quick.work_enabled_specialty", new
+                    {
+                        npc = member.DisplayName,
+                        specialty = this.Tr($"companion.specialty.{member.PreferredWorkSpecialty}")
+                    });
+                }
+            }
+
+            return;
+        }
 
         if (this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? autonomousTask)
             && autonomousTask.UsesConfiguredAutonomy)
@@ -81,9 +134,11 @@ public sealed partial class ModEntry
 
         this.ApplyPreferredWorkSpecialty(member);
         this.MarkStateDirty();
-        if (ownerId == Game1.player.UniqueMultiplayerID)
+        if (this.ShouldShowFeedbackFor(ownerId))
         {
-            this.Info("companion.quick.work_enabled_specialty", new
+            this.Info(reenabledOwnerTasks
+                ? "companion.quick.work_enabled_tasks"
+                : "companion.quick.work_enabled_specialty", new
             {
                 npc = member.DisplayName,
                 specialty = this.Tr($"companion.specialty.{member.PreferredWorkSpecialty}")
@@ -112,7 +167,7 @@ public sealed partial class ModEntry
         List<SquadMemberState> ownedMembers = this.members.Values.Where(member => member.OwnerId == ownerId).ToList();
         if (ownedMembers.Count == 0)
         {
-            if (showMessage && ownerId == Game1.player.UniqueMultiplayerID)
+            if (showMessage && this.ShouldShowFeedbackFor(ownerId))
                 this.Warn("commands.no_followers");
             return;
         }
@@ -124,7 +179,7 @@ public sealed partial class ModEntry
                 recalled++;
         }
 
-        if (showMessage && ownerId == Game1.player.UniqueMultiplayerID && recalled > 0)
+        if (showMessage && this.ShouldShowFeedbackFor(ownerId) && recalled > 0)
             this.Info("companion.quick.recall_all", new { count = recalled });
     }
 
@@ -136,9 +191,6 @@ public sealed partial class ModEntry
         if (!Context.IsMainPlayer && ownerId == Game1.player.UniqueMultiplayerID)
         {
             this.SendActionRequest("Recall", npcName);
-            if (showMessage)
-                this.Info("companion.quick.recall_sent", new { npc = member.DisplayName });
-
             return true;
         }
 
@@ -222,7 +274,7 @@ public sealed partial class ModEntry
             return false;
         }
         this.activeRecallTargets[member.NpcName] = targetTile;
-        this.ReserveFollowDestination(location, targetTile, force: true);
+        this.ReserveFollowDestination(location, targetTile, member.NpcName, force: true);
         this.lastFollowTargets[member.NpcName] = targetTile;
         this.lastFollowTargetDistances[member.NpcName] = GetFollowDistance(npc, targetTile);
         this.lastFollowPathTicks[member.NpcName] = Game1.ticks;
@@ -351,8 +403,17 @@ public sealed partial class ModEntry
         if (member.CurrentActivityKey == "companion.status.stuck")
             return this.Tr("companion.status.stuck");
 
+        if (this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? pendingTask)
+            && pendingTask.Kind == CompanionTaskKind.MovingToWait)
+        {
+            return this.Tr("companion.status.moving_to_wait");
+        }
+
         if (this.pendingTasks.ContainsKey(member.NpcName))
             return this.Tr("companion.status.working");
+
+        if (member.CurrentActivityKey == "companion.status.moving_to_wait")
+            return this.Tr("companion.status.moving_to_wait");
 
         if (member.CurrentActivityKey == "companion.status.working")
             return this.Tr("companion.status.working");
@@ -369,7 +430,8 @@ public sealed partial class ModEntry
     private IReadOnlyList<string> GetCompanionPanelSummaryLines()
     {
         List<SquadMemberState> localMembers = this.GetLocalMembers().ToList();
-        int working = localMembers.Count(p => this.pendingTasks.ContainsKey(p.NpcName)
+        int working = localMembers.Count(p => (this.pendingTasks.TryGetValue(p.NpcName, out PendingCompanionTask? task)
+                && task.Kind != CompanionTaskKind.MovingToWait)
             || p.CurrentActivityKey == "companion.status.working");
         int fullInventories = localMembers.Count(p => p.Inventory.Count >= this.GetCompanionInventoryCapacity());
         string tasksState = this.AreTasksEnabled(Game1.player.UniqueMultiplayerID)
@@ -406,6 +468,12 @@ public sealed partial class ModEntry
             statusKey = "companion.map.other_location";
         else if (!sameLocation)
             statusKey = "companion.map.other_location";
+        else if ((this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? pendingTask)
+                && pendingTask.Kind == CompanionTaskKind.MovingToWait)
+            || member.CurrentActivityKey == "companion.status.moving_to_wait")
+        {
+            statusKey = "companion.map.moving_to_wait";
+        }
         else if (this.pendingTasks.ContainsKey(member.NpcName) || member.CurrentActivityKey == "companion.status.working")
             statusKey = "companion.map.working";
         else if (member.CurrentActivityKey == "companion.status.returning")
@@ -483,7 +551,7 @@ public sealed partial class ModEntry
 
     private void RefreshCompanionPanelPreviews()
     {
-        if (!Context.IsWorldReady || (!Context.IsMainPlayer && !Context.IsOnHostComputer))
+        if (!Context.IsWorldReady)
             return;
 
         foreach (SquadMemberState member in this.GetLocalMembers())
@@ -513,7 +581,12 @@ public sealed partial class ModEntry
             if (!this.TryMapVisibleInventoryIndex(member, index, out int savedIndex, out SavedItemStack saved))
                 return false;
 
-            this.SendActionRequest("WithdrawCompanionSavedItem", member.NpcName, saved.QualifiedItemId, index: savedIndex);
+            this.SendActionRequest(
+                "WithdrawCompanionSavedItem",
+                member.NpcName,
+                saved.QualifiedItemId,
+                index: savedIndex,
+                expectedItemToken: SavedItemStackIdentity.CreateToken(saved));
             return true;
         }
 
@@ -531,7 +604,12 @@ public sealed partial class ModEntry
         if (!this.TryMapVisibleInventoryIndex(member, index, out int savedIndex, out SavedItemStack saved))
             return false;
 
-        return this.WithdrawCompanionInventorySavedItem(member, savedIndex, saved.QualifiedItemId, ownerId);
+        return this.WithdrawCompanionInventorySavedItem(
+            member,
+            savedIndex,
+            saved.QualifiedItemId,
+            ownerId,
+            SavedItemStackIdentity.CreateToken(saved));
     }
 
     private bool TryMapVisibleInventoryIndex(SquadMemberState member, int visibleIndex, out int savedIndex, out SavedItemStack saved)
@@ -556,12 +634,22 @@ public sealed partial class ModEntry
         return false;
     }
 
-    private bool WithdrawCompanionInventorySavedItem(SquadMemberState member, int savedIndex, string expectedItemId, long ownerId)
+    private bool WithdrawCompanionInventorySavedItem(
+        SquadMemberState member,
+        int savedIndex,
+        string expectedItemId,
+        long ownerId,
+        string? expectedItemToken)
     {
-        if (!this.CanOwnerMutate(member, ownerId, showWarning: false)
-            || savedIndex < 0
-            || savedIndex >= member.Inventory.Count)
+        if (!this.CanOwnerMutate(member, ownerId, showWarning: false))
         {
+            return false;
+        }
+
+        if (savedIndex < 0 || savedIndex >= member.Inventory.Count)
+        {
+            if (this.ShouldShowFeedbackFor(ownerId))
+                this.Warn("multiplayer.command_stale");
             return false;
         }
 
@@ -570,13 +658,18 @@ public sealed partial class ModEntry
             return false;
 
         SavedItemStack saved = member.Inventory[savedIndex];
-        if (!string.Equals(saved.QualifiedItemId, expectedItemId, StringComparison.Ordinal))
+        if (!string.Equals(saved.QualifiedItemId, expectedItemId, StringComparison.Ordinal)
+            || !SavedItemStackIdentity.Matches(saved, expectedItemToken))
+        {
+            if (this.ShouldShowFeedbackFor(ownerId))
+                this.Warn("multiplayer.command_stale");
             return false;
+        }
 
         Item? item = this.TryCreateItem(saved);
         if (item is null)
         {
-            if (ownerId == Game1.player.UniqueMultiplayerID)
+            if (this.ShouldShowFeedbackFor(ownerId))
                 this.Warn("companion.inventory.withdraw_partial");
             return false;
         }
@@ -601,7 +694,7 @@ public sealed partial class ModEntry
                 this.MarkStateDirty();
 
             this.Monitor.Log($"Companion inventory withdrawal failed for '{saved.QualifiedItemId}' and was isolated: {ex}", LogLevel.Error);
-            if (ownerId == Game1.player.UniqueMultiplayerID)
+            if (this.ShouldShowFeedbackFor(ownerId))
                 this.Warn("companion.inventory.withdraw_partial");
             return transferred > 0;
         }
@@ -610,7 +703,7 @@ public sealed partial class ModEntry
         {
             member.Inventory.RemoveAt(savedIndex);
             this.MarkStateDirty();
-            if (ownerId == Game1.player.UniqueMultiplayerID)
+            if (this.ShouldShowFeedbackFor(ownerId))
                 this.Info("companion.inventory.withdraw_complete", new { item = displayName });
             return true;
         }
@@ -625,7 +718,7 @@ public sealed partial class ModEntry
                 saved.Stack = remainingStack;
             this.MarkStateDirty();
         }
-        if (ownerId == Game1.player.UniqueMultiplayerID)
+        if (this.ShouldShowFeedbackFor(ownerId))
             this.Warn("companion.inventory.withdraw_partial");
         return movedAny;
     }
@@ -655,7 +748,7 @@ public sealed partial class ModEntry
 
         if (member.Inventory.Count == 0)
         {
-            if (ownerId == Game1.player.UniqueMultiplayerID)
+            if (this.ShouldShowFeedbackFor(ownerId))
                 this.Info("companion.inventory.empty");
             return false;
         }
@@ -728,12 +821,12 @@ public sealed partial class ModEntry
 
         if (member.Inventory.Count == 0)
         {
-            if (ownerId == Game1.player.UniqueMultiplayerID)
+            if (this.ShouldShowFeedbackFor(ownerId))
                 this.Info("companion.inventory.withdraw_all_complete", new { npc = member.DisplayName });
             return movedAny;
         }
 
-        if (ownerId == Game1.player.UniqueMultiplayerID)
+        if (this.ShouldShowFeedbackFor(ownerId))
             this.Warn("companion.inventory.withdraw_partial");
         return movedAny;
     }
@@ -743,7 +836,13 @@ public sealed partial class ModEntry
         if (!Context.IsMainPlayer)
         {
             if (this.CanOwnerMutate(member, Game1.player.UniqueMultiplayerID))
-                this.SendActionRequest("ToggleDirective", member.NpcName, directive.ToString());
+            {
+                this.SendActionRequest(
+                    "SetDirective",
+                    member.NpcName,
+                    directive.ToString(),
+                    desiredEnabled: !IsDirectiveEnabled(member, directive));
+            }
             return;
         }
 
@@ -752,25 +851,33 @@ public sealed partial class ModEntry
 
     private void ToggleCompanionDirective(SquadMemberState member, CompanionDirective directive, long ownerId)
     {
+        this.SetCompanionDirective(member, directive, ownerId, !IsDirectiveEnabled(member, directive));
+    }
+
+    private void SetCompanionDirective(SquadMemberState member, CompanionDirective directive, long ownerId, bool enabled)
+    {
         if (!this.CanOwnerMutate(member, ownerId))
+            return;
+
+        if (IsDirectiveEnabled(member, directive) == enabled)
             return;
 
         switch (directive)
         {
             case CompanionDirective.SearchWood:
-                member.SearchWood = !member.SearchWood;
+                member.SearchWood = enabled;
                 if (member.SearchWood)
                     member.PreferredWorkSpecialty = CompanionWorkSpecialty.Wood;
                 break;
 
             case CompanionDirective.SearchMining:
-                member.SearchMining = !member.SearchMining;
+                member.SearchMining = enabled;
                 if (member.SearchMining)
                     member.PreferredWorkSpecialty = CompanionWorkSpecialty.Mining;
                 break;
 
             case CompanionDirective.ClearArea:
-                member.ClearArea = !member.ClearArea;
+                member.ClearArea = enabled;
                 if (member.ClearArea)
                     member.PreferredWorkSpecialty = CompanionWorkSpecialty.ClearArea;
                 break;
@@ -806,6 +913,17 @@ public sealed partial class ModEntry
         this.MarkStateDirty();
     }
 
+    private static bool IsDirectiveEnabled(SquadMemberState member, CompanionDirective directive)
+    {
+        return directive switch
+        {
+            CompanionDirective.SearchWood => member.SearchWood,
+            CompanionDirective.SearchMining => member.SearchMining,
+            CompanionDirective.ClearArea => member.ClearArea,
+            _ => false
+        };
+    }
+
     private bool TryUnlockCompanionSkill(SquadMemberState member, string skillId)
     {
         if (!Context.IsMainPlayer)
@@ -822,7 +940,7 @@ public sealed partial class ModEntry
 
     private bool TryUnlockCompanionSkill(SquadMemberState member, string skillId, long ownerId)
     {
-        if (!this.CanUnlockCompanionSkill(member, skillId, ownerId, showWarnings: ownerId == Game1.player.UniqueMultiplayerID))
+        if (!this.CanUnlockCompanionSkill(member, skillId, ownerId, showWarnings: this.ShouldShowFeedbackFor(ownerId)))
             return false;
 
         CompanionSkillDefinition? skill = CompanionProgression.Skills.FirstOrDefault(p => p.Id == skillId);
@@ -832,7 +950,7 @@ public sealed partial class ModEntry
         member.UnspentSkillPoints -= skill.Cost;
         member.UnlockedSkillIds.Add(skill.Id);
         this.MarkStateDirty();
-        if (ownerId == Game1.player.UniqueMultiplayerID)
+        if (this.ShouldShowFeedbackFor(ownerId))
             this.Info("companion.skill.unlocked", new { skill = this.Tr(skill.NameKey), npc = member.DisplayName });
         return true;
     }

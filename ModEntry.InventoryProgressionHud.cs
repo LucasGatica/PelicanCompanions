@@ -58,7 +58,7 @@ public sealed partial class ModEntry
     {
         if (this.squadInventory.Count == 0)
         {
-            if (ownerId == Game1.player.UniqueMultiplayerID)
+            if (this.ShouldShowFeedbackFor(ownerId))
                 this.Info("squad.inventory_empty");
             return;
         }
@@ -140,7 +140,7 @@ public sealed partial class ModEntry
         // slots before reporting the final state.
         this.ReloadOverflowInventoryIntoSquad();
 
-        if (ownerId == Game1.player.UniqueMultiplayerID)
+        if (this.ShouldShowFeedbackFor(ownerId))
         {
             if (this.squadInventory.Count == 0)
                 this.Info("squad.withdraw_complete");
@@ -546,12 +546,15 @@ public sealed partial class ModEntry
         if (localNotices.Count == 0)
             return;
 
-        const int width = 360;
+        int width = Math.Min(360, Math.Max(1, Game1.uiViewport.Width - 40));
         const int height = 72;
         int x = this.config.CompanionQuickHudSide == CompanionQuickHudSide.Right
             ? 20
-            : Math.Max(20, Game1.uiViewport.Width - width - 28);
-        int y = 82;
+            : Math.Max(20, Game1.uiViewport.Width - width - (Game1.uiViewport.Width >= 600 ? 96 : 20));
+        int y = this.config.CompanionQuickHudSide == CompanionQuickHudSide.Left
+            && Game1.uiViewport.Height >= 520
+                ? 214
+                : 82;
         foreach (CompanionHudNotice notice in localNotices)
         {
             float age = Math.Clamp((now - notice.StartedTick) / (float)Math.Max(1, notice.DurationTicks), 0f, 1f);
@@ -619,11 +622,13 @@ public sealed partial class ModEntry
             }));
         }
 
-        int width = Math.Clamp((int)lines.Max(p => Game1.smallFont.MeasureString(p).X) + 24, 280, 520);
+        int width = Math.Min(
+            Math.Clamp((int)lines.Max(p => Game1.smallFont.MeasureString(p).X) + 24, 280, 520),
+            Math.Max(1, Game1.uiViewport.Width - 40));
         int height = 18 + lines.Count * 24;
         int x = this.config.CompanionQuickHudSide == CompanionQuickHudSide.Right
             ? 20
-            : Math.Max(20, Game1.uiViewport.Width - width - 28);
+            : Math.Max(20, Game1.uiViewport.Width - width - (Game1.uiViewport.Width >= 600 ? 96 : 20));
         int y = Math.Max(20, Game1.uiViewport.Height - height - 28);
         Rectangle bounds = new(x, y, width, height);
 

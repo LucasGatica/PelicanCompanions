@@ -31,7 +31,7 @@ public sealed partial class ModEntry
 
     private void TryManualTask(long ownerId, Vector2 tile)
     {
-        if (!this.AreTaskActionsSafe())
+        if (!this.AreTaskActionsSafe(ownerId))
             return;
 
         SquadMemberState? member = this.GetAvailableMember(ownerId);
@@ -81,7 +81,13 @@ public sealed partial class ModEntry
         Vector2 targetTile,
         SquadMemberState member,
         bool manual,
-        long targetEntityId = 0)
+        long targetEntityId = 0,
+        bool ignoreTaskMode = false,
+        string sharedTargetGroupId = "",
+        bool ignoreTaskToggle = false,
+        string expectedTargetToken = "",
+        object? expectedTargetInstance = null,
+        Vector2? preparedStandTile = null)
     {
         if (this.pendingTasks.ContainsKey(member.NpcName)
             || this.activeRecallTargets.ContainsKey(member.NpcName)
@@ -107,13 +113,19 @@ public sealed partial class ModEntry
             return false;
         }
 
-        if (!this.TryFindSafeAdjacentTile(location, targetTile, npc, member, MaxCompanionDistanceTiles, out Vector2 standTile))
+        Vector2 standTile;
+        if (preparedStandTile is Vector2 prepared)
+            standTile = NormalizeTile(prepared);
+        else if (!this.TryFindSafeAdjacentTile(location, targetTile, npc, member, MaxCompanionDistanceTiles, out standTile))
         {
             this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
             return false;
         }
 
-        if (!this.TryReserveWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile))
+        bool targetReserved = string.IsNullOrWhiteSpace(sharedTargetGroupId)
+            ? this.TryReserveWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile)
+            : this.TryReserveSharedWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile, sharedTargetGroupId);
+        if (!targetReserved)
         {
             this.SetTaskFailure(member, "companion.task_failure.target_reserved");
             return false;
@@ -135,6 +147,11 @@ public sealed partial class ModEntry
             TargetEntityId = targetEntityId,
             Manual = manual,
             UsesConfiguredAutonomy = !manual && this.IsConfiguredAutonomousTaskKind(kind),
+            IgnoresTaskMode = ignoreTaskMode,
+            IgnoresTaskToggle = ignoreTaskToggle,
+            ExpectedTargetToken = expectedTargetToken,
+            ExpectedTargetInstance = expectedTargetInstance,
+            SharedTargetGroupId = sharedTargetGroupId,
             WorkRadius = MaxCompanionDistanceTiles,
             ReturnDistance = MaxCompanionDistanceTiles,
             StartedTick = Game1.ticks,
@@ -183,7 +200,7 @@ public sealed partial class ModEntry
 
     private void TryMimicToolUse(long ownerId, Vector2 cursorTile)
     {
-        if (!this.AreTasksEnabled(ownerId) || !this.AreTaskActionsSafe())
+        if (!this.AreTasksEnabled(ownerId) || !this.AreTaskActionsSafe(ownerId))
             return;
 
         SquadMemberState? member = this.GetAvailableMember(ownerId);
@@ -254,7 +271,7 @@ public sealed partial class ModEntry
 
     private void UpdateAutonomousTasks()
     {
-        if (!Context.IsMainPlayer || !this.AreTaskActionsSafe())
+        if (!Context.IsMainPlayer || this.IsGlobalSimulationBlocked())
             return;
 
         foreach (string expiredTarget in this.workTargetRetryAfterTicks
@@ -276,7 +293,10 @@ public sealed partial class ModEntry
             {
                 Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
                 GameLocation? location = owner?.currentLocation;
-                if (owner is null || location is null || !this.AreTasksEnabled(member.OwnerId))
+                if (owner is null
+                    || location is null
+                    || this.IsOwnerSimulationBlocked(member.OwnerId, blockForMenu: true)
+                    || !this.AreTasksEnabled(member.OwnerId))
                     continue;
 
                 if (this.HasActiveWorkDirective(member) && this.TryAssignWorkDirectiveTask(member))
@@ -334,7 +354,7 @@ public sealed partial class ModEntry
 
     private bool TryWaterTile(GameLocation location, Vector2 tile, SquadMemberState member, bool manual)
     {
-        if (!this.AreTaskActionsSafe() || location is null)
+        if (!this.AreTaskActionsSafe(member.OwnerId) || location is null)
             return false;
 
         if (this.config.WateringMode == TaskMode.Disabled)
@@ -353,7 +373,7 @@ public sealed partial class ModEntry
 
     private bool TryGatherTile(GameLocation location, Vector2 tile, SquadMemberState member, bool manual)
     {
-        if (!this.AreTaskActionsSafe() || location is null)
+        if (!this.AreTaskActionsSafe(member.OwnerId) || location is null)
             return false;
 
         if (!this.config.EnableGathering || this.config.ForagingMode == TaskMode.Disabled)
@@ -371,7 +391,7 @@ public sealed partial class ModEntry
 
     private bool TryLumberTile(GameLocation location, Vector2 tile, SquadMemberState member, bool manual)
     {
-        if (!this.AreTaskActionsSafe() || location is null)
+        if (!this.AreTaskActionsSafe(member.OwnerId) || location is null)
             return false;
 
         if (this.pendingTasks.ContainsKey(member.NpcName)
@@ -487,7 +507,7 @@ public sealed partial class ModEntry
 
     private bool TryMiningTile(GameLocation location, Vector2 tile, SquadMemberState member, bool manual)
     {
-        if (!this.AreTaskActionsSafe() || this.config.MiningMode == TaskMode.Disabled)
+        if (!this.AreTaskActionsSafe(member.OwnerId) || this.config.MiningMode == TaskMode.Disabled)
             return false;
 
         if (this.pendingTasks.ContainsKey(member.NpcName)
@@ -583,7 +603,9 @@ public sealed partial class ModEntry
     {
         if (!Context.IsMainPlayer)
         {
-            this.SendActionRequest("ToggleTasks");
+            this.SendActionRequest(
+                "SetTasksEnabled",
+                desiredEnabled: !this.AreTasksEnabled(player.UniqueMultiplayerID));
             return;
         }
 
@@ -592,14 +614,24 @@ public sealed partial class ModEntry
 
     private void ToggleTasks(long ownerId)
     {
-        bool enabled = !this.AreTasksEnabled(ownerId);
+        this.SetTasksEnabled(ownerId, !this.AreTasksEnabled(ownerId));
+    }
+
+    private void SetTasksEnabled(long ownerId, bool enabled)
+    {
+        if (this.AreTasksEnabled(ownerId) == enabled)
+            return;
+
         this.taskToggles[ownerId] = enabled;
         if (!enabled)
-            this.CancelPendingTasksForOwner(ownerId, "companion.task_failure.tasks_disabled");
+            this.CancelPendingTasksForOwner(
+                ownerId,
+                "companion.task_failure.tasks_disabled",
+                includeMovementOrders: false);
 
         this.InvalidateTargetPreviews();
         this.MarkStateDirty();
-        if (ownerId == Game1.player.UniqueMultiplayerID)
+        if (this.ShouldShowFeedbackFor(ownerId))
             this.Info(enabled ? "tasks.enabled" : "tasks.disabled");
     }
 

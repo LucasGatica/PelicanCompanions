@@ -15,7 +15,7 @@ public sealed partial class ModEntry
 {
     private bool TryHarvestTile(GameLocation location, Vector2 rawTile, SquadMemberState member, bool manual)
     {
-        if (!this.AreTaskActionsSafe() || this.config.HarvestingMode == TaskMode.Disabled)
+        if (!this.AreTaskActionsSafe(member.OwnerId) || this.config.HarvestingMode == TaskMode.Disabled)
             return false;
 
         Vector2 tile = NormalizeTile(rawTile);
@@ -104,7 +104,7 @@ public sealed partial class ModEntry
 
     private bool TryPetAnimalAtTile(GameLocation location, Vector2 rawTile, SquadMemberState member, bool manual, long? excludedAnimalId = null)
     {
-        if (!this.AreTaskActionsSafe() || this.config.PettingMode == TaskMode.Disabled)
+        if (!this.AreTaskActionsSafe(member.OwnerId) || this.config.PettingMode == TaskMode.Disabled)
             return false;
 
         Vector2 tile = NormalizeTile(rawTile);
@@ -170,7 +170,7 @@ public sealed partial class ModEntry
 
     private void TryMimicAction(long ownerId, Vector2 actionTile)
     {
-        if (!this.AreTaskActionsSafe() || !this.AreTasksEnabled(ownerId))
+        if (!this.AreTaskActionsSafe(ownerId) || !this.AreTasksEnabled(ownerId))
             return;
 
         SquadMemberState? member = this.GetAvailableMember(ownerId);

@@ -13,7 +13,7 @@ internal static class CompanionBehaviorPatches
 {
     public static Func<NPC, bool>? IsControlled { get; set; }
 
-    public static Func<bool>? IsVanillaMovementExplicitlyAllowed { get; set; }
+    public static Func<NPC, bool>? IsVanillaMovementExplicitlyAllowed { get; set; }
 
     public static Func<NPC, bool>? ShouldSuppressVanillaArrival { get; set; }
 
@@ -28,7 +28,7 @@ internal static class CompanionBehaviorPatches
     {
         return npc is null
             || !ShouldControl(npc)
-            || IsVanillaMovementExplicitlyAllowed?.Invoke() == true
+            || IsVanillaMovementExplicitlyAllowed?.Invoke(npc) == true
             || Game1.newDay
             || !Game1.hasStartedDay
             || Game1.showingEndOfNightStuff

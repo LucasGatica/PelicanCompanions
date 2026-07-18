@@ -25,7 +25,7 @@ public sealed partial class ModEntry
 
     private void UpdateFollowers()
     {
-        if (this.IsBlockedGameState(blockForMenu: true))
+        if (this.IsGlobalSimulationBlocked())
             return;
 
         this.followDestinationsThisUpdate.Clear();
@@ -106,6 +106,16 @@ public sealed partial class ModEntry
                         this.SetTaskFailure(member, "companion.task_failure.unexpected_error");
                         this.Monitor.Log($"Parking disconnected companion '{member.NpcName}' failed and was isolated: {ex}", LogLevel.Error);
                     }
+                    continue;
+                }
+
+                if (this.IsOwnerSimulationBlocked(member.OwnerId, blockForMenu: true))
+                {
+                    // PathFindController continues updating behind menus in
+                    // multiplayer. Detach the local owner's route so it can't
+                    // walk toward a stale target while the arbiter is paused.
+                    if (this.IsOwnedCompanionController(npc))
+                        this.StopCompanionMovement(npc);
                     continue;
                 }
 
@@ -202,7 +212,7 @@ public sealed partial class ModEntry
             this.disconnectedFollowRecovery.Remove(member.NpcName);
             if (!recallAcrossLocations)
                 this.activeRecallTargets.Remove(member.NpcName);
-            this.ReserveFollowDestination(ownerLocation, desiredTile, force: recallAcrossLocations);
+            this.ReserveFollowDestination(ownerLocation, desiredTile, member.NpcName, force: recallAcrossLocations);
             if (!this.PlaceNpc(npc, ownerLocation, desiredTile))
             {
                 this.SetCompanionActivity(member, "companion.status.stuck");
@@ -232,7 +242,7 @@ public sealed partial class ModEntry
         }
 
         bool recallActive = this.activeRecallTargets.ContainsKey(member.NpcName);
-        if (recallActive && ownerDistance <= RecallArrivalDistance)
+        if (recallActive && this.HasRecallArrived(ownerLocation, ownerTile, npcTile, ownerDistance))
         {
             this.activeRecallTargets.Remove(member.NpcName);
             recallActive = false;
@@ -270,7 +280,7 @@ public sealed partial class ModEntry
 
         if (!recallActive && ownerStationary && ownerDistance <= MaxCompanionDistanceTiles && distance <= StartPathingDistance)
         {
-            this.ReserveFollowDestination(ownerLocation, npcTile);
+            this.ReserveFollowDestination(ownerLocation, npcTile, member.NpcName);
             this.disconnectedFollowRecovery.Remove(member.NpcName);
             this.StopCompanionMovement(npc);
             this.activeRecallTargets.Remove(member.NpcName);
@@ -324,7 +334,7 @@ public sealed partial class ModEntry
         }
 
         distance = GetFollowDistance(npc, desiredTile);
-        this.ReserveFollowDestination(ownerLocation, desiredTile, force: recallActive);
+        this.ReserveFollowDestination(ownerLocation, desiredTile, member.NpcName, force: recallActive);
         targetChanged = !this.lastFollowTargets.TryGetValue(member.NpcName, out lastTarget) || lastTarget != desiredTile;
 
         desiredTileIsCurrentTile = desiredTile == npcTile;
@@ -370,6 +380,8 @@ public sealed partial class ModEntry
             this.lastFollowPathTicks[member.NpcName] = Game1.ticks;
             if (member.LastFailureReasonKey == "companion.task_failure.path_recovery")
                 this.SetTaskFailure(member, "");
+            if (member.CurrentActivityKey == "companion.status.stuck")
+                this.SetCompanionActivity(member, "companion.status.returning");
         }
         else if (!shouldMove)
         {
@@ -456,7 +468,7 @@ public sealed partial class ModEntry
 
         this.ClearFollowState(member.NpcName);
         this.disconnectedFollowRecovery.Remove(member.NpcName);
-        this.ReserveFollowDestination(location, recoveryTile);
+        this.ReserveFollowDestination(location, recoveryTile, member.NpcName);
         if (!this.PlaceNpc(npc, location, recoveryTile))
         {
             this.SetCompanionActivity(member, "companion.status.stuck");
@@ -480,14 +492,38 @@ public sealed partial class ModEntry
         out bool reachabilityUncertain)
     {
         Dictionary<Vector2, int> reachableDistances = this.GetReachableTileDistances(location, npcTile, MaxFollowReachabilitySearchTiles);
+        Dictionary<Vector2, int> ownerDistances = this.GetReachableTileDistances(location, ownerTile, MaxFollowReachabilitySearchTiles);
         int searchRadius = Math.Max(1, (int)MathF.Ceiling(arrivalRadius));
+        int maximumArrivalSteps = Math.Max(1, (int)MathF.Ceiling(arrivalRadius * 2f));
         bool reachable = this.GetNearbyTiles(ownerTile, searchRadius)
             .Where(candidate => candidate != ownerTile)
             .Where(candidate => Vector2.Distance(NormalizeTile(ownerTile), NormalizeTile(candidate)) <= arrivalRadius)
-            .Any(candidate => reachableDistances.ContainsKey(NormalizeTile(candidate))
+            .Any(candidate => ownerDistances.TryGetValue(NormalizeTile(candidate), out int ownerPathDistance)
+                && ownerPathDistance <= maximumArrivalSteps
+                && reachableDistances.ContainsKey(NormalizeTile(candidate))
                 && this.IsTileTraversable(location, candidate));
-        reachabilityUncertain = !reachable && reachableDistances.Count >= MaxFollowReachabilitySearchTiles;
+        reachabilityUncertain = !reachable
+            && (reachableDistances.Count >= MaxFollowReachabilitySearchTiles
+                || ownerDistances.Count >= MaxFollowReachabilitySearchTiles);
         return reachable;
+    }
+
+    private bool HasRecallArrived(
+        GameLocation location,
+        Vector2 ownerTile,
+        Vector2 npcTile,
+        float ownerDistance)
+    {
+        if (ownerDistance > RecallArrivalDistance)
+            return false;
+
+        Dictionary<Vector2, int> ownerDistances = this.GetReachableTileDistances(
+            location,
+            ownerTile,
+            MaxFollowReachabilitySearchTiles);
+        int maximumArrivalSteps = Math.Max(1, (int)MathF.Ceiling(RecallArrivalDistance * 2f));
+        return ownerDistances.TryGetValue(NormalizeTile(npcTile), out int pathDistance)
+            && pathDistance <= maximumArrivalSteps;
     }
 
     private bool TryFindConservativeRecoveryTile(GameLocation location, Farmer owner, int slot, float arrivalRadius, out Vector2 recoveryTile)
@@ -517,13 +553,13 @@ public sealed partial class ModEntry
     {
         string key = this.GetWorkTargetKey(location.NameOrUniqueName, tile);
         return this.workStandReservations.ContainsKey(key)
-            || this.followDestinationsThisUpdate.Contains(key);
+            || this.followDestinationsThisUpdate.ContainsKey(key);
     }
 
-    private void ReserveFollowDestination(GameLocation location, Vector2 tile, bool force = false)
+    private void ReserveFollowDestination(GameLocation location, Vector2 tile, string npcName, bool force = false)
     {
         if (this.planningFollowDestinations || force)
-            this.followDestinationsThisUpdate.Add(this.GetWorkTargetKey(location.NameOrUniqueName, tile));
+            this.followDestinationsThisUpdate.TryAdd(this.GetWorkTargetKey(location.NameOrUniqueName, tile), npcName);
     }
 
     private static float GetFollowDistance(NPC npc, Vector2 desiredTile)
@@ -819,7 +855,7 @@ public sealed partial class ModEntry
             (int)originTile.Y,
             maxVisitedTiles);
         if (this.reachabilityCache.TryGetValue(cacheKey, out ReachabilityCacheEntry cached)
-            && cached.Tick == Game1.ticks)
+            && unchecked((uint)(Game1.ticks - cached.Tick)) <= ReachabilityCacheTtlTicks)
         {
             return cached.Distances;
         }
@@ -827,7 +863,7 @@ public sealed partial class ModEntry
         if (this.reachabilityCache.Count > 128)
         {
             foreach (ReachabilityCacheKey staleKey in this.reachabilityCache
-                .Where(p => p.Value.Tick != Game1.ticks)
+                .Where(p => unchecked((uint)(Game1.ticks - p.Value.Tick)) > ReachabilityCacheTtlTicks)
                 .Select(p => p.Key)
                 .ToList())
             {
@@ -1077,6 +1113,26 @@ public sealed partial class ModEntry
         this.suppressedVanillaArrivals[npc] = this.suppressedVanillaArrivals.TryGetValue(npc, out int depth)
             ? depth + 1
             : 1;
+    }
+
+    private bool IsVanillaMovementAllowed(NPC npc)
+    {
+        return this.vanillaMovementAllowances.ContainsKey(npc);
+    }
+
+    private void BeginAllowingVanillaMovement(NPC npc)
+    {
+        this.vanillaMovementAllowances[npc] = this.vanillaMovementAllowances.TryGetValue(npc, out int depth)
+            ? depth + 1
+            : 1;
+    }
+
+    private void EndAllowingVanillaMovement(NPC npc)
+    {
+        if (!this.vanillaMovementAllowances.TryGetValue(npc, out int depth) || depth <= 1)
+            this.vanillaMovementAllowances.Remove(npc);
+        else
+            this.vanillaMovementAllowances[npc] = depth - 1;
     }
 
     private void EndSuppressingVanillaArrival(NPC npc)

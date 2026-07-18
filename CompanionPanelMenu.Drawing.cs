@@ -335,6 +335,8 @@ internal sealed partial class CompanionPanelMenu
             return DangerColor;
         if (member.Mode == CompanionMode.Waiting || member.Mode == CompanionMode.ParkedForDisconnect)
             return AccentGold;
+        if (member.CurrentActivityKey == "companion.status.moving_to_wait")
+            return AccentBlue;
         if (member.CurrentActivityKey == "companion.status.working")
             return new Color(207, 133, 50);
         if (member.CurrentActivityKey == "companion.status.returning")
@@ -349,6 +351,7 @@ internal sealed partial class CompanionPanelMenu
         return key switch
         {
             "companion.map.working" => new Color(207, 133, 50),
+            "companion.map.moving_to_wait" => AccentBlue,
             "companion.map.returning" => AccentBlue,
             "companion.map.stuck" => DangerColor,
             "companion.map.other_location" => new Color(124, 102, 149),

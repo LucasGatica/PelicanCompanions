@@ -30,10 +30,11 @@ public sealed partial class ModEntry
         };
     }
 
-    private void CancelPendingTasksForOwner(long ownerId, string failureKey)
+    private void CancelPendingTasksForOwner(long ownerId, string failureKey, bool includeMovementOrders = true)
     {
         foreach (PendingCompanionTask task in this.pendingTasks.Values
             .Where(task => this.members.TryGetValue(task.NpcName, out SquadMemberState? member) && member.OwnerId == ownerId)
+            .Where(task => includeMovementOrders || task.Kind != CompanionTaskKind.MovingToWait)
             .ToList())
         {
             this.RemovePendingTask(task, failureKey, returning: true);
@@ -186,7 +187,7 @@ public sealed partial class ModEntry
         Vector2 ownerTile = owner is null ? new Vector2(-1f, -1f) : NormalizeTile(owner.Tile);
         Vector2 npcTile = npc is null ? new Vector2(-1f, -1f) : NormalizeTile(npc.Tile);
         bool tasksEnabled = this.AreTasksEnabled(member.OwnerId);
-        bool blocked = this.IsBlockedGameState(blockForMenu: false);
+        bool blocked = this.IsOwnerSimulationBlocked(member.OwnerId, blockForMenu: false);
         TargetPreviewCacheKey cacheKey = new(
             member.NpcName,
             simulatedDirective,
@@ -229,7 +230,7 @@ public sealed partial class ModEntry
         if (!this.AreTasksEnabled(member.OwnerId))
             return new TargetPreview(false, "", -1, -1, "companion.preview.tasks_disabled");
 
-        if (this.IsBlockedGameState(blockForMenu: false))
+        if (this.IsOwnerSimulationBlocked(member.OwnerId, blockForMenu: false))
             return new TargetPreview(false, "", -1, -1, "companion.preview.blocked");
 
         if (member.Mode != CompanionMode.Following)
@@ -324,7 +325,8 @@ public sealed partial class ModEntry
     {
         string locationName = location.NameOrUniqueName;
         string key = this.GetWorkTargetKey(locationName, tile);
-        if (this.workTargetReservations.ContainsKey(key))
+        if (this.workTargetReservations.ContainsKey(key)
+            || this.sharedWorkTargetReservations.ContainsKey(key))
             return true;
 
         if (!this.workTargetRetryAfterTicks.TryGetValue(key, out int retryAfterTick))
@@ -357,7 +359,19 @@ public sealed partial class ModEntry
         return obj.IsBreakableStone();
     }
 
-    private bool TryQueueDirectiveLumberTask(GameLocation location, Vector2 targetTile, SquadMemberState member, NPC npc, int radius)
+    private bool TryQueueDirectiveLumberTask(
+        GameLocation location,
+        Vector2 targetTile,
+        SquadMemberState member,
+        NPC npc,
+        int radius,
+        bool manual = false,
+        bool ignoreTaskMode = false,
+        string sharedTargetGroupId = "",
+        bool ignoreTaskToggle = false,
+        string expectedTargetToken = "",
+        object? expectedTargetInstance = null,
+        Vector2? preparedStandTile = null)
     {
         if (this.pendingTasks.ContainsKey(member.NpcName)
             || this.activeRecallTargets.ContainsKey(member.NpcName)
@@ -366,7 +380,7 @@ public sealed partial class ModEntry
             return false;
         }
 
-        if (this.config.LumberingMode == TaskMode.Disabled)
+        if (!ignoreTaskMode && this.config.LumberingMode == TaskMode.Disabled)
             return false;
 
         if (!location.terrainFeatures.TryGetValue(targetTile, out TerrainFeature? feature)
@@ -377,13 +391,19 @@ public sealed partial class ModEntry
             return false;
         }
 
-        if (!this.TryFindSafeAdjacentTile(location, targetTile, npc, member, radius, out Vector2 standTile))
+        Vector2 standTile;
+        if (preparedStandTile is Vector2 prepared)
+            standTile = NormalizeTile(prepared);
+        else if (!this.TryFindSafeAdjacentTile(location, targetTile, npc, member, radius, out standTile))
         {
             this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
             return false;
         }
 
-        if (!this.TryReserveWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile))
+        bool targetReserved = string.IsNullOrWhiteSpace(sharedTargetGroupId)
+            ? this.TryReserveWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile)
+            : this.TryReserveSharedWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile, sharedTargetGroupId);
+        if (!targetReserved)
         {
             this.SetTaskFailure(member, "companion.task_failure.target_reserved");
             return false;
@@ -402,8 +422,14 @@ public sealed partial class ModEntry
             NpcName = member.NpcName,
             LocationName = location.NameOrUniqueName,
             TargetTile = targetTile,
-            UsesWorkDirective = true,
+            Manual = manual,
+            UsesWorkDirective = !manual,
             RequiresPlayerTool = false,
+            IgnoresTaskMode = ignoreTaskMode,
+            IgnoresTaskToggle = ignoreTaskToggle,
+            ExpectedTargetToken = expectedTargetToken,
+            ExpectedTargetInstance = expectedTargetInstance,
+            SharedTargetGroupId = sharedTargetGroupId,
             WorkRadius = radius,
             ReturnDistance = this.GetCompanionReturnDistance(member),
             StartedTick = Game1.ticks,
@@ -423,7 +449,19 @@ public sealed partial class ModEntry
         return true;
     }
 
-    private bool TryQueueDirectiveMiningTask(GameLocation location, Vector2 targetTile, SquadMemberState member, NPC npc, int radius)
+    private bool TryQueueDirectiveMiningTask(
+        GameLocation location,
+        Vector2 targetTile,
+        SquadMemberState member,
+        NPC npc,
+        int radius,
+        bool manual = false,
+        bool ignoreTaskMode = false,
+        string sharedTargetGroupId = "",
+        bool ignoreTaskToggle = false,
+        string expectedTargetToken = "",
+        object? expectedTargetInstance = null,
+        Vector2? preparedStandTile = null)
     {
         if (this.pendingTasks.ContainsKey(member.NpcName)
             || this.activeRecallTargets.ContainsKey(member.NpcName)
@@ -432,7 +470,7 @@ public sealed partial class ModEntry
             return false;
         }
 
-        if (this.config.MiningMode == TaskMode.Disabled)
+        if (!ignoreTaskMode && this.config.MiningMode == TaskMode.Disabled)
             return false;
 
         if (!location.Objects.TryGetValue(targetTile, out SObject? obj) || !this.IsSafeMineableObject(obj))
@@ -441,13 +479,19 @@ public sealed partial class ModEntry
             return false;
         }
 
-        if (!this.TryFindSafeAdjacentTile(location, targetTile, npc, member, radius, out Vector2 standTile))
+        Vector2 standTile;
+        if (preparedStandTile is Vector2 prepared)
+            standTile = NormalizeTile(prepared);
+        else if (!this.TryFindSafeAdjacentTile(location, targetTile, npc, member, radius, out standTile))
         {
             this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
             return false;
         }
 
-        if (!this.TryReserveWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile))
+        bool targetReserved = string.IsNullOrWhiteSpace(sharedTargetGroupId)
+            ? this.TryReserveWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile)
+            : this.TryReserveSharedWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile, sharedTargetGroupId);
+        if (!targetReserved)
         {
             this.SetTaskFailure(member, "companion.task_failure.target_reserved");
             return false;
@@ -466,8 +510,14 @@ public sealed partial class ModEntry
             NpcName = member.NpcName,
             LocationName = location.NameOrUniqueName,
             TargetTile = targetTile,
-            UsesWorkDirective = true,
+            Manual = manual,
+            UsesWorkDirective = !manual,
             RequiresPlayerTool = false,
+            IgnoresTaskMode = ignoreTaskMode,
+            IgnoresTaskToggle = ignoreTaskToggle,
+            ExpectedTargetToken = expectedTargetToken,
+            ExpectedTargetInstance = expectedTargetInstance,
+            SharedTargetGroupId = sharedTargetGroupId,
             WorkRadius = radius,
             ReturnDistance = this.GetCompanionReturnDistance(member),
             StartedTick = Game1.ticks,

@@ -21,6 +21,12 @@ internal sealed class CompanionPathFindController : PathFindController
 
     public override bool update(GameTime time)
     {
+        // The base controller checks completion before applying its off-screen
+        // shortcut. Preserve that order so an already-finished path is detached
+        // even when the last farmer has just left this location.
+        if (this.pathToEndPoint is null || this.pathToEndPoint.Count == 0)
+            return true;
+
         if (!this.NPCSchedule && !this.location.farmers.Any())
             return false;
 

@@ -2,6 +2,132 @@
 
 All notable Pelican Companions changes are documented here.
 
+## 1.5.0 — 2026-07-17
+
+### Empty-ground squad orders
+
+- Pressing `X` over a safe empty ground tile now opens a contextual wheel with
+  Dismiss all plus up to three named local companions.
+- A named order sends that companion to the marked tile and changes them to
+  Waiting only after arrival; the saved waiting position then survives reloads
+  and day changes.
+- Added confirmation before Dismiss all and kept inventories, ownership, and
+  vanilla schedule restoration on the existing safe dismissal path.
+- Ground destinations reject occupied, cropped, blocked, actionable, warp, or
+  visually covered tiles. Destinations, ownership, range, reachability, and
+  stand reservations are revalidated by the host for multiplayer requests.
+- Move-to-wait orders are transient and independent from the global task toggle:
+  `F8` doesn't cancel an active move, while path failure stops the companion at
+  their current safe position instead of teleporting them or leaking a
+  reservation.
+
+## 1.4.0 — 2026-07-17
+
+### Quick HUD polish
+
+- Moved the companion dock to the left by default, including a one-time config
+  migration, while preserving the GMCM side selector.
+- Redesigned the dock with a compact squad header, warm parchment cards,
+  framed portraits, clearer status accents, level/full-inventory badges,
+  labeled Work/Stop and Follow controls, and improved hover feedback.
+- Kept the compact responsive layout for narrow and split-screen viewports,
+  and moved opposite-side notices below the vanilla top-right HUD.
+
+### Context-sensitive command wheel
+
+- Replaced the nearest-companion wheel with exact cursor hit-testing. Hovering
+  an owned companion now shows Profile, Work, Stop, Dismiss, and Follow; an
+  unrecruited NPC shows Recruit; another player's companion remains protected.
+- Added variable one-to-five-sector rendering, per-action colors, target-aware
+  titles, separator dead zones, and regression coverage for variable radial
+  layouts.
+- Hovering a mature untapped wild tree, breakable stone, or mature grab-harvest
+  crop now offers Send all plus up to three named local companion choices.
+
+### Direct group work
+
+- Added host-authoritative contextual task requests with location, tile, target
+  kind, token validation, and runtime instance identity so stale clicks and
+  resources replaced during pathing fail closed.
+- Added explicit direct work which can replace a selected companion's current
+  task and uses a safe basic axe/pickaxe without requiring the farmer to equip
+  one. The one-shot order bypasses disabled task modes without changing the
+  owner's global task toggle.
+- Added a read-only prepare phase for target/stand reservations, so an invalid
+  direct order doesn't erase the companion's previous task.
+- Added shared target cohorts: several companions can reserve unique adjacent
+  positions and contribute hits to one tree or stone. Atomic crop harvest ends
+  peer tasks as a successful group completion instead of false target-loss
+  failures.
+- Preserved flower protection and the existing farmhand-crop safety restriction:
+  Stardew's crop API would credit the host, so remote crop commands explain the
+  limitation instead of mutating ownership incorrectly.
+
+## 1.3.0 — 2026-07-17
+
+### Radial quick actions
+
+- Added a configurable `X` quick-action wheel centered around the mouse. It
+  targets the player's recruited companion nearest the cursor on the current
+  map and exposes Menu, Work, Wait here, and Follow in four quadrants.
+- Added hover highlighting, companion-name context, viewport clamping for small
+  windows/split-screen, outside/dead-zone cancellation, and English/PT-BR text.
+- Made the overlay modal while open, so its key and clicks cannot also trigger a
+  vanilla action, tool use, or another companion surface.
+- Reused host-authoritative idempotent multiplayer commands for farmhands and
+  fixed Work after Wait: preserved work directives no longer prevent the NPC
+  from resuming or re-enabling tasks.
+- Corrected the quick HUD's paused-work indicator after Wait, made global task
+  re-enabling explicit in feedback, and rejected stale remote Wait commands if
+  the NPC changed maps before the host processed them.
+- Added regression coverage for all four radial hit regions, the center dead
+  zone, outer bounds, separator gaps, and invalid coordinates.
+
+## 1.2.0 — 2026-07-17
+
+### Runtime reliability
+
+- Made multiplayer simulation gates owner-aware, so a menu/event on the host
+  pauses only the host's companions while remote owners keep simulating; stale
+  path controllers are detached while an owner is locally paused.
+- Fixed Recall declaring success across fences or walls, empty off-screen path
+  controllers remaining attached, and successful recovery paths retaining a
+  false `stuck` status.
+- Converted repeated schedule suppression into an idempotent NPC control lease
+  and extended the structural reachability cache to a short bounded lifetime,
+  removing reflection-heavy cleanup and full BFS scans from the hot path.
+- Replaced the global Harmony release depth with a reentrant allowance scoped to
+  each NPC, preventing one companion's vanilla restoration from releasing
+  another companion's movement guards.
+
+### State, saves, and multiplayer integrity
+
+- Save schema 8 captures and restores each NPC's original base/added movement
+  speed, including migration for active companions and deferred restores from
+  older saves. Missing custom NPCs now always retain a deferred restore intent.
+- State snapshots are fully validated, cloned, normalized, and materialized
+  before replacing the client's last known-good state; their revision is only
+  committed after the complete apply succeeds.
+- Save/snapshot construction no longer mutates live members or UI previews, so
+  one revision always represents a stable payload.
+- Remote item withdrawal now verifies a deterministic fingerprint covering ID,
+  stack, quality, parent, color, and sorted mod data. Stale clicks cannot remove
+  a different stack.
+- Replaced state-dependent remote toggles with idempotent `Set` commands, added
+  bounded per-player replay protection, and routed command results/errors back
+  to the requesting farmhand instead of the host's HUD.
+- Made the GMCM compatibility interface public, fixing SMAPI's API mapping error
+  observed in the runtime log.
+
+### Validation
+
+- Added a dependency-free console regression harness with 17 tests for config
+  normalization, progression, legacy refunds, GMCM visibility, command replay,
+  and serialized item identity.
+- `scripts/validate.sh` now restores clean worktrees, builds the mod and harness,
+  runs all tests, and validates JSON plus English/PT-BR key/token parity.
+- Live in-game and co-op QA is still required before publishing this release.
+
 ## 1.1.2 — 2026-07-12
 
 ### Companion control and movement
