@@ -41,8 +41,12 @@ public sealed partial class ModEntry : Mod
     // is checked by tile equality so a companion can't work from two tiles away.
     private const float TaskArrivalDistance = 1.1f;
     private const float FollowTrailMaxOwnerDistance = 2.25f;
-    private const int FollowRepathCooldownTicks = 20;
-    private const int FollowRecoveryRepathCooldownTicks = 15;
+    private const int FollowRepathCooldownTicks = 45;
+    private const int FollowRecoveryRepathCooldownTicks = FollowRepathCooldownTicks;
+    private const int FollowDisconnectedProbeCooldownTicks = 60;
+    private const int FollowDisconnectedBackoffTicks = 300;
+    private const int FollowTargetFailureBackoffTicks = 300;
+    private const int FollowPathStartBudgetPerUpdate = 2;
     private const int OwnerStationaryThresholdTicks = 20;
     private const int FollowNoProgressUpdatesThreshold = 18;
     private const int FollowRecoveryDurationTicks = 90;
@@ -86,7 +90,10 @@ public sealed partial class ModEntry : Mod
     private readonly Dictionary<string, int> lastFollowPathTicks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Vector2> lastFollowProgressPositions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Vector2> activeRecallTargets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> activeRecallActivatedTicks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Vector2> recoveredFollowTargets = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> followNoProgressTicks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> lastDisconnectedProbeTicks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> followRecoveryUntilTick = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> lastMovementDebugNoticeTicks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, CompanionMovementControllerState> companionMovementControllers = new(StringComparer.OrdinalIgnoreCase);
@@ -118,6 +125,7 @@ public sealed partial class ModEntry : Mod
     private int nextStateSnapshotRetryTick;
     private bool saveWritesBlocked;
     private bool planningFollowDestinations;
+    private int followPathStartsRemaining;
     private bool pendingDailyCompanionRefresh;
     private long? commandFeedbackTargetPlayerId;
     private Harmony? harmony;

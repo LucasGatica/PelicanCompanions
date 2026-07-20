@@ -298,10 +298,16 @@ public sealed partial class ModEntry
         this.lastFollowPathTicks.Clear();
         this.lastFollowProgressPositions.Clear();
         this.activeRecallTargets.Clear();
+        this.activeRecallActivatedTicks.Clear();
+        this.recoveredFollowTargets.Clear();
         this.followNoProgressTicks.Clear();
+        this.lastDisconnectedProbeTicks.Clear();
         this.followRecoveryUntilTick.Clear();
         this.disconnectedFollowRecovery.Clear();
+        this.disconnectedFollowBackoffs.Clear();
+        this.failedFollowPathTargets.Clear();
         this.lastMovementDebugNoticeTicks.Clear();
+        this.followPathStartsRemaining = 0;
         this.companionMovementControllers.Clear();
         this.workTargetRetryAfterTicks.Clear();
         this.suppressedVanillaArrivals.Clear();

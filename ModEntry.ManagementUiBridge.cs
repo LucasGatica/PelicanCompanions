@@ -199,8 +199,29 @@ public sealed partial class ModEntry
         bool wasWaiting = member.Mode != CompanionMode.Following;
         bool wasStuck = member.CurrentActivityKey == "companion.status.stuck";
         bool wasReturning = member.CurrentActivityKey == "companion.status.returning";
-        bool wasAway = this.IsCompanionAwayFromOwner(member);
-        bool shouldReturn = hadPendingTask || hadDirective || wasWaiting || wasStuck || wasReturning || wasAway;
+        bool hadActiveRecall = this.activeRecallTargets.ContainsKey(member.NpcName);
+        NPC? npc = this.GetNpcByName(member.NpcName);
+        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+        bool sameLocation = npc is not null && owner is not null && npc.currentLocation == owner.currentLocation;
+        float ownerDistance = sameLocation
+            ? Vector2.Distance(NormalizeTile(npc!.Tile), NormalizeTile(owner!.Tile))
+            : float.MaxValue;
+        bool canActivateRecall = npc is not null && owner is not null;
+        bool mustResetNavigation = hadPendingTask
+            || hadDirective
+            || wasWaiting
+            || FollowNavigationPolicy.ShouldResetForRecall(
+                sameLocation,
+                ownerDistance,
+                MaxCompanionDistanceTiles,
+                wasStuck || wasReturning || hadActiveRecall);
+        bool shouldReturn = hadPendingTask
+            || hadDirective
+            || wasWaiting
+            || wasStuck
+            || wasReturning
+            || hadActiveRecall
+            || canActivateRecall;
 
         member.SearchWood = false;
         member.SearchMining = false;
@@ -212,91 +233,72 @@ public sealed partial class ModEntry
         member.Mode = CompanionMode.Following;
         member.WaitingLocationName = null;
         member.ParkedAtUtcTicks = 0;
-        this.SetCompanionActivity(member, shouldReturn ? "companion.status.returning" : "companion.status.following");
 
         if (hadPendingTask || hadDirective)
             this.SetTaskFailure(member, "companion.task_failure.recalled");
 
-        NPC? npc = this.GetNpcByName(member.NpcName);
-        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
-        bool startedRecallPath = false;
-        if (npc is not null && owner is not null)
+        if (canActivateRecall && npc is not null)
         {
-            this.StopCompanionMovement(npc);
-            startedRecallPath = this.TryStartRecallPath(member, npc, owner);
-            if (!startedRecallPath)
+            if (mustResetNavigation && (npc.controller is not null || this.IsOwnedCompanionController(npc)))
+                this.StopCompanionMovement(npc);
+
+            // The input handler only changes state. Route planning is deferred
+            // to UpdateFollowers so opening/confirming the wheel can't stall the
+            // current frame on large or heavily modded maps.
+            if (mustResetNavigation)
             {
-                this.activeRecallTargets[member.NpcName] = NormalizeTile(npc.Tile);
-                this.UpdateFollower(member, npc, owner, forceCatchUp: false);
-                if (this.activeRecallTargets.ContainsKey(member.NpcName))
-                    this.SetCompanionActivity(member, "companion.status.returning");
+                this.ClearFollowNavigationState(member.NpcName);
             }
+            else
+            {
+                this.lastFollowPathTicks.Remove(member.NpcName);
+                this.followNoProgressTicks.Remove(member.NpcName);
+                this.recoveredFollowTargets.Remove(member.NpcName);
+                this.lastDisconnectedProbeTicks.Remove(member.NpcName);
+                this.disconnectedFollowRecovery.Remove(member.NpcName);
+                this.disconnectedFollowBackoffs.Remove(member.NpcName);
+            }
+
+            this.activeRecallTargets[member.NpcName] = NormalizeTile(npc.Tile);
+            this.activeRecallActivatedTicks[member.NpcName] = Game1.ticks;
+        }
+        else if (!hadActiveRecall && mustResetNavigation)
+        {
+            if (npc is not null && (npc.controller is not null || this.IsOwnedCompanionController(npc)))
+                this.StopCompanionMovement(npc);
+            this.ClearFollowNavigationState(member.NpcName);
         }
 
-        shouldReturn = shouldReturn
-            || startedRecallPath
-            || this.activeRecallTargets.ContainsKey(member.NpcName);
+        bool recallActive = this.activeRecallTargets.ContainsKey(member.NpcName);
+        this.SetCompanionActivity(
+            member,
+            recallActive ? "companion.status.returning" : "companion.status.following");
 
         if (showMessage && shouldReturn)
-            this.Info("companion.quick.returning", new { npc = member.DisplayName });
+        {
+            this.Info(
+                recallActive ? "companion.quick.returning" : "companion.quick.following",
+                new { npc = member.DisplayName });
+        }
 
         this.MarkStateDirty();
 
         return shouldReturn;
     }
 
-    private bool TryStartRecallPath(SquadMemberState member, NPC npc, Farmer owner)
-    {
-        if (npc.currentLocation != owner.currentLocation)
-            return false;
-
-        GameLocation location = owner.currentLocation;
-        Vector2 npcTile = NormalizeTile(npc.Tile);
-        Vector2 ownerTile = NormalizeTile(owner.Tile);
-        if (!this.TryFindRecallTargetTile(location, ownerTile, npcTile, out Vector2 targetTile))
-            return false;
-
-        targetTile = NormalizeTile(targetTile);
-        if (targetTile == npcTile)
-            return false;
-
-        this.ClearFollowState(member.NpcName);
-        ResetCompanionMovementSpeed(npc);
-        try
-        {
-            if (!this.TryStartCompanionPath(npc, location, targetTile, CompanionMovementIntent.Recall))
-                return false;
-        }
-        catch (Exception ex)
-        {
-            this.StopCompanionMovement(npc);
-            this.Monitor.Log($"Could not start recall path for '{member.NpcName}': {ex.Message}", LogLevel.Warn);
-            return false;
-        }
-        this.activeRecallTargets[member.NpcName] = targetTile;
-        this.ReserveFollowDestination(location, targetTile, member.NpcName, force: true);
-        this.lastFollowTargets[member.NpcName] = targetTile;
-        this.lastFollowTargetDistances[member.NpcName] = GetFollowDistance(npc, targetTile);
-        this.lastFollowPathTicks[member.NpcName] = Game1.ticks;
-        this.lastFollowProgressPositions[member.NpcName] = npc.Position / 64f;
-        this.SetCompanionActivity(member, "companion.status.returning");
-        return true;
-    }
-
-    private bool TryFindRecallTargetTile(GameLocation location, Vector2 ownerTile, Vector2 npcTile, out Vector2 targetTile)
+    private bool TryFindRecallTargetTile(string npcName, GameLocation location, Vector2 ownerTile, Vector2 npcTile, out Vector2 targetTile)
     {
         ownerTile = NormalizeTile(ownerTile);
         npcTile = NormalizeTile(npcTile);
-        Dictionary<Vector2, int> reachableDistances = this.GetReachableTileDistances(location, npcTile, MaxFollowReachabilitySearchTiles);
 
         foreach (Vector2 candidate in this.GetNearbyTiles(ownerTile, MaxCompanionDistanceTiles)
             .Where(candidate => candidate != ownerTile && candidate != npcTile)
             .Where(candidate => Vector2.Distance(ownerTile, NormalizeTile(candidate)) <= RecallArrivalDistance)
             .Where(candidate => this.IsTileSafe(location, candidate))
             .Where(candidate => !this.IsFollowDestinationReserved(location, candidate))
-            .Where(candidate => IsReachableOrUncertain(reachableDistances, candidate, MaxFollowReachabilitySearchTiles))
+            .Where(candidate => !this.IsFollowPathTargetBackedOff(npcName, location, candidate))
             .OrderBy(candidate => Vector2.Distance(candidate, ownerTile))
-            .ThenBy(candidate => reachableDistances.TryGetValue(candidate, out int pathDistance) ? pathDistance : int.MaxValue))
+            .ThenBy(candidate => Vector2.Distance(candidate, npcTile)))
         {
             targetTile = candidate;
             return true;
@@ -304,19 +306,6 @@ public sealed partial class ModEntry
 
         targetTile = npcTile;
         return false;
-    }
-
-    private bool IsCompanionAwayFromOwner(SquadMemberState member)
-    {
-        NPC? npc = this.GetNpcByName(member.NpcName);
-        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
-        if (npc is null || owner is null)
-            return false;
-
-        if (npc.currentLocation != owner.currentLocation)
-            return true;
-
-        return Vector2.Distance(NormalizeTile(npc.Tile), NormalizeTile(owner.Tile)) > MaxCompanionDistanceTiles;
     }
 
     private void OpenCompanionPanel(string? selectedNpcName = null)

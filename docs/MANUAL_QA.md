@@ -1,6 +1,6 @@
 # Roteiro de QA manual
 
-O validador automatizado compila o mod, executa 18 testes de regressão e verifica
+O validador automatizado compila o mod, executa 21 testes de regressão e verifica
 os arquivos JSON, mas não substitui um teste dentro do Stardew Valley. Execute
 este roteiro antes de publicar uma nova versão.
 
@@ -48,7 +48,11 @@ este roteiro antes de publicar uma nova versão.
 - Recrutar um pet dormindo, entrar em outro mapa e empurrá-lo; ele deve continuar
   com sprite 32x32 e não alternar para Sleep nem criar trajetória fora do follow.
 - Com 1, 3 e 12 companions, caminhar por um mapa grande e verificar no profiler
-  que a manutenção normal não repete limpeza de rota/reflexão a cada cinco ticks.
+  que a manutenção normal não repete limpeza de rota, reflexão ou BFS completa
+  a cada cinco ticks.
+- Com 1, 3 e 12 companions em mapa grande, pressionar repetidamente `X > Seguir`
+  em NPCs próximos e distantes; a roda deve confirmar sem pico na frame e a rota
+  deve começar em um tick posterior.
 
 ## Tarefas
 

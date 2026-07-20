@@ -2,6 +2,29 @@
 
 All notable Pelican Companions changes are documented here.
 
+## 1.5.1 — 2026-07-18
+
+### Follow and recall performance
+
+- Made the `X` wheel and quick-HUD Follow command state-only on the input frame:
+  task/directive cleanup remains immediate, while tile selection and path
+  creation are deferred to the host's follower update.
+- Removed full-map reachability scans from normal formation, breadcrumb-trail,
+  recall-target selection, and the duplicate preflight before Stardew's path
+  controller. Repath attempts are also less frequent.
+- Replaced eager disconnected-map checks with targeted, early-exit probes that
+  run only after sustained lack of progress and respect a cooldown. Bounded
+  searches that end inconclusively can never authorize repositioning.
+- Temporarily backs off endpoints rejected by Stardew's real pathfinder and
+  rotates to another safe tile, preventing custom-map collision differences
+  from retrying the same impossible route forever.
+- Preserved conservative movement rules: ordinary same-map follow never
+  teleports, cross-map transfer still requires a nearby safe tile, and explicit
+  recall fallback requires repeated definitive disconnected observations.
+- Added regression coverage for recall reset policy and tick-safe connectivity
+  throttling and controller preservation; the automated harness now contains
+  21 tests.
+
 ## 1.5.0 — 2026-07-17
 
 ### Empty-ground squad orders

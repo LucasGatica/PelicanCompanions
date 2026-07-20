@@ -1164,6 +1164,17 @@ public sealed partial class ModEntry
         GameLocation location,
         Vector2 targetTile)
     {
+        return this.TryGetCompanionControllerTarget(npc, intent, location, out Vector2 activeTarget)
+            && activeTarget == NormalizeTile(targetTile);
+    }
+
+    private bool TryGetCompanionControllerTarget(
+        NPC npc,
+        CompanionMovementIntent intent,
+        GameLocation location,
+        out Vector2 targetTile)
+    {
+        targetTile = default;
         if (!this.companionMovementControllers.TryGetValue(npc.Name, out CompanionMovementControllerState state)
             || !ReferenceEquals(npc.controller, state.Controller))
         {
@@ -1171,9 +1182,14 @@ public sealed partial class ModEntry
             return false;
         }
 
-        return state.Intent == intent
-            && string.Equals(state.LocationName, location.NameOrUniqueName, StringComparison.Ordinal)
-            && state.TargetTile == NormalizeTile(targetTile);
+        if (state.Intent != intent
+            || !string.Equals(state.LocationName, location.NameOrUniqueName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        targetTile = NormalizeTile(state.TargetTile);
+        return true;
     }
 
     private bool TryStartCompanionPath(

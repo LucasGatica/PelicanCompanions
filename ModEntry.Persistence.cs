@@ -106,14 +106,29 @@ public sealed partial class ModEntry
     private void ClearFollowState(string npcName)
     {
         this.controlledNpcLeases.RemoveWhere(npc => string.Equals(npc.Name, npcName, StringComparison.OrdinalIgnoreCase));
+        this.ClearFollowNavigationState(npcName);
+        foreach (FollowPathTargetKey key in this.failedFollowPathTargets.Keys
+            .Where(key => string.Equals(key.NpcName, npcName, StringComparison.OrdinalIgnoreCase))
+            .ToList())
+        {
+            this.failedFollowPathTargets.Remove(key);
+        }
+    }
+
+    private void ClearFollowNavigationState(string npcName)
+    {
         this.lastFollowTargets.Remove(npcName);
         this.lastFollowTargetDistances.Remove(npcName);
         this.lastFollowPathTicks.Remove(npcName);
         this.lastFollowProgressPositions.Remove(npcName);
         this.activeRecallTargets.Remove(npcName);
+        this.activeRecallActivatedTicks.Remove(npcName);
+        this.recoveredFollowTargets.Remove(npcName);
         this.followNoProgressTicks.Remove(npcName);
+        this.lastDisconnectedProbeTicks.Remove(npcName);
         this.followRecoveryUntilTick.Remove(npcName);
         this.disconnectedFollowRecovery.Remove(npcName);
+        this.disconnectedFollowBackoffs.Remove(npcName);
         this.lastMovementDebugNoticeTicks.Remove(npcName);
         this.companionMovementControllers.Remove(npcName);
         foreach (string key in this.followDestinationsThisUpdate

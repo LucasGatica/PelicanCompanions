@@ -1,6 +1,6 @@
 # Arquitetura do Pelican Companions
 
-Este documento descreve a organização mantida na versão 1.5.0. A regra
+Este documento descreve a organização mantida na versão 1.5.1. A regra
 principal é simples: `ModEntry.cs` compõe o mod e registra integrações; cada
 arquivo parcial contém apenas um fluxo funcional. O uso de `partial` mantém o
 contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
@@ -30,6 +30,7 @@ contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
 | `ModEntry.ConfigMenu.cs` | Integração com Generic Mod Config Menu e tradução. |
 | `Core/CommandReplayGuard.cs` | Janela limitada de idempotência por jogador. |
 | `Core/CompanionActionWheelHitTest.cs` | Hit-test puro de 1–6 setores, limites e separadores da roda. |
+| `Core/FollowNavigationPolicy.cs` | Política pura de reset de recall, probes tardios e orçamento de rotas. |
 | `Core/SavedItemStackIdentity.cs` | Fingerprint determinístico de pilhas serializadas. |
 | `Core/CompanionStateCopy.cs` | Cópias profundas para saves e snapshots imutáveis. |
 | `CompanionQuickHud.cs` | HUD de consulta e atalhos rápidos. |
@@ -68,11 +69,11 @@ Ao carregar um save, o mod:
 6. restaura apenas posições explicitamente salvas para `Waiting`/disconnect;
 7. readquire o controle de agenda dos companions disponíveis.
 
-O schema de save da versão 1.5.0 é `8`. `SavedItemStack` preserva `modData`,
+O schema de save da versão 1.5.1 é `8`. `SavedItemStack` preserva `modData`,
 ID qualificado, quantidade, qualidade, cor e parent preservado. Saves com schema
 mais novo ou dados ambíguos não são carregados nem sobrescritos; o mod entra em
 modo inerte nessa sessão para não alterar mundo/itens sem estado confiável. O
-schema de config é `6`.
+schema de config é `7`.
 
 ## Autoridade multiplayer
 
@@ -122,6 +123,13 @@ a API vanilla usa o jogador local implícito e creditaria o farmer errado.
   antes de alterar o mundo.
 - Controllers de follow não substituem uma tarefa pendente.
 - Recall cancela tarefas/diretivas antes de iniciar o retorno.
+- O input de Follow/Recall apenas confirma a mudança de estado; seleção de tile
+  e criação de rota acontecem no próximo tick autoritativo do host.
+- Formação e trilha não fazem varredura completa de conectividade. Um probe
+  direcionado só ocorre após falta real de progresso, respeita cooldown e um
+  resultado inconclusivo nunca autoriza reposicionamento.
+- Um endpoint rejeitado pelo pathfinder vanilla entra em backoff temporário; a
+  formação tenta outro tile sem confundir essa falha de alvo com desconexão do mapa.
 - Follow comum nunca reposiciona um NPC no mesmo mapa. Um fallback conservador
   para um tile do componente alcançável do owner só é permitido por Recall
   explícito ou na transferência necessária entre mapas.
@@ -159,7 +167,7 @@ autoritativos.
 
 ## Validação automatizada
 
-`scripts/validate.sh` restaura e compila os projetos, executa os 18 testes do
+`scripts/validate.sh` restaura e compila os projetos, executa os 21 testes do
 runner sem dependências em `tests/PelicanCompanions.Tests`, valida o JSON e exige
 paridade de chaves/tokens entre inglês e português. O runner cobre contratos
 puros; comportamento de NPC, mapa e multiplayer ainda exige `MANUAL_QA.md`.

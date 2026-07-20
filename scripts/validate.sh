@@ -44,4 +44,4 @@ if ! diff -u "$default_tokens" "$ptbr_tokens"; then
     exit 1
 fi
 
-echo "Validation passed: build, 18 tests, JSON syntax, translation keys, and token parity."
+echo "Validation passed: build, regression test harness, JSON syntax, translation keys, and token parity."

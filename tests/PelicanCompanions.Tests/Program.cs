@@ -17,6 +17,9 @@ internal static class Program
         new("CompanionProgression reembolsa skills legadas uma unica vez", CompanionProgressionRefundsLegacySkillsOnce),
         new("IGenericModConfigMenuApiCompat e publica", GenericModConfigMenuCompatibilityApiIsPublic),
         new("CompanionActionWheelHitTest mapeia setores variaveis e limites", CompanionActionWheelHitTestMapsSegmentsAndBounds),
+        new("FollowNavigationPolicy reseta recall apenas quando necessario", FollowNavigationPolicyResetsRecallOnlyWhenNecessary),
+        new("FollowNavigationPolicy posterga e limita probes", FollowNavigationPolicyDefersAndThrottlesConnectivityProbes),
+        new("FollowNavigationPolicy preserva controller e orcamento", FollowNavigationPolicyPreservesControllerAndBudget),
         new("CommandReplayGuard rejeita replay por jogador", CommandReplayGuardRejectsReplayPerPlayer),
         new("CommandReplayGuard isola jogadores", CommandReplayGuardIsolatesPlayers),
         new("CommandReplayGuard expulsa o comando mais antigo por capacidade", CommandReplayGuardEvictsOldestAtCapacity),
@@ -264,6 +267,78 @@ internal static class Program
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(outer + 0.1f, 0f, inner, outer, 4, firstCenter), "fora do circulo");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(float.NaN, 0f, inner, outer, 4, firstCenter), "coordenada invalida");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(80f, 0f, inner, outer, 0, firstCenter), "quantidade de setores invalida");
+    }
+
+    private static void FollowNavigationPolicyResetsRecallOnlyWhenNecessary()
+    {
+        Assert.False(
+            FollowNavigationPolicy.ShouldResetForRecall(true, 2f, 3f, wasStuckOrReturning: false),
+            "Seguidor saudavel dentro do raio nao precisa descartar a rota antes de registrar o recall.");
+        Assert.False(
+            FollowNavigationPolicy.ShouldResetForRecall(true, 3f, 3f, wasStuckOrReturning: false),
+            "O limite do raio comum deve ser inclusivo.");
+        Assert.True(
+            FollowNavigationPolicy.ShouldResetForRecall(true, 3.01f, 3f, wasStuckOrReturning: false),
+            "Distancia acima do raio deve descartar a navegacao anterior.");
+        Assert.True(
+            FollowNavigationPolicy.ShouldResetForRecall(false, 0f, 3f, wasStuckOrReturning: false),
+            "Outro mapa deve descartar a navegacao anterior.");
+        Assert.True(
+            FollowNavigationPolicy.ShouldResetForRecall(true, 1f, 3f, wasStuckOrReturning: true),
+            "Estado de recuperacao deve reiniciar a navegacao mesmo perto do dono.");
+    }
+
+    private static void FollowNavigationPolicyDefersAndThrottlesConnectivityProbes()
+    {
+        Assert.False(
+            FollowNavigationPolicy.ShouldProbeConnectivity(false, 18, 18, 1000, null, 60),
+            "Sem movimento pendente nao deve haver probe.");
+        Assert.False(
+            FollowNavigationPolicy.ShouldProbeConnectivity(true, 17, 18, 1000, null, 60),
+            "O probe deve esperar o limiar de falta de progresso.");
+        Assert.True(
+            FollowNavigationPolicy.ShouldProbeConnectivity(true, 18, 18, 1000, null, 60),
+            "O primeiro probe pode ocorrer exatamente no limiar.");
+        Assert.False(
+            FollowNavigationPolicy.ShouldProbeConnectivity(true, 18, 18, 1000, 950, 60),
+            "Probe recente deve respeitar cooldown.");
+        Assert.True(
+            FollowNavigationPolicy.ShouldProbeConnectivity(true, 18, 18, 1000, 940, 60),
+            "O cooldown deve vencer no limite exato.");
+        Assert.True(
+            FollowNavigationPolicy.ShouldProbeConnectivity(
+                true,
+                18,
+                18,
+                int.MinValue + 5,
+                int.MaxValue - 4,
+                10),
+            "O cooldown deve continuar correto quando o contador de ticks transbordar.");
+    }
+
+    private static void FollowNavigationPolicyPreservesControllerAndBudget()
+    {
+        Assert.False(
+            FollowNavigationPolicy.ShouldStartPath(false, false, false, false, true, true),
+            "Sem movimento pendente nao deve criar rota.");
+        Assert.False(
+            FollowNavigationPolicy.ShouldStartPath(true, true, false, false, true, true),
+            "Nao deve criar rota para o tile atual.");
+        Assert.False(
+            FollowNavigationPolicy.ShouldStartPath(true, false, true, false, true, true),
+            "Probe e criacao de rota nao devem compartilhar a mesma atualizacao.");
+        Assert.False(
+            FollowNavigationPolicy.ShouldStartPath(true, false, false, true, true, true),
+            "Controller compativel deve ser preservado.");
+        Assert.False(
+            FollowNavigationPolicy.ShouldStartPath(true, false, false, false, false, true),
+            "Cooldown pendente deve adiar a rota.");
+        Assert.False(
+            FollowNavigationPolicy.ShouldStartPath(true, false, false, false, true, false),
+            "Orcamento esgotado deve adiar a rota.");
+        Assert.True(
+            FollowNavigationPolicy.ShouldStartPath(true, false, false, false, true, true),
+            "Rota ausente com cooldown e orcamento disponiveis deve iniciar.");
     }
 
     private static void CommandReplayGuardRejectsReplayPerPlayer()
