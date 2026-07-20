@@ -2,6 +2,19 @@
 
 All notable Pelican Companions changes are documented here.
 
+## 1.5.3 — 2026-07-20
+
+### Distance-independent recruitment wheel
+
+- Removed the leftover 2.25-tile proximity check from the final recruitment
+  validation used by `X > Recruit`. An unrecruited NPC can now be recruited from
+  anywhere on the player's current map when selected directly under the cursor.
+- Kept host-authoritative checks for current map, supported NPC type, friendship,
+  squad capacity, ownership, deferred restores, and safe game state. The legacy
+  `F5` target selector remains intentionally proximity-based.
+- Added a pure same-map recruitment policy and regression coverage; the
+  automated harness now has 27 tests.
+
 ## 1.5.2 — 2026-07-20
 
 ### Work performance and empty-ground commands

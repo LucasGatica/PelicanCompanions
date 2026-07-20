@@ -105,9 +105,9 @@ public sealed partial class ModEntry
         if (owner is null)
             return new EligibilityResult(false, "recruitment.unsupported");
 
-        if (owner.currentLocation is null
-            || npc.currentLocation != owner.currentLocation
-            || Vector2.Distance(NormalizeTile(npc.Tile), NormalizeTile(owner.Tile)) > 2.25f)
+        if (!RecruitmentContextPolicy.IsLocationValid(
+                owner.currentLocation is not null,
+                npc.currentLocation == owner.currentLocation))
         {
             return new EligibilityResult(false, "recruitment.no_target");
         }

@@ -1,6 +1,6 @@
 # Roteiro de QA manual
 
-O validador automatizado compila o mod, executa 26 testes de regressão e verifica
+O validador automatizado compila o mod, executa 27 testes de regressão e verifica
 os arquivos JSON, mas não substitui um teste dentro do Stardew Valley. Execute
 este roteiro antes de publicar uma nova versão.
 
@@ -86,9 +86,11 @@ este roteiro antes de publicar uma nova versão.
   perfil deve abrir níveis, skills e inventário; Parar deve guardar a posição;
   Seguir deve cancelar tarefa/diretivas e retornar ao owner; Dispensar deve
   exigir confirmação e não alterar o grupo ao cancelar.
-- Em NPC não recrutado, confirmar que aparece apenas Recrutar e que amizade,
-  distância e lotação continuam revalidadas no clique. Em companion de outro
-  jogador, nenhuma ação mutável deve abrir.
+- Em NPC não recrutado no mesmo mapa, confirmar que aparece apenas Recrutar e
+  que a ação funciona tanto ao lado quanto do outro lado da área visível, sem
+  depender da distância do jogador. Amizade, suporte do NPC e lotação continuam
+  revalidados no clique; um NPC de outro mapa deve ser rejeitado. Em companion
+  de outro jogador, nenhuma ação mutável deve abrir.
 - Centro, fora do círculo, separadores, botão direito, Escape e um segundo X
   devem cancelar sem executar ação no mundo.
 - Apontar para o tronco ou a copa de árvore adulta não-tapped, pedra quebrável e cultura

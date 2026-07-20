@@ -34,7 +34,9 @@ All bindings can be changed in `config.json` or through GMCM.
 
 ## Current implemented scope
 
-- Recruit, dismiss, wait, resume, and recall companions with friendship, capacity, ownership, and safe-game-state checks.
+- Recruit an NPC selected with the `X` wheel from anywhere on the current map;
+  friendship, capacity, ownership, NPC support, and safe-game-state checks still apply.
+  Dismiss, wait, resume, and recall remain available for recruited companions.
 - Natural follower pathing at a conservative fixed NPC speed, location-change placement, visible recovery, and Adaptive/Behind/Compact formations.
 - Mouse-centered contextual wheel: owned companions expose Profile, Work, Stop, Dismiss, and Follow; unrecruited NPCs expose Recruit; mature trees, breakable stones, and mature grab-crops expose Send all plus up to three named local companions. Safe empty ground exposes Dismiss all plus up to three named companions; choosing one sends them to that tile and leaves them waiting there after arrival. A polished quick-HUD dock sits on the left by default, and the responsive F9 panel remains available for full management.
 - Per-companion XP, ten levels, skill points, useful Lumbering/Mining/Utility skill effects, and saved recent-loot history.
@@ -56,12 +58,12 @@ dotnet build -c Release -p:EnableModDeploy=false -p:EnableModZip=true
 
 Expected release zip after the release build:
 
-`bin/Release/net6.0/PelicanCompanions 1.5.2.zip`
+`bin/Release/net6.0/PelicanCompanions 1.5.3.zip`
 
 ## Verification status
 
 Run `scripts/validate.sh` to restore/build the mod, execute the package-free
-26-test regression harness, validate all JSON files, and verify English/PT-BR
+27-test regression harness, validate all JSON files, and verify English/PT-BR
 key and interpolation-token parity. The current in-game checklist still needs
 to be run before release; multiplayer remains explicitly experimental until
 that pass is complete.

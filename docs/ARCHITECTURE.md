@@ -1,6 +1,6 @@
 # Arquitetura do Pelican Companions
 
-Este documento descreve a organização mantida na versão 1.5.2. A regra
+Este documento descreve a organização mantida na versão 1.5.3. A regra
 principal é simples: `ModEntry.cs` compõe o mod e registra integrações; cada
 arquivo parcial contém apenas um fluxo funcional. O uso de `partial` mantém o
 contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
@@ -30,6 +30,7 @@ contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
 | `ModEntry.ConfigMenu.cs` | Integração com Generic Mod Config Menu e tradução. |
 | `Core/CommandReplayGuard.cs` | Janela limitada de idempotência por jogador. |
 | `Core/CompanionActionWheelHitTest.cs` | Hit-test puro de 1–6 setores, limites e separadores da roda. |
+| `Core/RecruitmentContextPolicy.cs` | Regra pura de recrutamento no mesmo mapa, sem limite de distância. |
 | `Core/FollowNavigationPolicy.cs` | Política pura de reset de recall, probes tardios e orçamento de rotas. |
 | `Core/TaskNavigationPolicy.cs` | Reuso de stand e orçamento de criação/recuperação de rotas de tarefa. |
 | `Core/TaskPlanningPolicy.cs` | Seleção prioritária e round-robin do orçamento de planejamento autônomo. |
@@ -72,7 +73,7 @@ Ao carregar um save, o mod:
 6. restaura apenas posições explicitamente salvas para `Waiting`/disconnect;
 7. readquire o controle de agenda dos companions disponíveis.
 
-O schema de save da versão 1.5.2 continua `8`. `SavedItemStack` preserva `modData`,
+O schema de save da versão 1.5.3 continua `8`. `SavedItemStack` preserva `modData`,
 ID qualificado, quantidade, qualidade, cor e parent preservado. Saves com schema
 mais novo ou dados ambíguos não são carregados nem sobrescritos; o mod entra em
 modo inerte nessa sessão para não alterar mundo/itens sem estado confiável. O
@@ -180,7 +181,7 @@ autoritativos.
 
 ## Validação automatizada
 
-`scripts/validate.sh` restaura e compila os projetos, executa os 26 testes do
+`scripts/validate.sh` restaura e compila os projetos, executa os 27 testes do
 runner sem dependências em `tests/PelicanCompanions.Tests`, valida o JSON e exige
 paridade de chaves/tokens entre inglês e português. O runner cobre contratos
 puros; comportamento de NPC, mapa e multiplayer ainda exige `MANUAL_QA.md`.

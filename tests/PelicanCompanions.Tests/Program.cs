@@ -17,6 +17,7 @@ internal static class Program
         new("CompanionProgression reembolsa skills legadas uma unica vez", CompanionProgressionRefundsLegacySkillsOnce),
         new("IGenericModConfigMenuApiCompat e publica", GenericModConfigMenuCompatibilityApiIsPublic),
         new("CompanionActionWheelHitTest mapeia setores variaveis e limites", CompanionActionWheelHitTestMapsSegmentsAndBounds),
+        new("RecruitmentContextPolicy permite recrutamento distante no mesmo mapa", RecruitmentContextPolicyAllowsAnyDistanceOnSameMap),
         new("FollowNavigationPolicy reseta recall apenas quando necessario", FollowNavigationPolicyResetsRecallOnlyWhenNecessary),
         new("FollowNavigationPolicy posterga e limita probes", FollowNavigationPolicyDefersAndThrottlesConnectivityProbes),
         new("FollowNavigationPolicy preserva controller e orcamento", FollowNavigationPolicyPreservesControllerAndBudget),
@@ -272,6 +273,19 @@ internal static class Program
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(outer + 0.1f, 0f, inner, outer, 4, firstCenter), "fora do circulo");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(float.NaN, 0f, inner, outer, 4, firstCenter), "coordenada invalida");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(80f, 0f, inner, outer, 0, firstCenter), "quantidade de setores invalida");
+    }
+
+    private static void RecruitmentContextPolicyAllowsAnyDistanceOnSameMap()
+    {
+        Assert.True(
+            RecruitmentContextPolicy.IsLocationValid(ownerHasCurrentLocation: true, npcSharesCurrentLocation: true),
+            "A elegibilidade de local nao deve receber nem limitar a distancia entre jogador e NPC.");
+        Assert.False(
+            RecruitmentContextPolicy.IsLocationValid(ownerHasCurrentLocation: false, npcSharesCurrentLocation: true),
+            "O jogador precisa estar em um mapa carregado.");
+        Assert.False(
+            RecruitmentContextPolicy.IsLocationValid(ownerHasCurrentLocation: true, npcSharesCurrentLocation: false),
+            "O NPC precisa estar no mesmo mapa do jogador.");
     }
 
     private static void FollowNavigationPolicyResetsRecallOnlyWhenNecessary()
