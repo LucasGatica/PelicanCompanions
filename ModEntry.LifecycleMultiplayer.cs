@@ -308,8 +308,12 @@ public sealed partial class ModEntry
         this.failedFollowPathTargets.Clear();
         this.lastMovementDebugNoticeTicks.Clear();
         this.followPathStartsRemaining = 0;
+        this.taskPathStartsRemaining = 0;
+        this.taskPlanningCursor = 0;
+        this.taskPreviewCursor = 0;
         this.companionMovementControllers.Clear();
         this.workTargetRetryAfterTicks.Clear();
+        this.priorityTaskPlanningMembers.Clear();
         this.suppressedVanillaArrivals.Clear();
         this.reachabilityCache.Clear();
         this.targetPreviewCache.Clear();
@@ -453,7 +457,9 @@ public sealed partial class ModEntry
             this.ProcessPendingTasks();
         }
 
-        if (e.IsMultipleOf(30) && Game1.activeClickableMenu is CompanionPanelMenu)
+        if (e.IsMultipleOf(30)
+            && Game1.activeClickableMenu is CompanionPanelMenu
+            && Game1.ticks < this.nextTaskScanTick)
             this.RefreshCompanionPanelPreviews();
 
         // Plan work before the single navigation pass. This prevents a task

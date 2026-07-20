@@ -17,6 +17,7 @@ public sealed partial class ModEntry
 {
     private void ProcessPendingTasks()
     {
+        this.taskPathStartsRemaining = 0;
         if (this.IsGlobalSimulationBlocked())
         {
             foreach (PendingCompanionTask pausedTask in this.pendingTasks.Values)
@@ -24,52 +25,72 @@ public sealed partial class ModEntry
             return;
         }
 
-        foreach (PendingCompanionTask task in this.pendingTasks.Values.ToList())
+        this.taskPathStartsRemaining = TaskPathStartBudgetPerUpdate;
+        try
         {
-            if (!this.pendingTasks.TryGetValue(task.NpcName, out PendingCompanionTask? currentTask)
-                || !ReferenceEquals(currentTask, task))
+            foreach (PendingCompanionTask task in this.pendingTasks.Values
+                .OrderByDescending(task => task.Manual)
+                .ThenBy(task => task.StartedTick)
+                .ToList())
             {
-                continue;
-            }
-
-            try
-            {
-                if (this.members.TryGetValue(task.NpcName, out SquadMemberState? taskMember)
-                    && this.IsOwnerSimulationBlocked(taskMember.OwnerId, blockForMenu: true))
+                if (!this.pendingTasks.TryGetValue(task.NpcName, out PendingCompanionTask? currentTask)
+                    || !ReferenceEquals(currentTask, task))
                 {
-                    task.LastProcessedTick = Game1.ticks;
-                    NPC? pausedNpc = this.GetNpcByName(task.NpcName);
-                    if (pausedNpc is not null && this.IsOwnedCompanionController(pausedNpc))
-                        this.StopCompanionMovement(pausedNpc);
                     continue;
                 }
 
-                int lastProcessedTick = task.LastProcessedTick <= 0 ? Game1.ticks : task.LastProcessedTick;
-                // This is an inactivity budget, not an absolute task duration.
-                // Routing progress and successful hits reset it below.
-                task.InactiveTicks += Math.Clamp(Game1.ticks - lastProcessedTick, 0, 30);
-                task.LastProcessedTick = Game1.ticks;
-                this.ProcessPendingTask(task);
-            }
-            catch (Exception ex)
-            {
-                this.Monitor.Log(
-                    $"Companion task '{task.Kind}' for '{task.NpcName}' failed unexpectedly at {task.LocationName} ({task.TargetTile.X}, {task.TargetTile.Y}). The task was cancelled safely. {ex}",
-                    LogLevel.Error);
-                if (task.Kind == CompanionTaskKind.MovingToWait
-                    && this.members.TryGetValue(task.NpcName, out SquadMemberState? movementMember))
+                try
                 {
-                    this.FailMoveCompanionToWait(
-                        task,
-                        movementMember,
-                        this.GetNpcByName(task.NpcName),
-                        "companion.task_failure.unexpected_error");
+                    if (this.members.TryGetValue(task.NpcName, out SquadMemberState? taskMember)
+                        && this.IsOwnerSimulationBlocked(taskMember.OwnerId, blockForMenu: true))
+                    {
+                        task.LastProcessedTick = Game1.ticks;
+                        NPC? pausedNpc = this.GetNpcByName(task.NpcName);
+                        if (pausedNpc is not null && this.IsOwnedCompanionController(pausedNpc))
+                        {
+                            this.StopCompanionMovement(pausedNpc);
+                            // This controller was paused intentionally by game
+                            // state, not rejected by pathfinding. Resume from the
+                            // same stand after the menu/event closes.
+                            task.HasPathStartAttempted = false;
+                            task.HasLastProgressPosition = false;
+                            task.NoProgressTicks = 0;
+                            task.LastPathTick = 0;
+                        }
+                        continue;
+                    }
+
+                    int lastProcessedTick = task.LastProcessedTick <= 0 ? Game1.ticks : task.LastProcessedTick;
+                    // This is an inactivity budget, not an absolute task duration.
+                    // Routing progress and successful hits reset it below.
+                    task.InactiveTicks += Math.Clamp(Game1.ticks - lastProcessedTick, 0, 30);
+                    task.LastProcessedTick = Game1.ticks;
+                    this.ProcessPendingTask(task);
                 }
-                else
+                catch (Exception ex)
                 {
-                    this.RemovePendingTask(task, "companion.task_failure.unexpected_error", returning: true);
+                    this.Monitor.Log(
+                        $"Companion task '{task.Kind}' for '{task.NpcName}' failed unexpectedly at {task.LocationName} ({task.TargetTile.X}, {task.TargetTile.Y}). The task was cancelled safely. {ex}",
+                        LogLevel.Error);
+                    if (task.Kind == CompanionTaskKind.MovingToWait
+                        && this.members.TryGetValue(task.NpcName, out SquadMemberState? movementMember))
+                    {
+                        this.FailMoveCompanionToWait(
+                            task,
+                            movementMember,
+                            this.GetNpcByName(task.NpcName),
+                            "companion.task_failure.unexpected_error");
+                    }
+                    else
+                    {
+                        this.RemovePendingTask(task, "companion.task_failure.unexpected_error", returning: true);
+                    }
                 }
             }
+        }
+        finally
+        {
+            this.taskPathStartsRemaining = 0;
         }
     }
 
@@ -586,6 +607,7 @@ public sealed partial class ModEntry
         Vector2 npcTile = NormalizeTile(npc.Tile);
         Vector2 currentStandTile = NormalizeTile(task.StandTile);
         targetTile = NormalizeTile(targetTile);
+        bool rejectedByMissingController = false;
         if (owner is not null && owner.currentLocation == location)
         {
             bool isNpcTile = currentStandTile == npcTile;
@@ -595,13 +617,30 @@ public sealed partial class ModEntry
             bool tileAvailable = isNpcTile || this.IsTileTraversable(location, currentStandTile);
             bool adjacent = Vector2.Distance(currentStandTile, targetTile) <= TaskArrivalDistance;
             bool withinOwnerRange = IsWithinOwnerDistance(owner.Tile, currentStandTile, maxOwnerDistance);
-            Dictionary<Vector2, int> reachableDistances = this.GetReachableTileDistances(location, npcTile, MaxFollowReachabilitySearchTiles);
-            bool reachable = IsReachableOrUncertain(reachableDistances, currentStandTile, MaxFollowReachabilitySearchTiles);
-            if (tileAvailable
+            bool reservedByAnotherCompanion = this.IsStandTileReserved(
+                location,
+                currentStandTile,
+                member.NpcName);
+            bool hasExpectedController = this.HasCompanionController(
+                npc,
+                CompanionMovementIntent.Task,
+                location,
+                currentStandTile);
+            rejectedByMissingController = tileAvailable
                 && adjacent
                 && withinOwnerRange
-                && reachable
-                && !this.IsStandTileReserved(location, currentStandTile, member.NpcName))
+                && !reservedByAnotherCompanion
+                && !isNpcTile
+                && task.HasPathStartAttempted
+                && !hasExpectedController;
+            if (TaskNavigationPolicy.CanReuseStandTile(
+                tileAvailable,
+                adjacent,
+                withinOwnerRange,
+                reservedByAnotherCompanion,
+                isNpcTile,
+                hasExpectedController,
+                task.HasPathStartAttempted))
             {
                 standTile = currentStandTile;
                 return true;
@@ -609,10 +648,23 @@ public sealed partial class ModEntry
         }
 
         this.ReleaseStandTile(task.NpcName, task.LocationName, task.StandTile);
-        if (this.TryFindSafeAdjacentTile(location, targetTile, npc, member, maxOwnerDistance, out standTile)
+        if (rejectedByMissingController)
+            task.RejectedStandTiles.Add(currentStandTile);
+        if (this.TryFindSafeAdjacentTile(
+                location,
+                targetTile,
+                npc,
+                member,
+                maxOwnerDistance,
+                out standTile,
+                task.RejectedStandTiles)
             && this.TryReserveStandTile(task.NpcName, task.LocationName, standTile))
         {
             task.StandTile = standTile;
+            task.HasPathStartAttempted = false;
+            task.HasLastProgressPosition = false;
+            task.NoProgressTicks = 0;
+            task.LastPathTick = 0;
             return true;
         }
 
@@ -620,8 +672,72 @@ public sealed partial class ModEntry
         return false;
     }
 
-    private bool TryFindSafeAdjacentTile(GameLocation location, Vector2 targetTile, NPC npc, SquadMemberState member, int maxOwnerDistance, out Vector2 standTile)
+    private bool TryFindSafeAdjacentTile(
+        GameLocation location,
+        Vector2 targetTile,
+        NPC npc,
+        SquadMemberState member,
+        int maxOwnerDistance,
+        out Vector2 standTile,
+        IReadOnlySet<Vector2>? excludedStandTiles = null)
     {
+        Vector2 npcTile = NormalizeTile(npc.Tile);
+        HashSet<Vector2> candidates = this.GetCandidateTaskStandTiles(
+                location,
+                targetTile,
+                npc,
+                member,
+                maxOwnerDistance,
+                excludedStandTiles)
+            .ToHashSet();
+        if (candidates.Count == 0)
+        {
+            standTile = npcTile;
+            return false;
+        }
+
+        ReachabilitySearchResult result = this.SearchReachableGoal(
+            location,
+            npcTile,
+            candidates,
+            candidates,
+            MaxFollowReachabilitySearchTiles,
+            out Vector2 reachedStandTile,
+            out _);
+        if (result == ReachabilitySearchResult.Reachable)
+        {
+            standTile = reachedStandTile;
+            return true;
+        }
+
+        standTile = npcTile;
+        return false;
+    }
+
+    private IReadOnlyList<Vector2> GetCandidateTaskStandTiles(
+        GameLocation location,
+        Vector2 targetTile,
+        NPC npc,
+        SquadMemberState member,
+        int maxOwnerDistance,
+        IReadOnlySet<Vector2>? excludedStandTiles = null)
+    {
+        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+        Vector2 npcTile = NormalizeTile(npc.Tile);
+        if (owner is null || owner.currentLocation != location)
+            return Array.Empty<Vector2>();
+
+        targetTile = NormalizeTile(targetTile);
+        Vector2 ownerTile = NormalizeTile(owner.Tile);
+        List<Vector2> candidates = new();
+        if (Vector2.Distance(npcTile, targetTile) <= TaskArrivalDistance
+            && IsWithinOwnerDistance(ownerTile, npcTile, maxOwnerDistance)
+            && excludedStandTiles?.Contains(npcTile) != true
+            && !this.IsStandTileReserved(location, npcTile, member.NpcName))
+        {
+            candidates.Add(npcTile);
+        }
+
         Vector2[] offsets =
         {
             new(0, 1),
@@ -629,40 +745,18 @@ public sealed partial class ModEntry
             new(-1, 0),
             new(0, -1)
         };
-
-        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
-        Vector2 npcTile = NormalizeTile(npc.Tile);
-        if (owner is null || owner.currentLocation != location)
-        {
-            standTile = npcTile;
-            return false;
-        }
-
-        Vector2 ownerTile = NormalizeTile(owner.Tile);
-        Dictionary<Vector2, int> reachableDistances = this.GetReachableTileDistances(location, npcTile, MaxFollowReachabilitySearchTiles);
-        if (Vector2.Distance(npcTile, targetTile) <= TaskArrivalDistance
-            && IsWithinOwnerDistance(ownerTile, npcTile, maxOwnerDistance)
-            && !this.IsStandTileReserved(location, npcTile, member.NpcName))
-        {
-            standTile = npcTile;
-            return true;
-        }
-
         foreach (Vector2 candidate in offsets
             .Select(offset => NormalizeTile(targetTile + offset))
+            .Where(candidate => !candidates.Contains(candidate))
+            .Where(candidate => excludedStandTiles?.Contains(candidate) != true)
             .Where(candidate => IsWithinOwnerDistance(ownerTile, candidate, maxOwnerDistance))
             .Where(candidate => !this.IsStandTileReserved(location, candidate, member.NpcName))
-            .Where(candidate => this.IsTileSafe(location, candidate))
-            .Where(candidate => IsReachableOrUncertain(reachableDistances, candidate, MaxFollowReachabilitySearchTiles))
-            .OrderBy(candidate => reachableDistances.TryGetValue(candidate, out int pathDistance) ? pathDistance : int.MaxValue)
-            .ThenBy(candidate => Vector2.Distance(candidate, npcTile)))
+            .Where(candidate => this.IsTileSafe(location, candidate)))
         {
-            standTile = candidate;
-            return true;
+            candidates.Add(candidate);
         }
 
-        standTile = npcTile;
-        return false;
+        return candidates;
     }
 
     private bool IsNpcAtTaskTile(NPC npc, Vector2 standTile)
@@ -695,11 +789,27 @@ public sealed partial class ModEntry
             else
                 task.NoProgressTicks = 0;
 
-            if (task.NoProgressTicks >= TaskNoProgressUpdatesThreshold && member is not null)
+            if (task.NoProgressTicks >= TaskNoProgressUpdatesThreshold)
             {
-                this.SetCompanionActivity(member, "companion.status.stuck");
-                this.SetTaskFailure(member, "companion.task_failure.path_recovery");
-                this.ShowMovementDebugNotice(member, "companion.movement_debug.path_recovery", new { npc = member.DisplayName });
+                if (member is not null && task.NoProgressTicks == TaskNoProgressUpdatesThreshold)
+                {
+                    this.SetCompanionActivity(member, "companion.status.stuck");
+                    this.SetTaskFailure(member, "companion.task_failure.path_recovery");
+                    this.ShowMovementDebugNotice(member, "companion.movement_debug.path_recovery", new { npc = member.DisplayName });
+                }
+
+                if (task.Kind != CompanionTaskKind.MovingToWait)
+                {
+                    // Drop the stalled controller. TryResolveTaskStandTile will
+                    // exclude this rejected stand and select another side next pass.
+                    this.StopCompanionMovement(npc);
+                    task.LastPathTick = Game1.ticks;
+                    return;
+                }
+
+                // A ground order has one exact destination rather than several
+                // adjacent stands, so recovery retries that destination slowly.
+                this.StopCompanionMovement(npc);
                 task.NoProgressTicks = 0;
                 task.LastPathTick = 0;
                 force = true;
@@ -718,30 +828,22 @@ public sealed partial class ModEntry
             CompanionMovementIntent.Task,
             location,
             standTile);
-        if (!force && hasExpectedController)
+        bool retryCooldownElapsed = !task.HasPathStartAttempted
+            || task.NoProgressTicks == 0
+            || unchecked((uint)(Game1.ticks - task.LastPathTick)) >= (uint)retryTicks;
+        if (!TaskNavigationPolicy.ShouldStartPath(
+            npcTile == standTile,
+            force,
+            hasExpectedController,
+            retryCooldownElapsed,
+            this.taskPathStartsRemaining > 0))
             return;
 
-        if (!force
-            && task.NoProgressTicks > 0
-            && Game1.ticks - task.LastPathTick < retryTicks)
-        {
-            return;
-        }
-
-        Dictionary<Vector2, int> reachableDistances = this.GetReachableTileDistances(location, npcTile, MaxFollowReachabilitySearchTiles);
-        if (!IsReachableOrUncertain(reachableDistances, standTile, MaxFollowReachabilitySearchTiles))
-        {
-            if (member is not null)
-            {
-                this.SetCompanionActivity(member, "companion.status.stuck");
-                this.SetTaskFailure(member, "companion.task_failure.path_recovery");
-                this.ShowMovementDebugNotice(member, "companion.movement_debug.path_recovery", new { npc = member.DisplayName });
-            }
-
-            return;
-        }
-
+        this.taskPathStartsRemaining--;
         task.LastPathTick = Game1.ticks;
+        task.HasPathStartAttempted = true;
+        if (force)
+            task.NoProgressTicks = 0;
         if (member is not null && member.CurrentActivityKey == "companion.status.stuck")
         {
             this.SetCompanionActivity(

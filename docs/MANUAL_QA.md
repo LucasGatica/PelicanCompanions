@@ -1,6 +1,6 @@
 # Roteiro de QA manual
 
-O validador automatizado compila o mod, executa 21 testes de regressão e verifica
+O validador automatizado compila o mod, executa 26 testes de regressão e verifica
 os arquivos JSON, mas não substitui um teste dentro do Stardew Valley. Execute
 este roteiro antes de publicar uma nova versão.
 
@@ -68,6 +68,15 @@ este roteiro antes de publicar uma nova versão.
   companions continuam processando.
 - Testar Manual, Mimicking e Autonomous separadamente.
 - Confirmar que tarefas automáticas não inundam o HUD com mensagens repetidas.
+- Em mapa grande e carregado, usar `X > Trabalhar` com raio 20 e 1, 3 e 12
+  companions. O clique, o planejamento seguinte e o trajeto não podem congelar;
+  novas rotas devem surgir em pequenos lotes sem impedir os outros trabalhadores.
+- Repetir Trabalhar por 30 segundos sem alvo válido e com o alvo mais próximo
+  bloqueado/reservado. Não pode haver pico periódico de BFS nem starvation; um
+  próximo alvo alcançável deve ser escolhido quando existir.
+- Alternar Wood/Mining/Clear Area no painel e no HUD enquanto o NPC trabalha.
+  Preview, cancelamento, Follow/Wait e troca de mapa não podem ressuscitar uma
+  tarefa antiga ou criar path no frame do clique.
 
 ## Interface
 
@@ -109,6 +118,10 @@ este roteiro antes de publicar uma nova versão.
 - Pressionar X sobre chão vazio, seguro e alcançável com 1, 2, 3 e mais de 3
   companions recrutados. Conferir Dispensar todos e no máximo três opções
   Mandar NPC, ordenadas de modo estável, sem o quarto nome vazar para a roda.
+- Repetir em um tile visível a mais de três tiles do farmer e com o companion
+  seguindo, trabalhando ou esperando também fora desse raio. A roda e o nome
+  devem aparecer; água, bloqueios, outro mapa e rota definitivamente impossível
+  continuam rejeitados.
 - Escolher Mandar NPC com o companion seguindo, trabalhando e esperando. Ele
   deve abandonar a ordem anterior, caminhar sem teleporte até o tile marcado e
   mudar para Waiting somente ao chegar; a posição final deve sobreviver a
@@ -158,7 +171,7 @@ este roteiro antes de publicar uma nova versão.
   deve explicar a limitação e não creditar item/XP ao host.
 - Como farmhand, abrir a roda em chão vazio e testar Mandar NPC e Dispensar
   todos (cancelar/confirmar). O host deve revalidar owner, NPC, mapa, tile,
-  distância, segurança, reachability e reserva; comando atrasado/repetido ou
+  segurança, reachability e reserva; comando atrasado/repetido ou
   mudança de mapa antes do processamento deve falhar sem movimento, dismiss ou
   feedback no HUD do jogador errado.
 - Durante um Mandar NPC remoto, bloquear o destino ou desconectar o owner e

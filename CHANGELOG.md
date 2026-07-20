@@ -2,6 +2,34 @@
 
 All notable Pelican Companions changes are documented here.
 
+## 1.5.2 — 2026-07-20
+
+### Work performance and empty-ground commands
+
+- Replaced each worker scan's bounded 2,048-tile reachability flood and repeated
+  per-candidate checks with one early-exit search across all viable stand tiles.
+  The selected stand is reused when the task is queued, and target preview no
+  longer repeats the same scan.
+- Removed repeated reachability floods from the five-tick work execution path.
+  A valid reserved stand and its active controller are preserved until actual
+  lack of progress requests recovery.
+- Deferred task path construction out of the command/planning frame, limited
+  new task paths to two per processing update, and delayed replanning after a
+  resource is removed so several synchronous pathfinders can't stack in one frame.
+- Bounded autonomous planning to three companions per scan with round-robin
+  fairness and explicit-Work priority. Panel directive clicks now publish a
+  lightweight planning state, directive hover no longer runs target search,
+  and background panel previews use the same three-member budget.
+- When Stardew rejects or stalls a stand path, the worker now excludes that
+  side and tries another adjacent stand instead of retrying one endpoint forever.
+- Removed the three-tile follow radius from empty-ground destinations and from
+  the list of eligible local companions. Any safe, reachable cursor tile in the
+  current map can now show the wheel and receive a named Move/Wait order.
+- Kept multiplayer host validation for ownership, map, tile structure,
+  occupancy, reservations, and a directed bounded reachability check before the
+  real path controller. Added task-navigation, fair-planning, and ground-command
+  regression policies; the automated harness now has 26 tests.
+
 ## 1.5.1 — 2026-07-18
 
 ### Follow and recall performance

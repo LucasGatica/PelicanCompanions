@@ -1,6 +1,6 @@
 # Arquitetura do Pelican Companions
 
-Este documento descreve a organização mantida na versão 1.5.1. A regra
+Este documento descreve a organização mantida na versão 1.5.2. A regra
 principal é simples: `ModEntry.cs` compõe o mod e registra integrações; cada
 arquivo parcial contém apenas um fluxo funcional. O uso de `partial` mantém o
 contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
@@ -31,6 +31,9 @@ contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
 | `Core/CommandReplayGuard.cs` | Janela limitada de idempotência por jogador. |
 | `Core/CompanionActionWheelHitTest.cs` | Hit-test puro de 1–6 setores, limites e separadores da roda. |
 | `Core/FollowNavigationPolicy.cs` | Política pura de reset de recall, probes tardios e orçamento de rotas. |
+| `Core/TaskNavigationPolicy.cs` | Reuso de stand e orçamento de criação/recuperação de rotas de tarefa. |
+| `Core/TaskPlanningPolicy.cs` | Seleção prioritária e round-robin do orçamento de planejamento autônomo. |
+| `Core/GroundCommandPolicy.cs` | Regras puras de contexto e membros para comandos de chão vazio. |
 | `Core/SavedItemStackIdentity.cs` | Fingerprint determinístico de pilhas serializadas. |
 | `Core/CompanionStateCopy.cs` | Cópias profundas para saves e snapshots imutáveis. |
 | `CompanionQuickHud.cs` | HUD de consulta e atalhos rápidos. |
@@ -69,7 +72,7 @@ Ao carregar um save, o mod:
 6. restaura apenas posições explicitamente salvas para `Waiting`/disconnect;
 7. readquire o controle de agenda dos companions disponíveis.
 
-O schema de save da versão 1.5.1 é `8`. `SavedItemStack` preserva `modData`,
+O schema de save da versão 1.5.2 continua `8`. `SavedItemStack` preserva `modData`,
 ID qualificado, quantidade, qualidade, cor e parent preservado. Saves com schema
 mais novo ou dados ambíguos não são carregados nem sobrescritos; o mod entra em
 modo inerte nessa sessão para não alterar mundo/itens sem estado confiável. O
@@ -112,8 +115,13 @@ a API vanilla usa o jogador local implícito e creditaria o farmer errado.
 - A atribuição contextual prepara target e stands antes do commit; uma falha de
   preparação não cancela a tarefa anterior do companion.
 - Uma ordem de chão vazio prepara e reserva o destino antes de substituir a
-  ordem anterior, revalida owner/mapa/distância/segurança no host e segue a
+  ordem anterior, revalida owner/mapa/segurança/reachability no host e segue a
   sequência transitória `MovingToWait -> Waiting`; nunca teleporta para concluir.
+- O raio de formação não limita comandos de chão: o destino e o companion podem
+  estar mais de três tiles do owner, mas precisam estar no mesmo mapa. Uma busca
+  A* direcionada rejeita desconexão definitiva sem inundar o mapa; se o limite
+  terminar inconclusivo, o controller real tenta a rota e o fluxo falha em
+  Waiting no ponto alcançado, sem teleporte.
 - `F8` não cancela `MovingToWait`. Falha, timeout, troca de mapa ou bloqueio do
   destino libera a reserva e deixa o NPC esperando na posição em que parou.
 - Tarefas contextuais guardam a instância runtime do recurso e a revalidam até o
@@ -122,6 +130,11 @@ a API vanilla usa o jogador local implícito e creditaria o farmer errado.
 - Uma ação revalida mapa, owner, target, distância e segurança imediatamente
   antes de alterar o mundo.
 - Controllers de follow não substituem uma tarefa pendente.
+- Planejamento de trabalho usa uma única busca direcionada aos stands viáveis;
+  até três companions são planejados por scan em round-robin, com prioridade
+  para Work explícito. Execução normal reutiliza o stand reservado sem BFS
+  periódica. No máximo duas novas rotas de tarefa são construídas por
+  atualização de processamento.
 - Recall cancela tarefas/diretivas antes de iniciar o retorno.
 - O input de Follow/Recall apenas confirma a mudança de estado; seleção de tile
   e criação de rota acontecem no próximo tick autoritativo do host.
@@ -167,7 +180,7 @@ autoritativos.
 
 ## Validação automatizada
 
-`scripts/validate.sh` restaura e compila os projetos, executa os 21 testes do
+`scripts/validate.sh` restaura e compila os projetos, executa os 26 testes do
 runner sem dependências em `tests/PelicanCompanions.Tests`, valida o JSON e exige
 paridade de chaves/tokens entre inglês e português. O runner cobre contratos
 puros; comportamento de NPC, mapa e multiplayer ainda exige `MANUAL_QA.md`.

@@ -56,12 +56,12 @@ dotnet build -c Release -p:EnableModDeploy=false -p:EnableModZip=true
 
 Expected release zip after the release build:
 
-`bin/Release/net6.0/PelicanCompanions 1.5.1.zip`
+`bin/Release/net6.0/PelicanCompanions 1.5.2.zip`
 
 ## Verification status
 
 Run `scripts/validate.sh` to restore/build the mod, execute the package-free
-21-test regression harness, validate all JSON files, and verify English/PT-BR
+26-test regression harness, validate all JSON files, and verify English/PT-BR
 key and interpolation-token parity. The current in-game checklist still needs
 to be run before release; multiplayer remains explicitly experimental until
 that pass is complete.

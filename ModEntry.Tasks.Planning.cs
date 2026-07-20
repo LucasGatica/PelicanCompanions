@@ -68,8 +68,23 @@ public sealed partial class ModEntry
         }
 
         int radius = this.GetCompanionWorkRadius(member);
+        bool includeWood = (member.SearchWood || member.ClearArea)
+            && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled;
+        bool includeMining = (member.SearchMining || member.ClearArea)
+            && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled;
         WorkTarget? target = this.FindBestWorkTarget(member, npc, owner, location, radius);
-        this.UpdateTargetPreview(member, this.BuildTargetPreview(member, null));
+        this.UpdateTargetPreview(
+            member,
+            target is WorkTarget plannedTarget
+                ? CreateWorkTargetPreview(plannedTarget)
+                : new TargetPreview(
+                    false,
+                    "",
+                    -1,
+                    -1,
+                    includeWood || includeMining
+                        ? "companion.preview.no_target"
+                        : "companion.preview.work_modes_disabled"));
         if (target is null)
         {
             this.SetCompanionActivity(member, "companion.status.following");
@@ -79,8 +94,20 @@ public sealed partial class ModEntry
 
         return target.Value.Kind switch
         {
-            CompanionTaskKind.Lumbering => this.TryQueueDirectiveLumberTask(location, target.Value.Tile, member, npc, radius),
-            CompanionTaskKind.Mining => this.TryQueueDirectiveMiningTask(location, target.Value.Tile, member, npc, radius),
+            CompanionTaskKind.Lumbering => this.TryQueueDirectiveLumberTask(
+                location,
+                target.Value.Tile,
+                member,
+                npc,
+                radius,
+                preparedStandTile: target.Value.StandTile),
+            CompanionTaskKind.Mining => this.TryQueueDirectiveMiningTask(
+                location,
+                target.Value.Tile,
+                member,
+                npc,
+                radius,
+                preparedStandTile: target.Value.StandTile),
             _ => false
         };
     }
@@ -104,8 +131,20 @@ public sealed partial class ModEntry
 
         bool queued = target.Value.Kind switch
         {
-            CompanionTaskKind.Lumbering => this.TryQueueDirectiveLumberTask(owner.currentLocation, target.Value.Tile, member, npc, radius),
-            CompanionTaskKind.Mining => this.TryQueueDirectiveMiningTask(owner.currentLocation, target.Value.Tile, member, npc, radius),
+            CompanionTaskKind.Lumbering => this.TryQueueDirectiveLumberTask(
+                owner.currentLocation,
+                target.Value.Tile,
+                member,
+                npc,
+                radius,
+                preparedStandTile: target.Value.StandTile),
+            CompanionTaskKind.Mining => this.TryQueueDirectiveMiningTask(
+                owner.currentLocation,
+                target.Value.Tile,
+                member,
+                npc,
+                radius,
+                preparedStandTile: target.Value.StandTile),
             _ => false
         };
 
@@ -132,7 +171,7 @@ public sealed partial class ModEntry
 
         Vector2 npcTile = NormalizeTile(npc.Tile);
         Vector2 ownerTile = NormalizeTile(owner.Tile);
-        List<WorkTarget> targets = new();
+        Dictionary<Vector2, List<WorkTarget>> targetsByStandTile = new();
 
         void TryAddTarget(CompanionTaskKind kind, Vector2 rawTile)
         {
@@ -145,13 +184,26 @@ public sealed partial class ModEntry
                 return;
 
             float npcDistance = Vector2.Distance(npcTile, tile);
-            if (this.TryFindSafeAdjacentTile(location, tile, npc, member, radius, out _))
-                targets.Add(new WorkTarget(kind, tile, npcDistance, playerDistance));
+            foreach (Vector2 standTile in this.GetCandidateTaskStandTiles(
+                location,
+                tile,
+                npc,
+                member,
+                radius))
+            {
+                if (!targetsByStandTile.TryGetValue(standTile, out List<WorkTarget>? standTargets))
+                {
+                    standTargets = new List<WorkTarget>();
+                    targetsByStandTile[standTile] = standTargets;
+                }
+
+                standTargets.Add(new WorkTarget(kind, tile, standTile, npcDistance, playerDistance));
+            }
         }
 
         // Enumerate actual world features instead of walking every tile in the
-        // search square. Large work radii now scale with candidate count, not
-        // map area, and reachability is reused by the tick-local cache.
+        // search square. All viable stands become goals of one early-exit BFS,
+        // so nearby work doesn't pay for a full-map reachability flood.
         if (includeWood)
         {
             foreach (Vector2 tile in location.terrainFeatures.Keys)
@@ -170,13 +222,42 @@ public sealed partial class ModEntry
             }
         }
 
-        if (targets.Count == 0)
+        if (targetsByStandTile.Count == 0)
             return null;
 
-        return targets
+        HashSet<Vector2> candidateStandTiles = targetsByStandTile.Keys.ToHashSet();
+        ReachabilitySearchResult reachability = this.SearchReachableGoal(
+            location,
+            npcTile,
+            candidateStandTiles,
+            candidateStandTiles,
+            MaxFollowReachabilitySearchTiles,
+            out Vector2 reachedStandTile,
+            out _);
+        if (reachability != ReachabilitySearchResult.Reachable
+            || !targetsByStandTile.TryGetValue(reachedStandTile, out List<WorkTarget>? reachedTargets))
+        {
+            return null;
+        }
+
+        return reachedTargets
             .OrderBy(p => p.NpcDistance)
             .ThenBy(p => p.PlayerDistance)
+            .ThenBy(p => p.Kind)
+            .ThenBy(p => p.Tile.X)
+            .ThenBy(p => p.Tile.Y)
             .FirstOrDefault();
+    }
+
+    private static TargetPreview CreateWorkTargetPreview(WorkTarget target)
+    {
+        string targetKey = target.Kind switch
+        {
+            CompanionTaskKind.Lumbering => "companion.target.wood",
+            CompanionTaskKind.Mining => "companion.target.mining",
+            _ => ""
+        };
+        return new TargetPreview(true, targetKey, (int)target.Tile.X, (int)target.Tile.Y, "");
     }
 
     private TargetPreview BuildTargetPreview(SquadMemberState member, CompanionDirective? simulatedDirective)
@@ -283,13 +364,7 @@ public sealed partial class ModEntry
         if (target is null)
             return new TargetPreview(false, "", -1, -1, "companion.preview.no_target");
 
-        string targetKey = target.Value.Kind switch
-        {
-            CompanionTaskKind.Lumbering => "companion.target.wood",
-            CompanionTaskKind.Mining => "companion.target.mining",
-            _ => ""
-        };
-        return new TargetPreview(true, targetKey, (int)target.Value.Tile.X, (int)target.Value.Tile.Y, "");
+        return CreateWorkTargetPreview(target.Value);
     }
 
     private void UpdateTargetPreview(SquadMemberState member, TargetPreview preview)
@@ -307,18 +382,26 @@ public sealed partial class ModEntry
 
     private string GetDirectivePreviewText(SquadMemberState member, CompanionDirective directive)
     {
-        TargetPreview preview = this.BuildTargetPreview(member, directive);
-        if (preview.HasTarget)
+        bool searchWood = member.SearchWood;
+        bool searchMining = member.SearchMining;
+        bool clearArea = member.ClearArea;
+        switch (directive)
         {
-            return this.Tr("companion.preview.target", new
-            {
-                target = this.Tr(preview.TargetKey),
-                x = preview.X,
-                y = preview.Y
-            });
+            case CompanionDirective.SearchWood:
+                searchWood = !searchWood;
+                break;
+            case CompanionDirective.SearchMining:
+                searchMining = !searchMining;
+                break;
+            case CompanionDirective.ClearArea:
+                clearArea = !clearArea;
+                break;
         }
 
-        return this.Tr("companion.preview.reason", new { reason = this.Tr(preview.ReasonKey) });
+        string reasonKey = searchWood || searchMining || clearArea
+            ? "companion.preview.planning"
+            : "companion.preview.disabled_after_click";
+        return this.Tr("companion.preview.reason", new { reason = this.Tr(reasonKey) });
     }
 
     private bool IsTargetReserved(GameLocation location, Vector2 tile)
@@ -443,9 +526,6 @@ public sealed partial class ModEntry
         this.ShowCompanionWorkSignal(npc, location, targetTile, "target");
         this.Say(npc, "Lumbering", force: false);
 
-        if (!this.IsNpcAtTaskTile(npc, standTile))
-            this.RouteNpcToTaskTile(npc, location, standTile, task, force: true);
-
         return true;
     }
 
@@ -530,9 +610,6 @@ public sealed partial class ModEntry
         this.SetCompanionTarget(member, CompanionTaskKind.Mining, targetTile);
         this.ShowCompanionWorkSignal(npc, location, targetTile, "target");
         this.Say(npc, "Mining", force: false);
-
-        if (!this.IsNpcAtTaskTile(npc, standTile))
-            this.RouteNpcToTaskTile(npc, location, standTile, task, force: true);
 
         return true;
     }

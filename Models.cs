@@ -213,6 +213,8 @@ internal sealed class PendingCompanionTask
     public Vector2 StandTile { get; set; }
     public Vector2 LastProgressPosition { get; set; }
     public bool HasLastProgressPosition { get; set; }
+    public bool HasPathStartAttempted { get; set; }
+    public HashSet<Vector2> RejectedStandTiles { get; } = new();
     public int NoProgressTicks { get; set; }
 }
 

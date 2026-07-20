@@ -20,6 +20,11 @@ internal static class Program
         new("FollowNavigationPolicy reseta recall apenas quando necessario", FollowNavigationPolicyResetsRecallOnlyWhenNecessary),
         new("FollowNavigationPolicy posterga e limita probes", FollowNavigationPolicyDefersAndThrottlesConnectivityProbes),
         new("FollowNavigationPolicy preserva controller e orcamento", FollowNavigationPolicyPreservesControllerAndBudget),
+        new("TaskNavigationPolicy reutiliza stand validado sem novo probe", TaskNavigationPolicyReusesValidatedStand),
+        new("TaskNavigationPolicy limita criacao e reinicio de rotas", TaskNavigationPolicyBudgetsPathStarts),
+        new("TaskPlanningPolicy prioriza e percorre membros sem starvation", TaskPlanningPolicyPrioritizesAndRotatesFairly),
+        new("GroundCommandPolicy abre contexto local seguro sem raio de follow", GroundCommandPolicyOpensSafeLocalContext),
+        new("GroundCommandPolicy lista membros locais fora da formacao", GroundCommandPolicyListsLocalMembers),
         new("CommandReplayGuard rejeita replay por jogador", CommandReplayGuardRejectsReplayPerPlayer),
         new("CommandReplayGuard isola jogadores", CommandReplayGuardIsolatesPlayers),
         new("CommandReplayGuard expulsa o comando mais antigo por capacidade", CommandReplayGuardEvictsOldestAtCapacity),
@@ -339,6 +344,121 @@ internal static class Program
         Assert.True(
             FollowNavigationPolicy.ShouldStartPath(true, false, false, false, true, true),
             "Rota ausente com cooldown e orcamento disponiveis deve iniciar.");
+    }
+
+    private static void TaskNavigationPolicyReusesValidatedStand()
+    {
+        Assert.True(
+            TaskNavigationPolicy.CanReuseStandTile(true, true, true, false, false, false, false),
+            "Um stand estruturalmente valido e ainda reservado pelo proprio NPC deve ser reutilizado.");
+        Assert.False(
+            TaskNavigationPolicy.CanReuseStandTile(false, true, true, false, false, false, false),
+            "Stand estruturalmente bloqueado precisa ser recalculado.");
+        Assert.False(
+            TaskNavigationPolicy.CanReuseStandTile(true, false, true, false, false, false, false),
+            "Stand que deixou de ser adjacente ao alvo nao pode ser reutilizado.");
+        Assert.False(
+            TaskNavigationPolicy.CanReuseStandTile(true, true, false, false, false, false, false),
+            "Stand fora do raio de trabalho nao pode ser reutilizado.");
+        Assert.False(
+            TaskNavigationPolicy.CanReuseStandTile(true, true, true, true, false, false, false),
+            "Reserva de outro companion invalida o stand.");
+        Assert.False(
+            TaskNavigationPolicy.CanReuseStandTile(true, true, true, false, false, false, true),
+            "Stand cuja rota ja foi rejeitada precisa dar lugar a outro quadrante.");
+        Assert.True(
+            TaskNavigationPolicy.CanReuseStandTile(true, true, true, false, false, true, true),
+            "Controller esperado prova que a tentativa ainda esta em andamento.");
+        Assert.True(
+            TaskNavigationPolicy.CanReuseStandTile(true, true, true, false, true, false, true),
+            "NPC que ja chegou pode trabalhar mesmo depois de uma tentativa anterior.");
+    }
+
+    private static void TaskNavigationPolicyBudgetsPathStarts()
+    {
+        Assert.True(
+            TaskNavigationPolicy.ShouldStartPath(false, false, false, true, true),
+            "Rota ausente deve iniciar com cooldown e orcamento disponiveis.");
+        Assert.False(
+            TaskNavigationPolicy.ShouldStartPath(true, false, false, true, true),
+            "Nao deve criar rota para o tile atual.");
+        Assert.False(
+            TaskNavigationPolicy.ShouldStartPath(false, false, true, true, true),
+            "Controller de tarefa compativel deve ser preservado.");
+        Assert.False(
+            TaskNavigationPolicy.ShouldStartPath(false, false, false, false, true),
+            "Retry normal deve respeitar cooldown.");
+        Assert.False(
+            TaskNavigationPolicy.ShouldStartPath(false, true, true, false, false),
+            "Nem recuperacao forcada pode ultrapassar o orcamento do frame.");
+        Assert.True(
+            TaskNavigationPolicy.ShouldStartPath(false, true, true, false, true),
+            "Recuperacao com orcamento pode substituir controller travado sem esperar cooldown.");
+    }
+
+    private static void TaskPlanningPolicyPrioritizesAndRotatesFairly()
+    {
+        string[] names = Enumerable.Range(1, 12).Select(index => $"npc-{index:00}").ToArray();
+        HashSet<string> priority = new(StringComparer.OrdinalIgnoreCase) { "npc-12" };
+        IReadOnlyList<string> first = TaskPlanningPolicy.SelectMembers(
+            names,
+            priority,
+            cursor: 0,
+            budget: 3,
+            out int cursor);
+        Assert.Equal("npc-12", first[0], "Comando explicito deve ser o primeiro planejamento.");
+        Assert.Equal(3, first.Count, "O budget deve limitar a primeira varredura.");
+
+        HashSet<string> crowdedPriority = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "npc-01",
+            "npc-02",
+            "npc-03"
+        };
+        IReadOnlyList<string> mixed = TaskPlanningPolicy.SelectMembers(
+            new[] { "npc-01", "npc-02", "npc-03", "npc-04" },
+            crowdedPriority,
+            cursor: 0,
+            budget: 3,
+            out _);
+        Assert.True(mixed.Contains("npc-04"), "Prioridades nao podem consumir todas as vagas e causar starvation.");
+
+        HashSet<string> visited = new(first, StringComparer.OrdinalIgnoreCase);
+        priority.Clear();
+        for (int scan = 0; scan < 4; scan++)
+        {
+            IReadOnlyList<string> selected = TaskPlanningPolicy.SelectMembers(
+                names,
+                priority,
+                cursor,
+                budget: 3,
+                out cursor);
+            Assert.True(selected.Count <= 3, "Nenhuma varredura pode ultrapassar o budget.");
+            foreach (string name in selected)
+                visited.Add(name);
+        }
+
+        Assert.Equal(12, visited.Count, "Round-robin deve alcançar todos os 12 companions sem starvation.");
+    }
+
+    private static void GroundCommandPolicyOpensSafeLocalContext()
+    {
+        Assert.True(
+            GroundCommandPolicy.CanOpen(true, true, true),
+            "Chao seguro no mapa atual deve abrir independentemente do raio de formacao.");
+        Assert.False(GroundCommandPolicy.CanOpen(false, true, true), "Sem companion proprio nao ha comando.");
+        Assert.False(GroundCommandPolicy.CanOpen(true, false, true), "Outro mapa nao e um destino local.");
+        Assert.False(GroundCommandPolicy.CanOpen(true, true, false), "Tile inseguro continua bloqueado.");
+    }
+
+    private static void GroundCommandPolicyListsLocalMembers()
+    {
+        Assert.True(
+            GroundCommandPolicy.CanListMember(true, false, true),
+            "Membro local seguindo, esperando ou trabalhando deve aparecer mesmo fora da formacao.");
+        Assert.False(GroundCommandPolicy.CanListMember(false, false, true), "Companion de outro jogador nao pode aparecer.");
+        Assert.False(GroundCommandPolicy.CanListMember(true, true, true), "Companion estacionado por desconexao nao pode receber ordem.");
+        Assert.False(GroundCommandPolicy.CanListMember(true, false, false), "Companion em outro mapa nao pode receber ordem local.");
     }
 
     private static void CommandReplayGuardRejectsReplayPerPlayer()

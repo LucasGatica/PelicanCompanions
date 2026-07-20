@@ -1549,7 +1549,12 @@ public sealed partial class ModEntry
                 && member.Mode == CompanionMode.Following
                 && (this.HasActiveWorkDirective(member) || task.UsesConfiguredAutonomy))
             {
-                this.nextTaskScanTick = Math.Min(this.nextTaskScanTick, Game1.ticks);
+                // Don't combine world mutation, target planning, and a fresh
+                // pathfinder construction in the task-completion frame.
+                int deferredScanTick = Game1.ticks + 5;
+                this.nextTaskScanTick = this.nextTaskScanTick <= Game1.ticks
+                    ? deferredScanTick
+                    : Math.Min(this.nextTaskScanTick, deferredScanTick);
             }
 
             if (returning)

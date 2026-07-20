@@ -163,9 +163,6 @@ public sealed partial class ModEntry
         this.SetCompanionActivity(member, "companion.status.working");
         this.SetCompanionTarget(member, kind, targetTile);
 
-        if (!this.IsNpcAtTaskTile(npc, standTile))
-            this.RouteNpcToTaskTile(npc, location, standTile, task, force: true);
-
         return true;
     }
 
@@ -282,13 +279,33 @@ public sealed partial class ModEntry
             this.workTargetRetryAfterTicks.Remove(expiredTarget);
         }
 
-        foreach (SquadMemberState member in this.members.Values
+        List<SquadMemberState> eligibleMembers = this.members.Values
             .Where(p => p.Mode == CompanionMode.Following
                 && !this.pendingTasks.ContainsKey(p.NpcName)
                 && !this.activeRecallTargets.ContainsKey(p.NpcName)
                 && p.CurrentActivityKey != "companion.status.returning")
-            .ToList())
+            .Where(member =>
+            {
+                Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+                return owner?.currentLocation is not null
+                    && !this.IsOwnerSimulationBlocked(member.OwnerId, blockForMenu: true)
+                    && this.AreTasksEnabled(member.OwnerId);
+            })
+            .ToList();
+        this.priorityTaskPlanningMembers.RemoveWhere(
+            npcName => !this.members.TryGetValue(npcName, out SquadMemberState? priorityMember)
+                || !this.HasActiveWorkDirective(priorityMember));
+        IReadOnlyList<string> selectedNames = TaskPlanningPolicy.SelectMembers(
+            eligibleMembers.Select(member => member.NpcName),
+            this.priorityTaskPlanningMembers,
+            this.taskPlanningCursor,
+            TaskPlanningBudgetPerScan,
+            out this.taskPlanningCursor);
+        foreach (string npcName in selectedNames)
         {
+            if (!this.members.TryGetValue(npcName, out SquadMemberState? member))
+                continue;
+
             try
             {
                 Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
@@ -299,10 +316,14 @@ public sealed partial class ModEntry
                     || !this.AreTasksEnabled(member.OwnerId))
                     continue;
 
-                if (this.HasActiveWorkDirective(member) && this.TryAssignWorkDirectiveTask(member))
+                this.priorityTaskPlanningMembers.Remove(member.NpcName);
+                if (this.HasActiveWorkDirective(member))
+                {
+                    this.TryAssignWorkDirectiveTask(member);
                     continue;
+                }
 
-                if (!this.HasActiveWorkDirective(member) && this.TryAssignConfiguredAutonomousTask(member))
+                if (this.TryAssignConfiguredAutonomousTask(member))
                     continue;
 
                 if (this.config.PettingMode == TaskMode.Autonomous
@@ -496,11 +517,6 @@ public sealed partial class ModEntry
         this.SetCompanionTarget(member, CompanionTaskKind.Lumbering, targetTile);
         this.ShowCompanionWorkSignal(npc, location, targetTile, "target");
         this.Say(npc, "Lumbering", force: false);
-
-        // Never mutate the world inside SMAPI's input event. Waiting until the
-        // next host update avoids racing the player's own axe swing.
-        if (!this.IsNpcAtTaskTile(npc, standTile))
-            this.RouteNpcToTaskTile(npc, location, standTile, task, force: true);
 
         return true;
     }

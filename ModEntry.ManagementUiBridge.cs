@@ -66,6 +66,7 @@ public sealed partial class ModEntry
         bool isActive = this.IsCompanionQuickWorkActive(member);
         if (!enabled)
         {
+            this.priorityTaskPlanningMembers.Remove(member.NpcName);
             if (!isActive)
                 return;
 
@@ -110,6 +111,8 @@ public sealed partial class ModEntry
         {
             if (restoredWorkState)
             {
+                this.priorityTaskPlanningMembers.Add(member.NpcName);
+                this.nextTaskScanTick = Game1.ticks + 1;
                 this.MarkStateDirty();
                 if (this.ShouldShowFeedbackFor(ownerId))
                 {
@@ -133,6 +136,10 @@ public sealed partial class ModEntry
         }
 
         this.ApplyPreferredWorkSpecialty(member);
+        this.priorityTaskPlanningMembers.Add(member.NpcName);
+        // Keep the input/multiplayer command frame state-only. Planning starts
+        // on a later update and path creation is budgeted by ProcessPendingTasks.
+        this.nextTaskScanTick = Game1.ticks + 1;
         this.MarkStateDirty();
         if (this.ShouldShowFeedbackFor(ownerId))
         {
@@ -543,8 +550,23 @@ public sealed partial class ModEntry
         if (!Context.IsWorldReady)
             return;
 
-        foreach (SquadMemberState member in this.GetLocalMembers())
+        List<SquadMemberState> localMembers = this.GetLocalMembers().ToList();
+        IReadOnlyList<string> selectedNames = TaskPlanningPolicy.SelectMembers(
+            localMembers.Select(member => member.NpcName),
+            priorityNames: null,
+            this.taskPreviewCursor,
+            TaskPlanningBudgetPerScan,
+            out this.taskPreviewCursor);
+        Dictionary<string, SquadMemberState> membersByName = localMembers.ToDictionary(
+            member => member.NpcName,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (string npcName in selectedNames)
+        {
+            if (!membersByName.TryGetValue(npcName, out SquadMemberState? member))
+                continue;
+
             this.UpdateTargetPreview(member, this.BuildTargetPreview(member, null));
+        }
     }
 
     private List<Item> GetCompanionInventoryItems(SquadMemberState member)
@@ -898,7 +920,21 @@ public sealed partial class ModEntry
         }
 
         this.InvalidateTargetPreviews();
-        this.UpdateTargetPreview(member, this.BuildTargetPreview(member, null));
+        if (this.HasActiveWorkDirective(member))
+        {
+            this.priorityTaskPlanningMembers.Add(member.NpcName);
+            this.nextTaskScanTick = Game1.ticks + 1;
+            this.UpdateTargetPreview(
+                member,
+                new TargetPreview(false, "", -1, -1, "companion.preview.planning"));
+        }
+        else
+        {
+            this.priorityTaskPlanningMembers.Remove(member.NpcName);
+            this.UpdateTargetPreview(
+                member,
+                new TargetPreview(false, "", -1, -1, "companion.preview.inactive"));
+        }
         this.MarkStateDirty();
     }
 

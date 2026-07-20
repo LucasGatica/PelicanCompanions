@@ -52,6 +52,8 @@ public sealed partial class ModEntry : Mod
     private const int FollowRecoveryDurationTicks = 90;
     private const int MaxFollowReachabilitySearchTiles = 2048;
     private const int ReachabilityCacheTtlTicks = 15;
+    private const int TaskPlanningBudgetPerScan = 3;
+    private const int TaskPathStartBudgetPerUpdate = 2;
     private const int TaskNoProgressUpdatesThreshold = 18;
     private const int RecentLootLimit = 5;
     private const int CompanionHudNoticeDurationTicks = 260;
@@ -98,6 +100,7 @@ public sealed partial class ModEntry : Mod
     private readonly Dictionary<string, int> lastMovementDebugNoticeTicks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, CompanionMovementControllerState> companionMovementControllers = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> workTargetRetryAfterTicks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> priorityTaskPlanningMembers = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<NPC, int> suppressedVanillaArrivals = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ReachabilityCacheKey, ReachabilityCacheEntry> reachabilityCache = new();
     private readonly Dictionary<TargetPreviewCacheKey, TargetPreviewCacheEntry> targetPreviewCache = new();
@@ -126,13 +129,21 @@ public sealed partial class ModEntry : Mod
     private bool saveWritesBlocked;
     private bool planningFollowDestinations;
     private int followPathStartsRemaining;
+    private int taskPathStartsRemaining;
+    private int taskPlanningCursor;
+    private int taskPreviewCursor;
     private bool pendingDailyCompanionRefresh;
     private long? commandFeedbackTargetPlayerId;
     private Harmony? harmony;
 
     private readonly record struct FollowTrailPoint(string LocationName, Vector2 Tile, int Tick);
     private readonly record struct OwnerMovementSnapshot(string LocationName, Vector2 Position, int LastMoveTick, int LastObservedTick, bool IsStationary);
-    private readonly record struct WorkTarget(CompanionTaskKind Kind, Vector2 Tile, float NpcDistance, float PlayerDistance);
+    private readonly record struct WorkTarget(
+        CompanionTaskKind Kind,
+        Vector2 Tile,
+        Vector2 StandTile,
+        float NpcDistance,
+        float PlayerDistance);
     private readonly record struct TargetPreview(bool HasTarget, string TargetKey, int X, int Y, string ReasonKey);
     private readonly record struct CompanionHudNotice(string NpcName, string Text, string? ItemQualifiedId, int StartedTick, int DurationTicks, Color Accent);
     private readonly record struct ReachabilityCacheKey(string LocationName, int OriginX, int OriginY, int MaxVisitedTiles);

@@ -29,26 +29,29 @@ public sealed partial class ModEntry
     private bool IsLocalGroundCommandContextValid(string locationName, Vector2 rawTile)
     {
         long ownerId = Game1.player.UniqueMultiplayerID;
-        if (!this.members.Values.Any(member => member.OwnerId == ownerId))
-            return false;
-
         Farmer owner = Game1.player;
         GameLocation? location = owner.currentLocation;
         Vector2 tile = NormalizeTile(rawTile);
-        return location is not null
-            && string.Equals(location.NameOrUniqueName, locationName, StringComparison.Ordinal)
-            && IsWithinCompanionDistance(owner.Tile, tile)
-            && this.IsGroundCommandTileAvailable(location, tile);
+        bool sameLocation = location is not null
+            && string.Equals(location.NameOrUniqueName, locationName, StringComparison.Ordinal);
+        return GroundCommandPolicy.CanOpen(
+            this.members.Values.Any(member => member.OwnerId == ownerId),
+            sameLocation,
+            location is not null && this.IsGroundCommandTileAvailable(location, tile));
     }
 
     private IEnumerable<SquadMemberState> GetGroundCommandMembers(string locationName, Vector2 targetTile)
     {
         long ownerId = Game1.player.UniqueMultiplayerID;
         return this.members.Values
-            .Where(member => member.OwnerId == ownerId && member.Mode != CompanionMode.ParkedForDisconnect)
             .Select(member => new { Member = member, Npc = this.GetNpcByName(member.NpcName) })
-            .Where(candidate => candidate.Npc?.currentLocation?.NameOrUniqueName == locationName
-                && IsWithinCompanionDistance(Game1.player.Tile, candidate.Npc.Tile))
+            .Where(candidate => GroundCommandPolicy.CanListMember(
+                candidate.Member.OwnerId == ownerId,
+                candidate.Member.Mode == CompanionMode.ParkedForDisconnect,
+                string.Equals(
+                    candidate.Npc?.currentLocation?.NameOrUniqueName,
+                    locationName,
+                    StringComparison.Ordinal)))
             .OrderBy(candidate => Vector2.DistanceSquared(NormalizeTile(candidate.Npc!.Tile), NormalizeTile(targetTile)))
             .ThenBy(candidate => candidate.Member.NpcName, StringComparer.OrdinalIgnoreCase)
             .Select(candidate => candidate.Member);
@@ -130,8 +133,6 @@ public sealed partial class ModEntry
             || location is null
             || npc.currentLocation != location
             || !string.Equals(location.NameOrUniqueName, locationName, StringComparison.Ordinal)
-            || !IsWithinCompanionDistance(owner.Tile, tile)
-            || !IsWithinCompanionDistance(owner.Tile, npc.Tile)
             || !this.IsGroundCommandTileAvailable(location, tile)
             || this.IsStandTileReserved(location, tile, member.NpcName))
         {
@@ -140,18 +141,20 @@ public sealed partial class ModEntry
         }
 
         Vector2 npcTile = NormalizeTile(npc.Tile);
-        Dictionary<Vector2, int> reachable = this.GetReachableTileDistances(
+        ReachabilitySearchResult reachability = this.SearchGroundDestination(
             location,
             npcTile,
+            tile,
             MaxFollowReachabilitySearchTiles);
-        if (!IsReachableOrUncertain(reachable, tile, MaxFollowReachabilitySearchTiles))
+        if (reachability == ReachabilitySearchResult.Unreachable)
         {
             this.WarnForPlayer(ownerId, "wheel.no_safe_ground");
             return;
         }
 
         // Everything above is a read-only prepare phase. Replacing the old
-        // order only starts after the destination has been proven viable.
+        // order starts only after definite disconnection has been ruled out;
+        // a bounded inconclusive result is left to the real path controller.
         this.RemovePendingTask(member.NpcName);
         this.ResumeFollowing(member.NpcName, ownerId, showMessage: false);
         if (!this.IsGroundCommandTileAvailable(location, tile)
@@ -182,21 +185,75 @@ public sealed partial class ModEntry
         this.SetTaskFailure(member, "");
         this.SetCompanionActivity(member, "companion.status.moving_to_wait");
         this.SetCompanionTarget(member, CompanionTaskKind.MovingToWait, tile);
-        if (!this.IsNpcAtTaskTile(npc, tile))
-            this.RouteNpcToTaskTile(npc, location, tile, task, force: true);
-
-        // Routing can fail synchronously (for example if a custom map's path
-        // controller throws). In that case the shared router already converted
-        // this order into a safe wait/failure state, so don't follow it with a
-        // contradictory "sent" confirmation.
-        if (!this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? queuedTask)
-            || !ReferenceEquals(queuedTask, task))
-        {
-            return;
-        }
 
         this.MarkStateDirty();
         this.InfoForPlayer(ownerId, "wheel.sent_to_wait", new { npc = member.DisplayName });
+    }
+
+    private ReachabilitySearchResult SearchGroundDestination(
+        GameLocation location,
+        Vector2 rawOriginTile,
+        Vector2 rawDestinationTile,
+        int maxVisitedTiles)
+    {
+        Vector2 originTile = NormalizeTile(rawOriginTile);
+        Vector2 destinationTile = NormalizeTile(rawDestinationTile);
+        if (originTile == destinationTile)
+            return ReachabilitySearchResult.Reachable;
+
+        if (!this.IsTileInsideMap(location, originTile)
+            || !this.IsTileInsideMap(location, destinationTile))
+        {
+            return ReachabilitySearchResult.Unreachable;
+        }
+
+        int visitLimit = Math.Max(1, maxVisitedTiles);
+        Dictionary<Vector2, int> distances = new()
+        {
+            [originTile] = 0
+        };
+        PriorityQueue<Vector2, int> open = new();
+        open.Enqueue(originTile, GetTileManhattanDistance(originTile, destinationTile));
+        bool searchTruncated = false;
+        while (open.TryDequeue(out Vector2 current, out _))
+        {
+            int nextDistance = distances[current] + 1;
+            foreach (Vector2 offset in CardinalTileOffsets)
+            {
+                Vector2 next = NormalizeTile(current + offset);
+                if (!this.IsTileTraversable(location, next))
+                    continue;
+
+                if (next == destinationTile)
+                    return ReachabilitySearchResult.Reachable;
+
+                if (distances.TryGetValue(next, out int knownDistance)
+                    && knownDistance <= nextDistance)
+                {
+                    continue;
+                }
+
+                if (!distances.ContainsKey(next) && distances.Count >= visitLimit)
+                {
+                    searchTruncated = true;
+                    continue;
+                }
+
+                distances[next] = nextDistance;
+                int priority = nextDistance + GetTileManhattanDistance(next, destinationTile);
+                open.Enqueue(next, priority);
+            }
+        }
+
+        return searchTruncated
+            ? ReachabilitySearchResult.Uncertain
+            : ReachabilitySearchResult.Unreachable;
+    }
+
+    private static int GetTileManhattanDistance(Vector2 first, Vector2 second)
+    {
+        return Math.Abs((int)first.X - (int)second.X)
+            + Math.Abs((int)first.Y - (int)second.Y);
     }
 
     private void ProcessPendingMoveToWaitTask(PendingCompanionTask task)

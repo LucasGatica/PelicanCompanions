@@ -162,6 +162,7 @@
   "companion.preview.target": "Prévia: {{target}} em ({{x}}, {{y}})",
   "companion.preview.reason": "Prévia: {{reason}}",
   "companion.preview.inactive": "ative uma ordem de trabalho para ver um alvo",
+  "companion.preview.planning": "planejando o trabalho na próxima atualização",
   "companion.preview.disabled_after_click": "o clique desativaria esta ordem",
   "companion.preview.tasks_disabled": "as tarefas dos companheiros estão desativadas",
   "companion.preview.blocked": "o estado atual do jogo impede o trabalho dos companheiros",

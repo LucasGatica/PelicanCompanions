@@ -162,6 +162,7 @@
   "companion.preview.target": "Preview: {{target}} at ({{x}}, {{y}})",
   "companion.preview.reason": "Preview: {{reason}}",
   "companion.preview.inactive": "turn on a work command to preview a target",
+  "companion.preview.planning": "planning work on the next update",
   "companion.preview.disabled_after_click": "click would turn this command off",
   "companion.preview.tasks_disabled": "companion tasks are disabled",
   "companion.preview.blocked": "game state blocks companion work",
