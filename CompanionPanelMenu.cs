@@ -13,12 +13,19 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private const int WindowMaxWidth = 1180;
     private const int WindowMaxHeight = 780;
     private const int TitleBarHeight = 50;
+    private const int CompactViewportHeight = 540;
+    private const int ExpandedMemberLayoutMinHeight = 600;
     private const int ContentGap = 10;
     private const int WideRosterWidth = 242;
     private const int MemberRowHeight = 70;
     private const int MemberRowGap = 6;
     private const int MemberScrollPadding = 5;
     private const int PortraitRetryTicks = 600;
+    private const float PanelTitleTextScale = 0.82f;
+    private const float PanelHeadingTextScale = 0.78f;
+    private const float PanelTextScale = 0.72f;
+    private const float PanelMetaTextScale = 0.64f;
+    private const float PanelCompactTextScale = 0.58f;
 
     private static readonly Color WindowColor = new(239, 216, 180);
     private static readonly Color WindowBorder = new(76, 49, 31);
@@ -72,13 +79,17 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private Rectangle recallButton;
     private Rectangle dismissButton;
     private Rectangle closeButton;
+    private Rectangle skillDetailsArea;
     private int memberListScrollOffset;
     private int memberListMaxScroll;
     private int focusedControlIndex = -1;
     private string? selectedNpcName;
+    private string? inspectedSkillId;
     private PanelTab currentTab = PanelTab.Overview;
     private string hoverText = "";
     private bool wideLayout;
+    private bool focusSkillOnNextRebuild;
+    private bool skillDetailsEmbedded;
 
     public CompanionPanelMenu(
         Func<IEnumerable<SquadMemberState>> getMembers,
@@ -164,12 +175,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         {
             if (!bounds.Contains(x, y))
                 continue;
-            if (this.currentTab != tab)
-            {
-                this.currentTab = tab;
-                this.focusedControlIndex = -1;
-                Game1.playSound("smallSelect");
-            }
+            this.SetTab(tab);
             return;
         }
 
@@ -232,9 +238,19 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 if (!bounds.Contains(x, y))
                     continue;
 
-                if (!this.isProgressionEnabled())
+                this.inspectedSkillId = skillId;
+                CompanionSkillDefinition? skill = CompanionProgression.Skills.FirstOrDefault(p => p.Id == skillId);
+                if (skill is null)
+                    return;
+
+                CompanionSkillTreeState state = CompanionSkillTreePolicy.GetState(
+                    skill,
+                    selected.UnlockedSkillIds,
+                    selected.UnspentSkillPoints,
+                    this.isProgressionEnabled());
+                if (state != CompanionSkillTreeState.Available)
                 {
-                    Game1.playSound("cancel");
+                    Game1.playSound(state == CompanionSkillTreeState.Learned ? "smallSelect" : "cancel");
                     return;
                 }
 
@@ -326,18 +342,34 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 this.CycleTab(1);
                 return;
             case Buttons.DPadUp:
+                if (this.currentTab == PanelTab.Skills)
+                {
+                    this.MoveFocusSpatial(0, -1);
+                    return;
+                }
                 if (this.SelectRelativeMember(-1))
                     Game1.playSound("shiny4");
                 return;
             case Buttons.DPadDown:
+                if (this.currentTab == PanelTab.Skills)
+                {
+                    this.MoveFocusSpatial(0, 1);
+                    return;
+                }
                 if (this.SelectRelativeMember(1))
                     Game1.playSound("shiny4");
                 return;
             case Buttons.DPadLeft:
-                this.MoveFocus(-1);
+                if (this.currentTab == PanelTab.Skills)
+                    this.MoveFocusSpatial(-1, 0);
+                else
+                    this.MoveFocus(-1);
                 return;
             case Buttons.DPadRight:
-                this.MoveFocus(1);
+                if (this.currentTab == PanelTab.Skills)
+                    this.MoveFocusSpatial(1, 0);
+                else
+                    this.MoveFocus(1);
                 return;
             case Buttons.A:
                 this.ActivateFocusedControl();
@@ -408,7 +440,11 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 continue;
             CompanionSkillDefinition? skill = CompanionProgression.Skills.FirstOrDefault(p => p.Id == skillId);
             if (skill is not null)
-                this.hoverText = this.BuildSkillHoverText(selected, skill);
+            {
+                this.inspectedSkillId = skill.Id;
+                if (!this.skillDetailsEmbedded)
+                    this.hoverText = this.BuildSkillHoverText(selected, skill);
+            }
             return;
         }
 
@@ -433,13 +469,18 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         b.Draw(Game1.fadeToBlackRect, new Rectangle(0, 0, Game1.uiViewport.Width, Game1.uiViewport.Height), Color.Black * 0.72f);
         this.DrawPanel(b, new Rectangle(this.xPositionOnScreen, this.yPositionOnScreen, this.width, this.height), WindowColor, WindowBorder);
 
+        bool shortViewport = this.height < CompactViewportHeight;
+        SpriteFont titleFont = shortViewport ? Game1.tinyFont : Game1.smallFont;
+        float titleScale = shortViewport ? PanelHeadingTextScale : PanelTitleTextScale;
         string title = this.translate("companion.panel.title", null);
-        Utility.drawTextWithShadow(
+        DrawPanelText(
             b,
-            FitText(title, Game1.smallFont, Math.Max(1, this.width - 120)),
-            Game1.smallFont,
-            new Vector2(this.xPositionOnScreen + 20, this.yPositionOnScreen + 14),
-            TextColor);
+            FitText(title, titleFont, Math.Max(1, this.width - 120), titleScale),
+            titleFont,
+            new Vector2(this.xPositionOnScreen + 20, this.yPositionOnScreen + (shortViewport ? 10 : 14)),
+            TextColor,
+            titleScale,
+            shadow: true);
         this.DrawButton(b, this.closeButton, "X", false, danger: false);
 
         List<SquadMemberState> members = this.getMembers().ToList();
@@ -451,12 +492,13 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 Math.Max(1, this.width - 36),
                 Math.Max(1, this.height - TitleBarHeight - 24));
             this.DrawPanel(b, empty, SurfaceColor, SurfaceBorder);
-            Utility.drawTextWithShadow(
+            DrawPanelText(
                 b,
-                FitText(this.translate("companion.panel.empty", null), Game1.smallFont, empty.Width - 30),
+                FitText(this.translate("companion.panel.empty", null), Game1.smallFont, empty.Width - 30, PanelTextScale),
                 Game1.smallFont,
                 new Vector2(empty.X + 16, empty.Y + 20),
-                MutedTextColor);
+                MutedTextColor,
+                PanelTextScale);
             this.RebuildFocusTargets();
             this.DrawFocus(b);
             this.drawMouse(b);
@@ -465,7 +507,6 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
 
         this.EnsureSelection(members);
         this.wideLayout = this.width >= 780 && this.height >= 440;
-        bool shortViewport = this.height < 300;
         int effectiveTitleBarHeight = shortViewport ? 40 : TitleBarHeight;
         int contentTop = this.yPositionOnScreen + effectiveTitleBarHeight + (shortViewport ? 3 : 6);
         int contentBottom = this.yPositionOnScreen + this.height - (shortViewport ? 6 : 16);
@@ -511,9 +552,36 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             this.DrawSelectedMember(b, selected, detailArea);
 
         this.RebuildFocusTargets();
+        if (this.currentTab == PanelTab.Skills
+            && !this.skillDetailsEmbedded
+            && string.IsNullOrWhiteSpace(this.hoverText)
+            && selected is not null
+            && this.focusedControlIndex >= 0
+            && this.focusedControlIndex < this.focusTargets.Count)
+        {
+            Rectangle focusedBounds = this.focusTargets[this.focusedControlIndex];
+            string? focusedSkillId = null;
+            foreach ((Rectangle bounds, string skillId) in this.skillButtons)
+            {
+                if (bounds != focusedBounds)
+                    continue;
+                focusedSkillId = skillId;
+                break;
+            }
+            CompanionSkillDefinition? focusedSkill = focusedSkillId is null
+                ? null
+                : CompanionProgression.Skills.FirstOrDefault(skill => string.Equals(skill.Id, focusedSkillId, StringComparison.OrdinalIgnoreCase));
+            if (focusedSkill is not null)
+                this.hoverText = this.BuildSkillHoverText(selected, focusedSkill);
+        }
         this.DrawFocus(b);
         if (!string.IsNullOrWhiteSpace(this.hoverText))
-            drawHoverText(b, this.hoverText, Game1.smallFont);
+        {
+            if (this.currentTab == PanelTab.Skills && !this.skillDetailsEmbedded)
+                this.DrawCompactSkillHover(b, this.hoverText);
+            else
+                drawHoverText(b, this.hoverText, Game1.smallFont);
+        }
         this.drawMouse(b);
     }
 
@@ -592,6 +660,8 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.waitButton = new Rectangle();
         this.recallButton = new Rectangle();
         this.dismissButton = new Rectangle();
+        this.skillDetailsArea = new Rectangle();
+        this.skillDetailsEmbedded = false;
         this.closeButton = new Rectangle(
             this.xPositionOnScreen + Math.Max(0, this.width - 46),
             this.yPositionOnScreen + 9,
@@ -601,12 +671,13 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
 
     private void DrawWideMemberList(SpriteBatch b, List<SquadMemberState> members, Rectangle area)
     {
-        Utility.drawTextWithShadow(
+        DrawPanelText(
             b,
-            FitText(this.translate("companion.panel.member_list", null), Game1.tinyFont, area.Width - 28),
+            FitText(this.translate("companion.panel.member_list", null), Game1.tinyFont, area.Width - 28, PanelHeadingTextScale),
             Game1.tinyFont,
-            new Vector2(area.X + 14, area.Y + 12),
-            TextColor);
+            new Vector2(area.X + 14, area.Y + 9),
+            TextColor,
+            PanelHeadingTextScale);
 
         Rectangle rowsArea = new(area.X + 8, area.Y + 34, Math.Max(1, area.Width - 16), Math.Max(1, area.Height - 43));
         this.memberListArea = rowsArea;
@@ -641,19 +712,47 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
 
             int textX = portrait.Right + 9;
             int textWidth = Math.Max(1, row.Right - textX - 8);
-            Utility.drawTextWithShadow(b, FitText(member.DisplayName, Game1.tinyFont, textWidth), Game1.tinyFont, new Vector2(textX, row.Y + 10), TextColor);
-            Utility.drawTextWithShadow(
-                b,
-                FitText(this.getStatusText(member), Game1.tinyFont, textWidth),
+            int nameLineHeight = GetScaledLineHeight(Game1.tinyFont, PanelTextScale);
+            string levelLabel = this.translate("companion.panel.level", new { level = member.Level });
+            float levelScale = GetTextScaleForBox(
+                levelLabel,
                 Game1.tinyFont,
-                new Vector2(textX, row.Y + 30),
-                MutedTextColor);
-            Utility.drawTextWithShadow(
+                PanelCompactTextScale,
+                Math.Max(1, textWidth / 2),
+                nameLineHeight,
+                minimumScale: 0.5f);
+            string fittedLevelLabel = FitText(levelLabel, Game1.tinyFont, Math.Max(1, textWidth / 2), levelScale);
+            Vector2 levelSize = MeasureScaledText(fittedLevelLabel, Game1.tinyFont, levelScale);
+            int nameWidth = Math.Max(1, textWidth - (int)Math.Ceiling(levelSize.X) - 6);
+            DrawPanelText(
                 b,
-                FitText(this.translate("companion.panel.level", new { level = member.Level }), Game1.tinyFont, textWidth),
+                FitText(member.DisplayName, Game1.tinyFont, nameWidth, PanelTextScale),
                 Game1.tinyFont,
-                new Vector2(textX, row.Y + 49),
-                MutedTextColor);
+                new Vector2(textX, row.Y + 12),
+                TextColor,
+                PanelTextScale);
+            DrawPanelText(
+                b,
+                fittedLevelLabel,
+                Game1.tinyFont,
+                new Vector2(row.Right - 8 - levelSize.X, row.Y + 12 + Math.Max(0f, (nameLineHeight - levelSize.Y) / 2f)),
+                MutedTextColor,
+                levelScale);
+            string rosterStatus = this.getStatusText(member);
+            float rosterStatusScale = GetTextScaleForBox(
+                rosterStatus,
+                Game1.tinyFont,
+                PanelMetaTextScale,
+                textWidth,
+                GetScaledLineHeight(Game1.tinyFont, PanelMetaTextScale),
+                minimumScale: 0.52f);
+            DrawPanelText(
+                b,
+                FitText(rosterStatus, Game1.tinyFont, textWidth, rosterStatusScale),
+                Game1.tinyFont,
+                new Vector2(textX, row.Y + 12 + nameLineHeight + 6),
+                MutedTextColor,
+                rosterStatusScale);
             this.memberRows.Add((row, member.NpcName));
         }
 
@@ -690,27 +789,43 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         if (area.Height < 44)
         {
             string compactLabel = $"{selected.DisplayName} · {status}";
-            Utility.drawTextWithShadow(
+            float scale = GetTextScaleForHeight(Game1.tinyFont, PanelTextScale, area.Height - 10);
+            Vector2 size = MeasureScaledText(FitText(compactLabel, Game1.tinyFont, textWidth, scale), Game1.tinyFont, scale);
+            DrawPanelText(
                 b,
-                FitText(compactLabel, Game1.tinyFont, textWidth),
+                FitText(compactLabel, Game1.tinyFont, textWidth, scale),
                 Game1.tinyFont,
-                new Vector2(textX, area.Center.Y - Game1.tinyFont.LineSpacing / 2f),
-                TextColor);
+                new Vector2(textX, area.Center.Y - size.Y / 2f),
+                TextColor,
+                scale);
             return;
         }
 
-        Utility.drawTextWithShadow(b, FitText(selected.DisplayName, Game1.tinyFont, textWidth), Game1.tinyFont, new Vector2(textX, area.Y + 9), TextColor);
-        Utility.drawTextWithShadow(b, FitText(status, Game1.tinyFont, textWidth), Game1.tinyFont, new Vector2(textX, area.Bottom - 25), MutedTextColor);
+        int selectorNameHeight = GetScaledLineHeight(Game1.tinyFont, PanelTextScale);
+        DrawPanelText(
+            b,
+            FitText(selected.DisplayName, Game1.tinyFont, textWidth, PanelTextScale),
+            Game1.tinyFont,
+            new Vector2(textX, area.Y + 9),
+            TextColor,
+            PanelTextScale);
+        DrawPanelText(
+            b,
+            FitText(status, Game1.tinyFont, textWidth, PanelMetaTextScale),
+            Game1.tinyFont,
+            new Vector2(textX, area.Y + 9 + selectorNameHeight + 4),
+            MutedTextColor,
+            PanelMetaTextScale);
     }
 
     private void DrawSelectedMember(SpriteBatch b, SquadMemberState member, Rectangle area)
     {
-        bool shortViewport = this.height < 300;
-        int inset = shortViewport ? 6 : area.Width >= 420 ? 12 : 8;
+        bool compactMemberLayout = this.height < ExpandedMemberLayoutMinHeight;
+        int inset = compactMemberLayout ? 6 : area.Width >= 420 ? 12 : 8;
         int usableWidth = Math.Max(1, area.Width - inset * 2);
         int tabHeight;
         int tabY;
-        if (shortViewport)
+        if (compactMemberLayout)
         {
             // The compact selector already identifies the member. Omitting the
             // duplicate portrait header preserves usable tab content at high UI
@@ -736,14 +851,21 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             int width = i == tabs.Length - 1 ? area.Right - inset - x : tabWidth;
             Rectangle button = new(x, tabY, Math.Max(1, width), tabHeight);
             this.tabButtons.Add((button, tabs[i]));
-            this.DrawTabButton(b, button, this.GetTabLabel(tabs[i]), this.currentTab == tabs[i]);
+            string? badgeText = tabs[i] switch
+            {
+                PanelTab.Skills when this.isProgressionEnabled() && member.UnspentSkillPoints > 0 => member.UnspentSkillPoints.ToString(),
+                PanelTab.Inventory when member.Inventory.Count > 0 => member.Inventory.Count.ToString(),
+                _ => null
+            };
+            Color? badgeColor = tabs[i] == PanelTab.Skills ? AccentGold : AccentGreen;
+            this.DrawTabButton(b, button, this.GetTabLabel(tabs[i], compact: button.Width < 125), this.currentTab == tabs[i], badgeText, badgeColor);
         }
 
         Rectangle body = new(
             area.X + inset,
-            tabY + tabHeight + (shortViewport ? 4 : 6),
+            tabY + tabHeight + (compactMemberLayout ? 4 : 6),
             usableWidth,
-            Math.Max(1, area.Bottom - inset - (tabY + tabHeight + (shortViewport ? 4 : 6))));
+            Math.Max(1, area.Bottom - inset - (tabY + tabHeight + (compactMemberLayout ? 4 : 6))));
         if (body.Height < 12)
             return;
 
@@ -772,16 +894,40 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.DrawPortrait(b, this.getNpc(member.NpcName), portrait);
 
         int textX = portrait.Right + 10;
-        int badgeWidth = area.Width >= 440 ? 104 : 0;
-        int textRight = area.Right - badgeWidth - (badgeWidth > 0 ? 8 : 0);
-        int textWidth = Math.Max(1, textRight - textX);
-        Utility.drawTextWithShadow(b, FitText(member.DisplayName, Game1.smallFont, textWidth), Game1.smallFont, new Vector2(textX, area.Y + 2), TextColor);
+        int textWidth = Math.Max(1, area.Right - textX);
+        float nameScale = area.Height >= 70 ? PanelTitleTextScale : PanelTextScale;
+        float statusScale = area.Height >= 70 ? PanelTextScale : PanelMetaTextScale;
+        int textBottom = area.Height >= 54 ? area.Bottom - 15 : area.Bottom - 2;
+        int availableTextHeight = Math.Max(1, textBottom - (area.Y + 2));
+        float desiredTextHeight = Game1.smallFont.LineSpacing * nameScale
+            + 3f
+            + Game1.tinyFont.LineSpacing * statusScale;
+        if (desiredTextHeight > availableTextHeight)
+        {
+            float reduction = availableTextHeight / desiredTextHeight;
+            nameScale *= reduction;
+            statusScale *= reduction;
+        }
+        int nameLineHeight = GetScaledLineHeight(Game1.smallFont, nameScale);
+        DrawPanelText(
+            b,
+            FitText(member.DisplayName, Game1.smallFont, textWidth, nameScale),
+            Game1.smallFont,
+            new Vector2(textX, area.Y + 2),
+            TextColor,
+            nameScale);
         string status = this.translate("companion.panel.header_status", new
         {
             level = member.Level,
             status = this.getStatusText(member)
         });
-        Utility.drawTextWithShadow(b, FitText(status, Game1.tinyFont, textWidth), Game1.tinyFont, new Vector2(textX, area.Y + Math.Min(30, Math.Max(20, area.Height - 28))), MutedTextColor);
+        DrawPanelText(
+            b,
+            FitText(status, Game1.tinyFont, textWidth, statusScale),
+            Game1.tinyFont,
+            new Vector2(textX, area.Y + 2 + nameLineHeight + 3),
+            MutedTextColor,
+            statusScale);
 
         if (area.Height >= 54)
         {
@@ -789,15 +935,5 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             this.DrawXpBar(b, xp, member);
         }
 
-        if (badgeWidth > 0)
-        {
-            Rectangle badge = new(area.Right - badgeWidth, area.Center.Y - 14, badgeWidth, 28);
-            this.DrawBadge(
-                b,
-                badge,
-                this.translate("companion.panel.points_short", new { points = member.UnspentSkillPoints }),
-                member.UnspentSkillPoints > 0 ? new Color(241, 220, 142) : ButtonIdle,
-                SurfaceBorder);
-        }
     }
 }

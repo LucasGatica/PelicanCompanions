@@ -4,6 +4,44 @@ All notable Pelican Companions changes are documented here.
 
 ## 1.5.3 — 2026-07-20
 
+### Quick HUD readability
+
+- Reworked the side dock around the real vanilla font metrics, replacing the
+  overlapping name/status/level stack with two properly spaced text lines.
+- Removed heavy text shadows and impossible labels from the small action
+  buttons; larger icon-only controls retain the existing localized tooltips.
+- Added a short localized dock title, an open-panel chevron, and crisp custom
+  pixel badges for level, member count, and full inventory state.
+
+### Action-wheel readability
+
+- Replaced the five-action wheel's forced `...` labels with fixed-size,
+  multi-line captions, while preserving the existing wheel and hitbox geometry
+  for narrow and split-screen viewports.
+- Shortened the idle footer hint and added clearer caption backgrounds plus a
+  highlighted border for the hovered action.
+- Added regression coverage for localized one-word and multi-word wheel labels.
+
+### Companion panel skill tree
+
+- Replaced the Skills tab's uneven text-card grid with three responsive
+  left-to-right progression lanes and compact tier nodes. Prerequisites now have
+  visible connectors, branches have distinct accents plus progress counts, and
+  every node communicates learned, available, locked, no-points, or disabled
+  state without relying on color alone.
+- Added a persistent side inspector with the complete skill name, branch, tier,
+  cost, points, state, description, and action. Intermediate narrow layouts put
+  the detail card below the tree, while compact split-screen/high-scale layouts
+  use a bounded custom tooltip.
+- Reworked the panel header, roster, tabs, badges, branch labels, and inspector
+  around the vanilla fonts' measured line heights. Text now renders at a fitted
+  scale without the heavy shadow that caused overlapping and vertical bleed;
+  narrow viewports use localized short tab labels instead of clipped captions.
+- Added skill-point and inventory tab badges plus first-focus/spatial D-pad
+  navigation for the tree.
+- Centralized skill availability in one policy shared by the panel and the
+  host-authoritative unlock validation. The automated harness now has 31 tests.
+
 ### Distance-independent recruitment wheel
 
 - Removed the leftover 2.25-tile proximity check from the final recruitment
@@ -12,8 +50,7 @@ All notable Pelican Companions changes are documented here.
 - Kept host-authoritative checks for current map, supported NPC type, friendship,
   squad capacity, ownership, deferred restores, and safe game state. The legacy
   `F5` target selector remains intentionally proximity-based.
-- Added a pure same-map recruitment policy and regression coverage; the
-  automated harness now has 27 tests.
+- Added a pure same-map recruitment policy and regression coverage.
 
 ## 1.5.2 — 2026-07-20
 

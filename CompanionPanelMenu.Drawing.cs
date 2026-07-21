@@ -18,44 +18,58 @@ internal sealed partial class CompanionPanelMenu
             fill = Color.Lerp(fill, Color.White, 0.22f);
         Color border = danger ? DangerColor : active ? AccentGreen : SurfaceBorder;
         this.DrawFlatPanel(b, bounds, fill, border, hovered ? 2 : 1);
-        string label = FitText(text, Game1.tinyFont, bounds.Width - 12);
-        Vector2 size = Game1.tinyFont.MeasureString(label);
-        Utility.drawTextWithShadow(
-            b,
-            label,
-            Game1.tinyFont,
-            new Vector2(bounds.X + (bounds.Width - size.X) / 2f, bounds.Y + Math.Max(2, (bounds.Height - size.Y) / 2f)),
-            TextColor);
+        DrawCenteredPanelText(b, text, Game1.tinyFont, bounds, TextColor, PanelTextScale, 12, 6);
     }
 
-    private void DrawTabButton(SpriteBatch b, Rectangle bounds, string text, bool active)
+    private void DrawTabButton(SpriteBatch b, Rectangle bounds, string text, bool active, string? badgeText = null, Color? badgeColor = null)
     {
         bool hovered = bounds.Contains(Game1.getMouseX(), Game1.getMouseY());
         Color fill = active ? new Color(204, 226, 238) : hovered ? RowHoverColor : ButtonIdle;
         this.DrawFlatPanel(b, bounds, fill, active ? AccentBlue : SurfaceBorder, active ? 2 : 1);
         if (active)
             b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 5, bounds.Bottom - 4, Math.Max(1, bounds.Width - 10), 3), AccentBlue);
-        string label = FitText(text, Game1.tinyFont, bounds.Width - 10);
-        Vector2 size = Game1.tinyFont.MeasureString(label);
-        Utility.drawTextWithShadow(
+
+        Rectangle contentBounds = new(bounds.X, bounds.Y, bounds.Width, Math.Max(1, bounds.Height - 5));
+        int badgeSize = string.IsNullOrWhiteSpace(badgeText)
+            ? 0
+            : Math.Clamp(contentBounds.Height - 4, 14, 22);
+        int labelWidth = Math.Max(1, bounds.Width - 10 - (badgeSize > 0 ? badgeSize + 5 : 0));
+        float labelScale = GetTextScaleForBox(
+            text,
+            Game1.tinyFont,
+            PanelTextScale,
+            labelWidth,
+            contentBounds.Height - 6,
+            minimumScale: 0.48f);
+        string label = FitText(text, Game1.tinyFont, labelWidth, labelScale);
+        Vector2 size = MeasureScaledText(label, Game1.tinyFont, labelScale);
+        float contentWidth = size.X + (badgeSize > 0 ? badgeSize + 5 : 0);
+        float labelX = bounds.X + Math.Max(5f, (bounds.Width - contentWidth) / 2f);
+        DrawPanelText(
             b,
             label,
             Game1.tinyFont,
-            new Vector2(bounds.X + (bounds.Width - size.X) / 2f, bounds.Y + Math.Max(2, (bounds.Height - size.Y) / 2f)),
-            TextColor);
+            new Vector2(labelX, contentBounds.Y + Math.Max(2f, (contentBounds.Height - size.Y) / 2f)),
+            TextColor,
+            labelScale);
+
+        if (badgeSize > 0)
+        {
+            Rectangle badge = new(
+                (int)(labelX + size.X + 5),
+                contentBounds.Center.Y - badgeSize / 2,
+                badgeSize,
+                badgeSize);
+            Color badgeFill = badgeColor ?? AccentBlue;
+            this.DrawFlatPanel(b, badge, badgeFill, Color.Lerp(badgeFill, WindowBorder, 0.35f), 1);
+            DrawCenteredPanelText(b, badgeText!, Game1.tinyFont, badge, Color.White, PanelMetaTextScale, 3, 3);
+        }
     }
 
     private void DrawBadge(SpriteBatch b, Rectangle bounds, string text, Color fill, Color border)
     {
         this.DrawFlatPanel(b, bounds, fill, border, 1);
-        string label = FitText(text, Game1.tinyFont, bounds.Width - 10);
-        Vector2 size = Game1.tinyFont.MeasureString(label);
-        Utility.drawTextWithShadow(
-            b,
-            label,
-            Game1.tinyFont,
-            new Vector2(bounds.X + (bounds.Width - size.X) / 2f, bounds.Y + Math.Max(2, (bounds.Height - size.Y) / 2f)),
-            TextColor);
+        DrawCenteredPanelText(b, text, Game1.tinyFont, bounds, TextColor, PanelMetaTextScale, 10, 5);
     }
 
     private void DrawPanel(SpriteBatch b, Rectangle bounds, Color fill, Color border)
@@ -89,6 +103,54 @@ internal sealed partial class CompanionPanelMenu
         int thumbY = track.Y + travel * this.memberListScrollOffset / Math.Max(1, this.memberListMaxScroll);
         b.Draw(Game1.staminaRect, track, Color.Black * 0.13f);
         b.Draw(Game1.staminaRect, new Rectangle(track.X, thumbY, track.Width, thumbHeight), SurfaceBorder);
+    }
+
+    private void DrawCompactSkillHover(SpriteBatch b, string text)
+    {
+        const int padding = 10;
+        int maximumWidth = Math.Clamp(Game1.uiViewport.Width - 32, 140, 320);
+        int contentWidth = Math.Max(1, maximumWidth - padding * 2);
+        int lineHeight = GetScaledLineHeight(Game1.tinyFont, PanelMetaTextScale);
+        int maximumLines = Math.Max(2, Math.Min(7, (Game1.uiViewport.Height - 32 - padding * 2) / Math.Max(1, lineHeight)));
+        List<string> paragraphs = text.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).ToList();
+        List<string> lines = new(maximumLines);
+        for (int paragraphIndex = 0; paragraphIndex < paragraphs.Count; paragraphIndex++)
+        {
+            if (lines.Count >= maximumLines)
+                break;
+            int reservedLines = Math.Min(paragraphs.Count - paragraphIndex - 1, maximumLines - lines.Count - 1);
+            int availableLines = Math.Max(1, maximumLines - lines.Count - reservedLines);
+            lines.AddRange(WrapText(paragraphs[paragraphIndex], Game1.tinyFont, contentWidth, availableLines, PanelMetaTextScale));
+        }
+        if (lines.Count == 0)
+            return;
+
+        float widest = lines.Max(line => MeasureScaledText(line, Game1.tinyFont, PanelMetaTextScale).X);
+        int width = Math.Clamp((int)Math.Ceiling(widest) + padding * 2, 120, maximumWidth);
+        int height = lines.Count * lineHeight + padding * 2;
+        int x = Game1.getMouseX() + 18;
+        int y = Game1.getMouseY() + 18;
+        if (x + width > Game1.uiViewport.Width - 8)
+            x = Game1.getMouseX() - width - 12;
+        if (y + height > Game1.uiViewport.Height - 8)
+            y = Game1.getMouseY() - height - 12;
+        x = Math.Clamp(x, 8, Math.Max(8, Game1.uiViewport.Width - width - 8));
+        y = Math.Clamp(y, 8, Math.Max(8, Game1.uiViewport.Height - height - 8));
+
+        Rectangle panel = new(x, y, width, height);
+        this.DrawFlatPanel(b, panel, new Color(250, 240, 219), WindowBorder, 2);
+        int lineY = panel.Y + padding;
+        for (int index = 0; index < lines.Count; index++)
+        {
+            DrawPanelText(
+                b,
+                FitText(lines[index], Game1.tinyFont, panel.Width - padding * 2, PanelMetaTextScale),
+                Game1.tinyFont,
+                new Vector2(panel.X + padding, lineY),
+                index == 0 ? TextColor : MutedTextColor,
+                PanelMetaTextScale);
+            lineY += lineHeight;
+        }
     }
 
     private void DrawPortrait(SpriteBatch b, NPC? npc, Rectangle bounds)
@@ -163,6 +225,32 @@ internal sealed partial class CompanionPanelMenu
         if (this.withdrawAllButton.Width > 0)
             this.focusTargets.Add(this.withdrawAllButton);
         this.focusTargets.AddRange(this.inventorySlotsBounds.Select(p => p.Bounds));
+
+        if (this.focusSkillOnNextRebuild && this.skillButtons.Count > 0)
+        {
+            SquadMemberState? member = this.GetSelectedMember();
+            (Rectangle Bounds, string SkillId)? preferred = null;
+            if (member is not null)
+            {
+                bool progressionEnabled = this.isProgressionEnabled();
+                preferred = this.skillButtons.FirstOrDefault(button =>
+                {
+                    CompanionSkillDefinition? skill = CompanionProgression.Skills.FirstOrDefault(candidate => candidate.Id == button.SkillId);
+                    return skill is not null
+                        && CompanionSkillTreePolicy.GetState(skill, member.UnlockedSkillIds, member.UnspentSkillPoints, progressionEnabled)
+                            == CompanionSkillTreeState.Available;
+                });
+            }
+            if (preferred is null || preferred.Value.Bounds.Width <= 0)
+                preferred = this.skillButtons[0];
+
+            this.inspectedSkillId = preferred.Value.SkillId;
+            this.focusedControlIndex = this.focusTargets.FindIndex(bounds => bounds == preferred.Value.Bounds);
+            this.focusSkillOnNextRebuild = false;
+            if (this.focusedControlIndex >= 0)
+                this.performHoverAction(preferred.Value.Bounds.Center.X, preferred.Value.Bounds.Center.Y);
+        }
+
         if (this.focusTargets.Count == 0)
             this.focusedControlIndex = -1;
         else if (this.focusedControlIndex >= this.focusTargets.Count)
@@ -178,6 +266,54 @@ internal sealed partial class CompanionPanelMenu
         else
             this.focusedControlIndex = (this.focusedControlIndex + delta + this.focusTargets.Count) % this.focusTargets.Count;
         Rectangle target = this.focusTargets[this.focusedControlIndex];
+        this.performHoverAction(target.Center.X, target.Center.Y);
+        Game1.playSound("shiny4");
+    }
+
+    private void MoveFocusSpatial(int horizontal, int vertical)
+    {
+        if (this.focusTargets.Count == 0 || (horizontal == 0 && vertical == 0))
+            return;
+        if (this.focusedControlIndex < 0 || this.focusedControlIndex >= this.focusTargets.Count)
+        {
+            this.MoveFocus(1);
+            return;
+        }
+
+        Rectangle current = this.focusTargets[this.focusedControlIndex];
+        bool currentIsSkill = this.skillButtons.Any(button => button.Bounds == current);
+        int bestIndex = -1;
+        double bestScore = double.MaxValue;
+        for (int index = 0; index < this.focusTargets.Count; index++)
+        {
+            if (index == this.focusedControlIndex)
+                continue;
+            Rectangle candidate = this.focusTargets[index];
+            if (currentIsSkill && !this.skillButtons.Any(button => button.Bounds == candidate))
+                continue;
+            int deltaX = candidate.Center.X - current.Center.X;
+            int deltaY = candidate.Center.Y - current.Center.Y;
+            if ((horizontal < 0 && deltaX >= 0)
+                || (horizontal > 0 && deltaX <= 0)
+                || (vertical < 0 && deltaY >= 0)
+                || (vertical > 0 && deltaY <= 0))
+            {
+                continue;
+            }
+
+            double primary = horizontal == 0 ? Math.Abs(deltaY) : Math.Abs(deltaX);
+            double secondary = horizontal == 0 ? Math.Abs(deltaX) : Math.Abs(deltaY);
+            double score = primary + secondary * 2.75d;
+            if (score >= bestScore)
+                continue;
+            bestScore = score;
+            bestIndex = index;
+        }
+
+        if (bestIndex < 0)
+            return;
+        this.focusedControlIndex = bestIndex;
+        Rectangle target = this.focusTargets[bestIndex];
         this.performHoverAction(target.Center.X, target.Center.Y);
         Game1.playSound("shiny4");
     }
@@ -218,13 +354,21 @@ internal sealed partial class CompanionPanelMenu
             return;
         this.currentTab = tab;
         this.focusedControlIndex = -1;
+        this.hoverText = "";
+        this.focusSkillOnNextRebuild = tab == PanelTab.Skills;
+        if (tab == PanelTab.Skills)
+            this.inspectedSkillId = null;
         Game1.playSound("smallSelect");
     }
 
-    private string GetTabLabel(PanelTab tab)
+    private string GetTabLabel(PanelTab tab, bool compact = false)
     {
         return this.translate(tab switch
         {
+            PanelTab.Overview when compact => "companion.panel.tab_overview_short",
+            PanelTab.Work when compact => "companion.panel.tab_work_short",
+            PanelTab.Skills when compact => "companion.panel.tab_skills_short",
+            PanelTab.Inventory when compact => "companion.panel.tab_inventory_short",
             PanelTab.Overview => "companion.panel.tab_overview",
             PanelTab.Work => "companion.panel.tab_work",
             PanelTab.Skills => "companion.panel.tab_skills",
@@ -298,34 +442,25 @@ internal sealed partial class CompanionPanelMenu
 
     private string BuildSkillHoverText(SquadMemberState member, CompanionSkillDefinition skill)
     {
+        bool progressionEnabled = this.isProgressionEnabled();
+        CompanionSkillTreeState state = CompanionSkillTreePolicy.GetState(
+            skill,
+            member.UnlockedSkillIds,
+            member.UnspentSkillPoints,
+            progressionEnabled);
+        List<CompanionSkillDefinition> branchSkills = CompanionProgression.Skills
+            .Where(candidate => string.Equals(candidate.Branch, skill.Branch, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        int tier = Math.Max(1, branchSkills.FindIndex(candidate => string.Equals(candidate.Id, skill.Id, StringComparison.OrdinalIgnoreCase)) + 1);
         List<string> lines = new()
         {
             this.translate(skill.NameKey, null),
+            $"{this.translate($"companion.skill.branch.{skill.Branch}", null)} · {GetRomanTier(tier)}",
+            $"{this.translate(GetSkillStateTranslationKey(state), null)} · {this.BuildSkillDetailStatus(skill, state)}",
             this.translate(skill.DescriptionKey, null),
             this.translate("companion.skill.cost", new { cost = skill.Cost }),
             this.translate("companion.skill.points_available", new { points = member.UnspentSkillPoints })
         };
-        if (!string.IsNullOrWhiteSpace(skill.PrerequisiteId))
-        {
-            CompanionSkillDefinition? prerequisite = CompanionProgression.Skills.FirstOrDefault(p => p.Id == skill.PrerequisiteId);
-            if (prerequisite is not null)
-                lines.Add(this.translate("companion.skill.requires", new { skill = this.translate(prerequisite.NameKey, null) }));
-        }
-        bool unlocked = member.UnlockedSkillIds.Contains(skill.Id, StringComparer.OrdinalIgnoreCase);
-        bool progressionEnabled = this.isProgressionEnabled();
-        if (unlocked)
-            lines.Add(this.translate("companion.skill.learned", null));
-        if (!progressionEnabled)
-            lines.Add(this.translate("companion.skill.progression_disabled", null));
-        else if (!unlocked)
-        {
-            if (!string.IsNullOrWhiteSpace(skill.PrerequisiteId) && !member.UnlockedSkillIds.Contains(skill.PrerequisiteId, StringComparer.OrdinalIgnoreCase))
-                lines.Add(this.translate("companion.skill.locked", null));
-            else if (member.UnspentSkillPoints < skill.Cost)
-                lines.Add(this.translate("companion.skill.no_points", null));
-            else
-                lines.Add(this.translate("companion.skill.learn", null));
-        }
         return string.Join(Environment.NewLine, lines);
     }
 
@@ -367,24 +502,170 @@ internal sealed partial class CompanionPanelMenu
 
     private static string FitText(string text, SpriteFont font, int width)
     {
-        if (string.IsNullOrEmpty(text) || width <= 0)
+        return FitText(text, font, width, 1f);
+    }
+
+    private static string FitText(string text, SpriteFont font, int width, float scale)
+    {
+        if (string.IsNullOrEmpty(text) || width <= 0 || scale <= 0f)
             return "";
-        if (font.MeasureString(text).X <= width)
+        float unscaledWidth = width / scale;
+        if (font.MeasureString(text).X <= unscaledWidth)
             return text;
         const string suffix = "…";
-        if (font.MeasureString(suffix).X > width)
+        if (font.MeasureString(suffix).X > unscaledWidth)
             return "";
         int low = 0;
         int high = text.Length;
         while (low < high)
         {
             int mid = (low + high + 1) / 2;
-            if (font.MeasureString(text[..mid] + suffix).X <= width)
+            if (font.MeasureString(text[..mid] + suffix).X <= unscaledWidth)
                 low = mid;
             else
                 high = mid - 1;
         }
         return text[..low] + suffix;
+    }
+
+    private static IReadOnlyList<string> WrapText(string text, SpriteFont font, int width, int maxLines)
+    {
+        return WrapText(text, font, width, maxLines, 1f);
+    }
+
+    private static IReadOnlyList<string> WrapText(string text, SpriteFont font, int width, int maxLines, float scale)
+    {
+        if (string.IsNullOrWhiteSpace(text) || width <= 0 || maxLines <= 0 || scale <= 0f)
+            return Array.Empty<string>();
+
+        float unscaledWidth = width / scale;
+        string[] words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        List<string> lines = new(Math.Min(maxLines, words.Length));
+        int wordIndex = 0;
+        while (wordIndex < words.Length && lines.Count < maxLines)
+        {
+            string line = "";
+            while (wordIndex < words.Length)
+            {
+                string candidate = string.IsNullOrEmpty(line) ? words[wordIndex] : $"{line} {words[wordIndex]}";
+                if (!string.IsNullOrEmpty(line) && font.MeasureString(candidate).X > unscaledWidth)
+                    break;
+                line = candidate;
+                wordIndex++;
+                if (font.MeasureString(line).X > unscaledWidth)
+                {
+                    line = FitText(line, font, width, scale);
+                    break;
+                }
+            }
+
+            if (lines.Count == maxLines - 1 && wordIndex < words.Length)
+            {
+                string remainder = string.Join(' ', words.Skip(wordIndex));
+                line = FitText($"{line} {remainder}".Trim(), font, width, scale);
+                wordIndex = words.Length;
+            }
+            lines.Add(line);
+        }
+
+        return lines;
+    }
+
+    private static void DrawPanelText(
+        SpriteBatch b,
+        string text,
+        SpriteFont font,
+        Vector2 position,
+        Color color,
+        float scale,
+        bool shadow = false)
+    {
+        if (string.IsNullOrEmpty(text) || scale <= 0f)
+            return;
+
+        Vector2 snapped = new(MathF.Round(position.X), MathF.Round(position.Y));
+        if (shadow)
+        {
+            b.DrawString(
+                font,
+                text,
+                snapped + Vector2.One,
+                Color.Black * 0.28f,
+                0f,
+                Vector2.Zero,
+                scale,
+                SpriteEffects.None,
+                0f);
+        }
+        b.DrawString(font, text, snapped, color, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+    }
+
+    private static void DrawCenteredPanelText(
+        SpriteBatch b,
+        string text,
+        SpriteFont font,
+        Rectangle bounds,
+        Color color,
+        float preferredScale,
+        int horizontalPadding,
+        int verticalPadding,
+        float minimumScale = PanelCompactTextScale)
+    {
+        if (bounds.Width <= horizontalPadding || bounds.Height <= verticalPadding)
+            return;
+
+        float scale = GetTextScaleForBox(
+            text,
+            font,
+            preferredScale,
+            bounds.Width - horizontalPadding,
+            bounds.Height - verticalPadding,
+            minimumScale);
+        string label = FitText(text, font, Math.Max(1, bounds.Width - horizontalPadding), scale);
+        Vector2 size = MeasureScaledText(label, font, scale);
+        DrawPanelText(
+            b,
+            label,
+            font,
+            new Vector2(bounds.Center.X - size.X / 2f, bounds.Center.Y - size.Y / 2f),
+            color,
+            scale);
+    }
+
+    private static Vector2 MeasureScaledText(string text, SpriteFont font, float scale)
+    {
+        return font.MeasureString(text) * scale;
+    }
+
+    private static int GetScaledLineHeight(SpriteFont font, float scale)
+    {
+        return Math.Max(1, (int)Math.Ceiling(font.LineSpacing * scale));
+    }
+
+    private static float GetTextScaleForHeight(SpriteFont font, float preferredScale, int availableHeight)
+    {
+        if (availableHeight <= 0 || font.LineSpacing <= 0)
+            return 0f;
+        return Math.Max(0f, Math.Min(preferredScale, availableHeight / (float)font.LineSpacing));
+    }
+
+    private static float GetTextScaleForBox(
+        string text,
+        SpriteFont font,
+        float preferredScale,
+        int availableWidth,
+        int availableHeight,
+        float minimumScale = PanelCompactTextScale)
+    {
+        float heightScale = GetTextScaleForHeight(font, preferredScale, availableHeight);
+        float naturalWidth = string.IsNullOrEmpty(text) ? 0f : font.MeasureString(text).X;
+        float widthScale = naturalWidth <= 0f || availableWidth <= 0
+            ? preferredScale
+            : availableWidth / naturalWidth;
+        float widthConstrained = Math.Min(
+            preferredScale,
+            Math.Max(Math.Min(preferredScale, minimumScale), widthScale));
+        return Math.Max(0f, Math.Min(heightScale, widthConstrained));
     }
 
     private readonly record struct PortraitCacheEntry(Texture2D? Texture, int CheckedAtTick);

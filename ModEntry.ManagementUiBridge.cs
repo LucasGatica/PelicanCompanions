@@ -986,24 +986,28 @@ public sealed partial class ModEntry
             return false;
 
         CompanionSkillDefinition? skill = CompanionProgression.Skills.FirstOrDefault(p => p.Id == skillId);
-        if (skill is null || member.UnlockedSkillIds.Contains(skill.Id, StringComparer.OrdinalIgnoreCase))
+        if (skill is null)
             return false;
 
-        if (!string.IsNullOrWhiteSpace(skill.PrerequisiteId)
-            && !member.UnlockedSkillIds.Contains(skill.PrerequisiteId, StringComparer.OrdinalIgnoreCase))
+        CompanionSkillTreeState state = CompanionSkillTreePolicy.GetState(
+            skill,
+            member.UnlockedSkillIds,
+            member.UnspentSkillPoints,
+            progressionEnabled: true);
+        if (state == CompanionSkillTreeState.LockedByPrerequisite)
         {
             if (showWarnings)
                 this.Warn("companion.skill.locked");
             return false;
         }
 
-        if (member.UnspentSkillPoints < skill.Cost)
+        if (state == CompanionSkillTreeState.NeedsPoints)
         {
             if (showWarnings)
                 this.Warn("companion.skill.no_points");
             return false;
         }
 
-        return true;
+        return state == CompanionSkillTreeState.Available;
     }
 }

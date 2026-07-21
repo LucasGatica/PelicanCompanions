@@ -35,6 +35,7 @@ contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
 | `Core/TaskNavigationPolicy.cs` | Reuso de stand e orçamento de criação/recuperação de rotas de tarefa. |
 | `Core/TaskPlanningPolicy.cs` | Seleção prioritária e round-robin do orçamento de planejamento autônomo. |
 | `Core/GroundCommandPolicy.cs` | Regras puras de contexto e membros para comandos de chão vazio. |
+| `Core/CompanionSkillTreePolicy.cs` | Estado puro compartilhado entre a árvore de habilidades e a validação autoritativa. |
 | `Core/SavedItemStackIdentity.cs` | Fingerprint determinístico de pilhas serializadas. |
 | `Core/CompanionStateCopy.cs` | Cópias profundas para saves e snapshots imutáveis. |
 | `CompanionQuickHud.cs` | HUD de consulta e atalhos rápidos. |

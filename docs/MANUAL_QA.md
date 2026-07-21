@@ -1,6 +1,6 @@
 # Roteiro de QA manual
 
-O validador automatizado compila o mod, executa 27 testes de regressão e verifica
+O validador automatizado compila o mod, executa 31 testes de regressão e verifica
 os arquivos JSON, mas não substitui um teste dentro do Stardew Valley. Execute
 este roteiro antes de publicar uma nova versão.
 
@@ -86,6 +86,10 @@ este roteiro antes de publicar uma nova versão.
   perfil deve abrir níveis, skills e inventário; Parar deve guardar a posição;
   Seguir deve cancelar tarefa/diretivas e retornar ao owner; Dispensar deve
   exigir confirmação e não alterar o grupo ao cancelar.
+- Em inglês e PT-BR, confirmar que Perfil, Trabalhar, Parar, Dispensar, Seguir e
+  a dica inferior aparecem completos; repetir com Mandar NPC de nome longo e
+  conferir a quebra em até três linhas, sempre com o mesmo tamanho de fonte e
+  sem sobreposição entre setores.
 - Em NPC não recrutado no mesmo mapa, confirmar que aparece apenas Recrutar e
   que a ação funciona tanto ao lado quanto do outro lado da área visível, sem
   depender da distância do jogador. Amizade, suporte do NPC e lotação continuam
@@ -150,12 +154,45 @@ este roteiro antes de publicar uma nova versão.
 - Testar HUD Detailed e Compact com 1, 3, 6 e 12 companions.
 - Confirmar que uma configuração anterior migra o dock uma vez para a esquerda,
   com cabeçalho, retratos emoldurados, estados, badges e botões sem cortes.
+- Confirmar que nome e status nunca se sobrepõem, que nenhum texto escapa do
+  cabeçalho/card e que os badges pixelados continuam nítidos sem depender da
+  sombra da fonte.
+- Em inglês e PT-BR, conferir o título curto do dock, nomes longos e os estados
+  `Indo ao local marcado`, `Aguardando reconexão` e `Indisponível`; truncamento
+  horizontal pode ocorrer, mas nunca uma linha cortada verticalmente.
+- Confirmar que os dois botões por ícone têm tooltip, realce de hover e alvo de
+  clique íntegro, e que o chevron do cabeçalho comunica a abertura do painel.
 - Alternar o dock entre esquerda/direita e confirmar que avisos/debug usam o
   lado oposto sem sobreposição.
 - Testar em 1920x1080, 1280x720, 800x600 e no menor viewport suportado.
 - Testar todas as abas em split-screen horizontal (~640x360) e em viewports
   lógicos aproximados de 512x288 e 426x240 (UI scale 125%/150%); confirmar
-  comandos, diretivas, nove skills e slots visíveis/clicáveis.
+  comandos, diretivas, nove skills e slots visíveis/clicáveis, sem texto ou badge
+  vazando para o ramo vizinho.
+- Na árvore de habilidades, conferir os três ramos, cada um progredindo da
+  esquerda para a direita, e os conectores seguindo os pré-requisitos. No layout
+  amplo, conferir também o progresso por ramo e o inspetor lateral persistente
+  do nó apontado/focado, com nome, ramo/tier, custo, pontos, estado, descrição e
+  ação sem elipse indevida ou sobreposição. Em layouts estreitos intermediários,
+  conferir o card de detalhes abaixo da árvore; no fallback compacto, conferir
+  os mesmos dados no tooltip limitado à viewport. Repetir com 0, 1 e 2 pontos e
+  com raízes/tier 2/tier 3 aprendidos para distinguir Aprendida, Disponível,
+  Bloqueada e Pontos insuficientes.
+- Conferir especificamente a captura de 1180x780 em inglês e PT-BR: título,
+  roster em duas linhas, nome/status do membro, quatro abas, nomes dos ramos,
+  badge de estado e todas as linhas do inspetor devem permanecer dentro de seus
+  retângulos. Sombras não podem produzir texto duplicado ou sangrar nas bordas.
+- Em 512x288 e 426x240, as abas devem trocar para seus rótulos localizados
+  curtos (`Geral`, `Tarefas`, `Hab.`, `Itens` em PT-BR), sem colidir com badges
+  ou com o sublinhado da aba ativa.
+- Desativar progressão e confirmar que skills já aprendidas continuam legíveis,
+  as restantes ficam Desativadas e nenhum clique gasta ponto. Reativar e aprender
+  uma skill disponível; custo, conector, badge da aba e card de detalhes devem
+  atualizar sem reabrir o painel.
+- Abrir Habilidades por teclado/controle e confirmar foco inicial na primeira
+  skill aprendível. No controle, D-pad deve navegar tiers horizontalmente e ramos
+  verticalmente; A aprende somente uma skill disponível, shoulders mantêm a troca
+  de abas e B fecha.
 - Alterar UI scale e redimensionar a janela com o menu aberto.
 - Clicar nas bordas e nos espaços entre botões; nenhum clique deve ser engolido.
 - Rolar a lista; linhas cortadas não podem desenhar/clicar fora do viewport.

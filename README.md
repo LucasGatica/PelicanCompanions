@@ -39,7 +39,7 @@ All bindings can be changed in `config.json` or through GMCM.
   Dismiss, wait, resume, and recall remain available for recruited companions.
 - Natural follower pathing at a conservative fixed NPC speed, location-change placement, visible recovery, and Adaptive/Behind/Compact formations.
 - Mouse-centered contextual wheel: owned companions expose Profile, Work, Stop, Dismiss, and Follow; unrecruited NPCs expose Recruit; mature trees, breakable stones, and mature grab-crops expose Send all plus up to three named local companions. Safe empty ground exposes Dismiss all plus up to three named companions; choosing one sends them to that tile and leaves them waiting there after arrival. A polished quick-HUD dock sits on the left by default, and the responsive F9 panel remains available for full management.
-- Per-companion XP, ten levels, skill points, useful Lumbering/Mining/Utility skill effects, and saved recent-loot history.
+- Per-companion XP, ten levels, skill points, a responsive three-branch skill tree with useful Lumbering/Mining/Utility effects, and saved recent-loot history.
 - Per-member inventory and shared squad inventory with conservative fallback routing.
 - Manual/mimic/autonomous support where applicable for watering, safe forage pickup, mature grab-crop harvesting, mature untapped tree chopping, breakable-stone mining, and animal petting.
 - Beehouse flower protection and bounded per-member Wood/Mining/Clear Area directives.
@@ -63,7 +63,7 @@ Expected release zip after the release build:
 ## Verification status
 
 Run `scripts/validate.sh` to restore/build the mod, execute the package-free
-27-test regression harness, validate all JSON files, and verify English/PT-BR
+31-test regression harness, validate all JSON files, and verify English/PT-BR
 key and interpolation-token parity. The current in-game checklist still needs
 to be run before release; multiplayer remains explicitly experimental until
 that pass is complete.

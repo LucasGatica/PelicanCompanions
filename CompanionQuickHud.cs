@@ -10,21 +10,21 @@ internal sealed class CompanionQuickHud : IClickableMenu
 {
     private const int DetailedDockWidth = 260;
     private const int CompactDockWidth = 158;
-    private const int DetailedRowHeight = 70;
+    private const int DetailedRowHeight = 72;
     private const int CompactRowHeight = 54;
-    private const int DetailedPortraitSize = 48;
+    private const int DetailedPortraitSize = 50;
     private const int CompactPortraitSize = 40;
-    private const int DetailedActionButtonWidth = 58;
-    private const int CompactActionButtonWidth = 28;
-    private const int DetailedActionButtonHeight = 25;
-    private const int CompactActionButtonHeight = 22;
-    private const int DetailedHeaderHeight = 32;
-    private const int CompactHeaderHeight = 27;
+    private const int DetailedActionButtonWidth = 34;
+    private const int CompactActionButtonWidth = 30;
+    private const int DetailedActionButtonHeight = 32;
+    private const int CompactActionButtonHeight = 23;
+    private const int DetailedHeaderHeight = 36;
+    private const int CompactHeaderHeight = 32;
     private const int DockPadding = 7;
     private const int HeaderGap = 5;
     private const int RowGap = 4;
     private const int ActionButtonGap = 4;
-    private const int OverflowButtonHeight = 26;
+    private const int OverflowButtonHeight = 30;
     private const int EdgeMargin = 12;
     private const int PortraitRetryTicks = 600;
 
@@ -49,7 +49,6 @@ internal sealed class CompanionQuickHud : IClickableMenu
     private static readonly Color ButtonBorder = new(83, 59, 40);
     private static readonly Color ButtonHoverBorder = new(255, 239, 174);
     private static readonly Color ButtonTextColor = new(69, 45, 29);
-    private static readonly Color ButtonLightTextColor = new(255, 247, 218);
     private static readonly Color TextColor = new(69, 45, 29);
     private static readonly Color MutedTextColor = new(101, 76, 55);
     private static readonly Color LevelBadgeFill = new(238, 220, 181);
@@ -132,21 +131,20 @@ internal sealed class CompanionQuickHud : IClickableMenu
             this.DrawStatusIndicator(b, row.Indicator, indicatorColor);
             this.DrawPortraitFrame(b, row.Portrait, indicatorColor);
             this.DrawPortrait(b, this.getNpc(member.NpcName), row.Portrait);
+            this.DrawPortraitBadges(b, row.Portrait, member);
 
             this.DrawIconButton(
                 b,
                 row.WorkButton,
                 QuickHudAction.Work,
                 directWork ? WorkVisualState.Direct : autonomousWork ? WorkVisualState.Autonomous : WorkVisualState.Idle,
-                row.WorkButton.Contains(mouse),
-                layout.ShowButtonLabels);
+                row.WorkButton.Contains(mouse));
             this.DrawIconButton(
                 b,
                 row.FollowButton,
                 QuickHudAction.Follow,
                 WorkVisualState.Idle,
-                row.FollowButton.Contains(mouse),
-                layout.ShowButtonLabels);
+                row.FollowButton.Contains(mouse));
 
             if (layout.ShowText)
                 this.DrawMemberText(b, row, member);
@@ -255,25 +253,33 @@ internal sealed class CompanionQuickHud : IClickableMenu
         int desiredWidth = detailed ? DetailedDockWidth : CompactDockWidth;
         int width = Math.Min(desiredWidth, Math.Max(1, Game1.uiViewport.Width - EdgeMargin * 2));
         bool showText = detailed && width >= 210;
+        int lineHeight = Math.Max(1, Game1.tinyFont.LineSpacing);
+        int headerHeight = Math.Max(
+            detailed ? DetailedHeaderHeight : CompactHeaderHeight,
+            lineHeight + 10);
+        int rowHeight = detailed
+            ? Math.Max(DetailedRowHeight, lineHeight * 2 + 14)
+            : CompactRowHeight;
+        int overflowHeight = Math.Max(OverflowButtonHeight, lineHeight + 8);
         return detailed
             ? new QuickHudLayout(
                 width,
-                DetailedRowHeight,
+                rowHeight,
                 DetailedPortraitSize,
                 DetailedActionButtonWidth,
                 DetailedActionButtonHeight,
-                DetailedHeaderHeight,
-                showText,
-                ShowButtonLabels: true)
+                headerHeight,
+                overflowHeight,
+                showText)
             : new QuickHudLayout(
                 width,
-                CompactRowHeight,
+                rowHeight,
                 CompactPortraitSize,
                 CompactActionButtonWidth,
                 CompactActionButtonHeight,
-                CompactHeaderHeight,
-                ShowText: false,
-                ShowButtonLabels: false);
+                headerHeight,
+                overflowHeight,
+                ShowText: false);
     }
 
     private int GetVisibleRowCount(int totalCount, QuickHudLayout layout)
@@ -291,7 +297,7 @@ internal sealed class CompanionQuickHud : IClickableMenu
         int visible = Math.Min(Math.Min(configured, totalCount), capacityWithoutOverflow);
         if (visible < totalCount)
         {
-            int reserved = OverflowButtonHeight + RowGap;
+            int reserved = layout.OverflowButtonHeight + RowGap;
             visible = Math.Max(1, (rowsAvailable - reserved + RowGap) / (layout.RowHeight + RowGap));
             visible = Math.Min(visible, Math.Min(configured, totalCount));
         }
@@ -306,7 +312,7 @@ internal sealed class CompanionQuickHud : IClickableMenu
             + layout.HeaderHeight
             + HeaderGap
             + rowsHeight
-            + (hasOverflow ? RowGap + OverflowButtonHeight : 0);
+            + (hasOverflow ? RowGap + layout.OverflowButtonHeight : 0);
         int topSafe = Game1.uiViewport.Height >= 360 ? 68 : 8;
         int bottomSafe = Game1.uiViewport.Height >= 360 ? 92 : 8;
         int idealY = (Game1.uiViewport.Height - height) / 2;
@@ -359,7 +365,7 @@ internal sealed class CompanionQuickHud : IClickableMenu
             dock.X + DockPadding,
             dock.Y + DockPadding + layout.HeaderHeight + HeaderGap + rowsHeight + RowGap,
             Math.Max(1, dock.Width - DockPadding * 2),
-            OverflowButtonHeight);
+            layout.OverflowButtonHeight);
     }
 
     private void DrawMemberText(SpriteBatch b, QuickHudRow row, SquadMemberState member)
@@ -369,20 +375,11 @@ internal sealed class CompanionQuickHud : IClickableMenu
         int width = Math.Max(1, textRight - textX);
         string name = FitText(member.DisplayName, Game1.tinyFont, width);
         string status = FitText(this.getStatusText(member), Game1.tinyFont, width);
+        int contentHeight = Math.Max(1, Game1.tinyFont.LineSpacing * 2);
+        int textY = row.Bounds.Y + Math.Max(4, (row.Bounds.Height - contentHeight) / 2);
 
-        Utility.drawTextWithShadow(b, name, Game1.tinyFont, new Vector2(textX, row.Bounds.Y + 8), TextColor);
-        Utility.drawTextWithShadow(b, status, Game1.tinyFont, new Vector2(textX, row.Bounds.Y + 27), MutedTextColor);
-
-        string level = FitText(this.translate("companion.quick.level_short", new { level = member.Level }), Game1.tinyFont, width);
-        int levelWidth = Math.Clamp((int)Game1.tinyFont.MeasureString(level).X + 12, 34, width);
-        Rectangle levelBadge = new(textX, row.Bounds.Bottom - 22, levelWidth, 18);
-        this.DrawMiniBadge(b, levelBadge, level, LevelBadgeFill, LevelBadgeBorder);
-
-        if (this.IsInventoryFull(member))
-        {
-            Rectangle full = new(Math.Min(textRight - 18, levelBadge.Right + 5), levelBadge.Y, 18, 18);
-            this.DrawMiniBadge(b, full, "!", WarningIndicator, new Color(123, 49, 42), ButtonLightTextColor);
-        }
+        DrawCrispText(b, name, new Vector2(textX, textY), TextColor);
+        DrawCrispText(b, status, new Vector2(textX, textY + Game1.tinyFont.LineSpacing), MutedTextColor);
     }
 
     private bool IsInventoryFull(SquadMemberState member)
@@ -409,8 +406,7 @@ internal sealed class CompanionQuickHud : IClickableMenu
         Rectangle bounds,
         QuickHudAction action,
         WorkVisualState workState,
-        bool hovered,
-        bool showLabel)
+        bool hovered)
     {
         Color fill = action == QuickHudAction.Follow
             ? RecallColor
@@ -434,34 +430,10 @@ internal sealed class CompanionQuickHud : IClickableMenu
             new Rectangle(bounds.X + 3, bounds.Bottom - 4, Math.Max(1, bounds.Width - 6), 1),
             Color.Black * 0.18f);
 
-        Rectangle iconBounds = showLabel
-            ? new Rectangle(bounds.X + 4, bounds.Y + 3, 16, Math.Max(1, bounds.Height - 6))
-            : bounds;
         if (action == QuickHudAction.Work)
-            this.DrawWorkIcon(b, iconBounds, workState != WorkVisualState.Idle);
+            this.DrawWorkIcon(b, bounds, workState != WorkVisualState.Idle);
         else
-            this.DrawRecallIcon(b, iconBounds);
-
-        if (!showLabel)
-            return;
-
-        string labelKey = action == QuickHudAction.Follow
-            ? "companion.quick.follow_short"
-            : workState == WorkVisualState.Direct
-                ? "companion.quick.stop_short"
-                : "companion.quick.work_short";
-        int labelX = iconBounds.Right + 1;
-        string label = FitText(this.translate(labelKey, null), Game1.tinyFont, Math.Max(1, bounds.Right - labelX - 4));
-        Vector2 labelSize = Game1.tinyFont.MeasureString(label);
-        Color labelColor = action == QuickHudAction.Work && workState == WorkVisualState.Idle
-            ? ButtonTextColor
-            : ButtonLightTextColor;
-        Utility.drawTextWithShadow(
-            b,
-            label,
-            Game1.tinyFont,
-            new Vector2(labelX, bounds.Y + Math.Max(1, (bounds.Height - labelSize.Y) / 2f)),
-            labelColor);
+            this.DrawRecallIcon(b, bounds);
     }
 
     private void DrawWorkIcon(SpriteBatch b, Rectangle bounds, bool active)
@@ -497,10 +469,9 @@ internal sealed class CompanionQuickHud : IClickableMenu
             Color.White * 0.48f);
         string text = FitText(this.translate("companion.quick.more", new { count = hiddenCount }), Game1.tinyFont, bounds.Width - 12);
         Vector2 size = Game1.tinyFont.MeasureString(text);
-        Utility.drawTextWithShadow(
+        DrawCrispText(
             b,
             text,
-            Game1.tinyFont,
             new Vector2(bounds.X + (bounds.Width - size.X) / 2f, bounds.Y + Math.Max(2, (bounds.Height - size.Y) / 2f)),
             TextColor);
     }
@@ -539,25 +510,33 @@ internal sealed class CompanionQuickHud : IClickableMenu
             new Rectangle(bounds.X + 7, bounds.Bottom - 4, Math.Max(1, bounds.Width - 14), 2),
             HeaderAccent * 0.85f);
 
-        int countWidth = Math.Clamp((int)Game1.tinyFont.MeasureString(memberCount.ToString()).X + 14, 25, 36);
-        Rectangle countBadge = new(bounds.Right - countWidth - 6, bounds.Y + 5, countWidth, Math.Max(16, bounds.Height - 10));
-        this.DrawMiniBadge(
+        const int digitScale = 2;
+        const int badgeHeight = 18;
+        int chevronX = bounds.Right - 12;
+        int countWidth = GetNumberBadgeWidth(memberCount, digitScale);
+        Rectangle countBadge = new(
+            chevronX - countWidth - 8,
+            bounds.Center.Y - badgeHeight / 2,
+            countWidth,
+            badgeHeight);
+        this.DrawNumberBadge(
             b,
             countBadge,
-            memberCount.ToString(),
+            memberCount,
+            digitScale,
             new Color(244, 216, 153),
             new Color(105, 74, 43),
             ButtonTextColor);
+        this.DrawChevron(b, chevronX, bounds.Center.Y, HeaderTextColor);
 
         string title = FitText(
-            this.translate("companion.panel.title", null),
+            this.translate("companion.quick.title", null),
             Game1.tinyFont,
             Math.Max(1, countBadge.X - bounds.X - 18));
         Vector2 titleSize = Game1.tinyFont.MeasureString(title);
-        Utility.drawTextWithShadow(
+        DrawCrispText(
             b,
             title,
-            Game1.tinyFont,
             new Vector2(bounds.X + 9, bounds.Y + Math.Max(1, (bounds.Height - titleSize.Y) / 2f)),
             HeaderTextColor);
     }
@@ -615,26 +594,127 @@ internal sealed class CompanionQuickHud : IClickableMenu
             Color.White * 0.58f);
     }
 
-    private void DrawMiniBadge(
-        SpriteBatch b,
-        Rectangle bounds,
-        string text,
-        Color fill,
-        Color border,
-        Color? textColor = null)
+    private void DrawPortraitBadges(SpriteBatch b, Rectangle portrait, SquadMemberState member)
     {
-        if (bounds.Width <= 0 || bounds.Height <= 0)
+        const int digitScale = 2;
+        const int badgeHeight = 16;
+        int level = Math.Clamp(member.Level, 0, 99);
+        int levelWidth = GetNumberBadgeWidth(level, digitScale);
+        Rectangle levelBadge = new(
+            portrait.Right - levelWidth - 1,
+            portrait.Bottom - badgeHeight - 1,
+            levelWidth,
+            badgeHeight);
+        this.DrawNumberBadge(
+            b,
+            levelBadge,
+            level,
+            digitScale,
+            LevelBadgeFill,
+            LevelBadgeBorder,
+            ButtonTextColor);
+
+        if (!this.IsInventoryFull(member))
             return;
 
+        Rectangle alert = new(portrait.Right - 15, portrait.Y + 1, 14, 14);
+        this.DrawFlatPanel(b, alert, WarningIndicator, new Color(123, 49, 42), 1);
+        b.Draw(Game1.staminaRect, new Rectangle(alert.Center.X - 1, alert.Y + 3, 2, 6), Color.White);
+        b.Draw(Game1.staminaRect, new Rectangle(alert.Center.X - 1, alert.Bottom - 4, 2, 2), Color.White);
+    }
+
+    private void DrawNumberBadge(
+        SpriteBatch b,
+        Rectangle bounds,
+        int value,
+        int pixelScale,
+        Color fill,
+        Color border,
+        Color textColor)
+    {
         this.DrawFlatPanel(b, bounds, fill, border, 1);
-        string label = FitText(text, Game1.tinyFont, Math.Max(1, bounds.Width - 6));
-        Vector2 size = Game1.tinyFont.MeasureString(label);
-        Utility.drawTextWithShadow(
-            b,
-            label,
-            Game1.tinyFont,
-            new Vector2(bounds.X + (bounds.Width - size.X) / 2f, bounds.Y + Math.Max(0, (bounds.Height - size.Y) / 2f)),
-            textColor ?? ButtonTextColor);
+        string digits = Math.Max(0, value).ToString();
+        int digitWidth = 3 * pixelScale;
+        int gap = pixelScale;
+        int contentWidth = digits.Length * digitWidth + Math.Max(0, digits.Length - 1) * gap;
+        int contentHeight = 5 * pixelScale;
+        int x = bounds.X + (bounds.Width - contentWidth) / 2;
+        int y = bounds.Y + (bounds.Height - contentHeight) / 2;
+
+        foreach (char digit in digits)
+        {
+            DrawPixelDigit(b, digit, x, y, pixelScale, textColor);
+            x += digitWidth + gap;
+        }
+    }
+
+    private void DrawChevron(SpriteBatch b, int centerX, int centerY, Color color)
+    {
+        const int pixelSize = 2;
+        ReadOnlySpan<Point> pixels = stackalloc Point[]
+        {
+            new(0, 0),
+            new(1, 1),
+            new(2, 2),
+            new(1, 3),
+            new(0, 4)
+        };
+        int x = centerX - pixelSize * 3 / 2;
+        int y = centerY - pixelSize * 5 / 2;
+        foreach (Point pixel in pixels)
+        {
+            b.Draw(
+                Game1.staminaRect,
+                new Rectangle(x + pixel.X * pixelSize, y + pixel.Y * pixelSize, pixelSize, pixelSize),
+                color);
+        }
+    }
+
+    private static void DrawPixelDigit(SpriteBatch b, char digit, int x, int y, int pixelScale, Color color)
+    {
+        string pixels = digit switch
+        {
+            '0' => "111101101101111",
+            '1' => "010110010010111",
+            '2' => "111001111100111",
+            '3' => "111001111001111",
+            '4' => "101101111001001",
+            '5' => "111100111001111",
+            '6' => "111100111101111",
+            '7' => "111001010010010",
+            '8' => "111101111101111",
+            '9' => "111101111001111",
+            _ => "000000000000000"
+        };
+
+        for (int index = 0; index < pixels.Length; index++)
+        {
+            if (pixels[index] != '1')
+                continue;
+
+            int column = index % 3;
+            int row = index / 3;
+            b.Draw(
+                Game1.staminaRect,
+                new Rectangle(x + column * pixelScale, y + row * pixelScale, pixelScale, pixelScale),
+                color);
+        }
+    }
+
+    private static int GetNumberBadgeWidth(int value, int pixelScale)
+    {
+        int digitCount = Math.Max(0, value).ToString().Length;
+        int contentWidth = digitCount * 3 * pixelScale + Math.Max(0, digitCount - 1) * pixelScale;
+        return contentWidth + 6;
+    }
+
+    private static void DrawCrispText(SpriteBatch b, string text, Vector2 position, Color color)
+    {
+        if (string.IsNullOrEmpty(text))
+            return;
+
+        Vector2 snapped = new(MathF.Round(position.X), MathF.Round(position.Y));
+        b.DrawString(Game1.tinyFont, text, snapped, color);
     }
 
     private void DrawFlatPanel(SpriteBatch b, Rectangle bounds, Color fill, Color border, int borderSize)
@@ -742,8 +822,8 @@ internal sealed class CompanionQuickHud : IClickableMenu
         int ActionButtonWidth,
         int ActionButtonHeight,
         int HeaderHeight,
-        bool ShowText,
-        bool ShowButtonLabels);
+        int OverflowButtonHeight,
+        bool ShowText);
 
     private enum QuickHudAction
     {

@@ -15,8 +15,12 @@ internal static class Program
         new("CompanionProgression respeita fronteiras de nivel", CompanionProgressionRespectsLevelBoundaries),
         new("CompanionProgression limita consultas de XP por nivel", CompanionProgressionClampsLevelQueries),
         new("CompanionProgression reembolsa skills legadas uma unica vez", CompanionProgressionRefundsLegacySkillsOnce),
+        new("Catalogo de skills forma tres trilhas validas", CompanionSkillCatalogFormsThreeValidTracks),
+        new("CompanionSkillTreePolicy diferencia todos os estados", CompanionSkillTreePolicyClassifiesEveryState),
+        new("CompanionSkillTreePolicy respeita caixa e limite de pontos", CompanionSkillTreePolicyHonorsCasingAndPointBoundary),
         new("IGenericModConfigMenuApiCompat e publica", GenericModConfigMenuCompatibilityApiIsPublic),
         new("CompanionActionWheelHitTest mapeia setores variaveis e limites", CompanionActionWheelHitTestMapsSegmentsAndBounds),
+        new("CompanionActionWheelTextLayout preserva e equilibra rotulos", CompanionActionWheelTextLayoutPreservesAndBalancesLabels),
         new("RecruitmentContextPolicy permite recrutamento distante no mesmo mapa", RecruitmentContextPolicyAllowsAnyDistanceOnSameMap),
         new("FollowNavigationPolicy reseta recall apenas quando necessario", FollowNavigationPolicyResetsRecallOnlyWhenNecessary),
         new("FollowNavigationPolicy posterga e limita probes", FollowNavigationPolicyDefersAndThrottlesConnectivityProbes),
@@ -240,6 +244,89 @@ internal static class Program
             "skills legadas distintas, ignorando caixa e desconhecidas");
     }
 
+    private static void CompanionSkillCatalogFormsThreeValidTracks()
+    {
+        Assert.Equal(9, CompanionProgression.Skills.Length, "quantidade de skills ativas");
+        Assert.Equal(
+            9,
+            CompanionProgression.Skills.Select(skill => skill.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            "IDs de skill devem ser unicos");
+        Assert.SequenceEqual(
+            new[] { "Lumbering", "Mining", "Utility" },
+            CompanionProgression.Skills.Select(skill => skill.Branch).Distinct(),
+            "ordem dos ramos ativos");
+        Assert.False(
+            CompanionProgression.Skills.Any(skill => skill.Branch == "Combat"),
+            "Combat inerte nao pode reaparecer na arvore ativa");
+
+        foreach (IGrouping<string, CompanionSkillDefinition> branch in CompanionProgression.Skills.GroupBy(skill => skill.Branch))
+        {
+            CompanionSkillDefinition[] skills = branch.ToArray();
+            Assert.Equal(3, skills.Length, $"quantidade de tiers em {branch.Key}");
+            Assert.SequenceEqual(new[] { 1, 1, 2 }, skills.Select(skill => skill.Cost), $"custos de {branch.Key}");
+            Assert.Equal<string?>(null, skills[0].PrerequisiteId, $"raiz de {branch.Key}");
+            for (int index = 1; index < skills.Length; index++)
+                Assert.Equal(skills[index - 1].Id, skills[index].PrerequisiteId, $"pre-requisito do tier {index + 1} em {branch.Key}");
+        }
+
+        Assert.Equal(12, CompanionProgression.Skills.Sum(skill => skill.Cost), "custo total da arvore");
+    }
+
+    private static void CompanionSkillTreePolicyClassifiesEveryState()
+    {
+        CompanionSkillDefinition root = CompanionProgression.Skills[0];
+        CompanionSkillDefinition child = CompanionProgression.Skills[1];
+
+        Assert.Equal(
+            CompanionSkillTreeState.ProgressionDisabled,
+            CompanionSkillTreePolicy.GetState(root, Array.Empty<string>(), 10, progressionEnabled: false),
+            "raiz nao aprendida com progressao desligada");
+        Assert.Equal(
+            CompanionSkillTreeState.ProgressionDisabled,
+            CompanionSkillTreePolicy.GetState(child, Array.Empty<string>(), 0, progressionEnabled: false),
+            "progressao desligada deve preceder pre-requisito e pontos ausentes");
+        Assert.Equal(
+            CompanionSkillTreeState.Learned,
+            CompanionSkillTreePolicy.GetState(root, new[] { root.Id }, 0, progressionEnabled: false),
+            "skill aprendida continua visivel com progressao desligada");
+        Assert.Equal(
+            CompanionSkillTreeState.LockedByPrerequisite,
+            CompanionSkillTreePolicy.GetState(child, Array.Empty<string>(), 0, progressionEnabled: true),
+            "pre-requisito ausente deve preceder falta de pontos");
+        Assert.Equal(
+            CompanionSkillTreeState.NeedsPoints,
+            CompanionSkillTreePolicy.GetState(root, null, 0, progressionEnabled: true),
+            "raiz sem pontos");
+        Assert.Equal(
+            CompanionSkillTreeState.Available,
+            CompanionSkillTreePolicy.GetState(root, Array.Empty<string>(), root.Cost, progressionEnabled: true),
+            "raiz aprendivel");
+    }
+
+    private static void CompanionSkillTreePolicyHonorsCasingAndPointBoundary()
+    {
+        CompanionSkillDefinition second = CompanionProgression.Skills[1];
+        CompanionSkillDefinition third = CompanionProgression.Skills[2];
+        string unlockedRoot = second.PrerequisiteId!.ToLowerInvariant();
+
+        Assert.Equal(
+            CompanionSkillTreeState.Available,
+            CompanionSkillTreePolicy.GetState(second, new[] { unlockedRoot }, second.Cost, progressionEnabled: true),
+            "pre-requisito deve ignorar caixa e aceitar pontos exatos");
+        Assert.Equal(
+            CompanionSkillTreeState.Learned,
+            CompanionSkillTreePolicy.GetState(second, new[] { second.Id.ToLowerInvariant() }, 0, progressionEnabled: true),
+            "skill aprendida deve ignorar caixa");
+        Assert.Equal(
+            CompanionSkillTreeState.NeedsPoints,
+            CompanionSkillTreePolicy.GetState(third, new[] { third.PrerequisiteId!.ToLowerInvariant() }, third.Cost - 1, progressionEnabled: true),
+            "tier final abaixo do custo");
+        Assert.Equal(
+            CompanionSkillTreeState.Available,
+            CompanionSkillTreePolicy.GetState(third, new[] { third.PrerequisiteId!.ToLowerInvariant() }, third.Cost, progressionEnabled: true),
+            "tier final no custo exato");
+    }
+
     private static void GenericModConfigMenuCompatibilityApiIsPublic()
     {
         Assert.True(typeof(IGenericModConfigMenuApiCompat).IsPublic, "A interface precisa ser public para o proxy de API do SMAPI.");
@@ -273,6 +360,62 @@ internal static class Program
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(outer + 0.1f, 0f, inner, outer, 4, firstCenter), "fora do circulo");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(float.NaN, 0f, inner, outer, 4, firstCenter), "coordenada invalida");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(80f, 0f, inner, outer, 0, firstCenter), "quantidade de setores invalida");
+    }
+
+    private static void CompanionActionWheelTextLayoutPreservesAndBalancesLabels()
+    {
+        static float Measure(string text)
+        {
+            return text.Split('\n').Max(line => line.Length * 16f);
+        }
+
+        static string Compact(string text)
+        {
+            return new string(text.Where(character => !char.IsWhiteSpace(character)).ToArray());
+        }
+
+        foreach (string label in new[] { "Perfil", "Trabalhar", "Parar", "Dispensar", "Seguir" })
+        {
+            CompanionActionWheelTextFit fit = CompanionActionWheelTextLayout.Fit(
+                label,
+                maxWidth: 92f,
+                allowWrap: true,
+                maxLines: 2,
+                measureWidth: Measure);
+            Assert.Equal(label, Compact(fit.Text), $"rotulo {label} deve permanecer inteiro");
+            Assert.False(fit.Text.Contains('…'), $"rotulo {label} nao deve ser truncado");
+            Assert.True(
+                fit.Text.Split('\n').All(line => Measure(line) <= 92f),
+                $"rotulo {label} deve caber sem mudar o tamanho da fonte");
+        }
+
+        CompanionActionWheelTextFit namedAction = CompanionActionWheelTextLayout.Fit(
+            "Mandar Abigail",
+            maxWidth: 108f,
+            allowWrap: true,
+            maxLines: 3,
+            measureWidth: Measure);
+        Assert.Equal(
+            "MandarAbigail",
+            Compact(namedAction.Text),
+            "acao e nome devem permanecer completos");
+        Assert.True(
+            namedAction.Text.Split('\n').All(line => Measure(line) <= 108f),
+            "acao nomeada deve caber sem mudar o tamanho da fonte");
+
+        CompanionActionWheelTextFit localizedAction = CompanionActionWheelTextLayout.Fit(
+            "Dispensar todos",
+            maxWidth: 108f,
+            allowWrap: true,
+            maxLines: 3,
+            measureWidth: Measure);
+        Assert.Equal(
+            "Dispensartodos",
+            Compact(localizedAction.Text),
+            "frase localizada deve permanecer completa");
+        Assert.True(
+            localizedAction.Text.Split('\n').All(line => Measure(line) <= 108f),
+            "frase localizada deve caber sem mudar o tamanho da fonte");
     }
 
     private static void RecruitmentContextPolicyAllowsAnyDistanceOnSameMap()

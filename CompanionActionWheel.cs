@@ -31,13 +31,14 @@ internal sealed class CompanionActionWheel
     private const float InnerRadius = 43f;
     private const float OuterRadius = 132f;
     private const float LabelRadius = 89f;
+    private const float FiveOptionLabelRadius = 96f;
     private const float FirstSegmentCenterAngle = -MathHelper.PiOver2;
     private const float SectorGap = 0.035f;
     private const float SectorStep = 0.035f;
     private const float BandThickness = 4.4f;
-    private const int HorizontalMargin = 12;
-    private const int NameSpace = 46;
-    private const int HintSpace = 34;
+    private const int HorizontalMargin = 18;
+    private const int NameSpace = 48;
+    private const int HintSpace = 36;
     private const int MaximumOptions = 6;
 
     private static readonly Color NeutralColor = new(102, 112, 128, 238);
@@ -50,9 +51,16 @@ internal sealed class CompanionActionWheel
     private static readonly Color CenterColor = new(247, 232, 204, 245);
     private static readonly Color CenterBorderColor = new(78, 55, 38, 245);
     private static readonly Color TextColor = new(255, 248, 225);
+    private static readonly Color CaptionBackgroundColor = new(35, 27, 24, 205);
+    private static readonly Color CaptionBorderColor = new(111, 82, 54, 210);
+    private static readonly Color CaptionHoverBorderColor = new(255, 224, 157, 225);
+
+    private readonly record struct CaptionLayout(string Text, Vector2 Size);
+    private readonly record struct CaptionLayoutKey(string Text, SpriteFont Font, float MaxWidth, bool AllowWrap, int MaxLines);
 
     private CompanionActionWheelModel? model;
     private Vector2 center;
+    private readonly Dictionary<CaptionLayoutKey, CaptionLayout> captionLayouts = new();
 
     public bool IsOpen => this.model is not null;
 
@@ -77,12 +85,14 @@ internal sealed class CompanionActionWheel
         if (options.Any(option => option.Activate is null))
             throw new ArgumentException("Wheel option callbacks cannot be null.", nameof(model));
 
+        this.captionLayouts.Clear();
         this.model = model with { Options = options };
         this.center = ClampToViewport(screenPosition);
     }
 
     public void Close()
     {
+        this.captionLayouts.Clear();
         this.model = null;
     }
 
@@ -140,26 +150,51 @@ internal sealed class CompanionActionWheel
         float maxLabelWidth = optionCount switch
         {
             1 => 184f,
-            <= 4 => 108f,
+            2 => 156f,
+            3 => 126f,
+            4 => 108f,
+            5 => 92f,
             _ => 88f
         };
+        float labelRadius = optionCount == 5 ? FiveOptionLabelRadius : LabelRadius;
+        int maxLabelLines = optionCount <= 4 ? 3 : 2;
         for (int index = 0; index < optionCount; index++)
         {
             float angle = FirstSegmentCenterAngle + index * segmentAngle;
-            Vector2 offset = new(MathF.Cos(angle) * LabelRadius, MathF.Sin(angle) * LabelRadius);
+            Vector2 offset = new(MathF.Cos(angle) * labelRadius, MathF.Sin(angle) * labelRadius);
             this.DrawCaption(
                 b,
-                FitText(activeModel.Options[index].Label, Game1.tinyFont, maxLabelWidth),
+                activeModel.Options[index].Label,
                 this.center + offset,
                 Game1.tinyFont,
-                TextColor);
+                TextColor,
+                maxLabelWidth,
+                allowWrap: true,
+                maxLines: maxLabelLines,
+                emphasized: hoveredIndex == index);
         }
 
-        this.DrawCaption(b, FitText(activeModel.Title, Game1.smallFont, 238f), this.center + new Vector2(0f, -OuterRadius - 22f), Game1.smallFont, TextColor);
+        this.DrawCaption(
+            b,
+            activeModel.Title,
+            this.center + new Vector2(0f, -OuterRadius - 22f),
+            Game1.smallFont,
+            TextColor,
+            238f,
+            allowWrap: false,
+            maxLines: 1);
         string footer = hoveredIndex is int selectedIndex
             ? activeModel.Options[selectedIndex].Label
             : activeModel.Hint;
-        this.DrawCaption(b, FitText(footer, Game1.tinyFont, 262f), this.center + new Vector2(0f, OuterRadius + 17f), Game1.tinyFont, TextColor);
+        this.DrawCaption(
+            b,
+            footer,
+            this.center + new Vector2(0f, OuterRadius + 17f),
+            Game1.tinyFont,
+            TextColor,
+            262f,
+            allowWrap: false,
+            maxLines: 1);
     }
 
     private static bool IsModelValid(CompanionActionWheelModel model)
@@ -182,17 +217,41 @@ internal sealed class CompanionActionWheel
         DrawRadialBand(b, this.center, InnerRadius, OuterRadius, startAngle, endAngle, color);
     }
 
-    private void DrawCaption(SpriteBatch b, string text, Vector2 position, SpriteFont font, Color color)
+    private void DrawCaption(
+        SpriteBatch b,
+        string text,
+        Vector2 position,
+        SpriteFont font,
+        Color color,
+        float maxWidth,
+        bool allowWrap,
+        int maxLines,
+        bool emphasized = false)
     {
-        Vector2 size = font.MeasureString(text);
-        Vector2 textPosition = position - size / 2f;
+        CaptionLayout layout = CreateCaptionLayout(text, font, maxWidth, allowWrap, maxLines);
+        Vector2 textPosition = position - layout.Size / 2f;
         Rectangle background = new(
             (int)MathF.Floor(textPosition.X) - 5,
             (int)MathF.Floor(textPosition.Y) - 2,
-            Math.Max(1, (int)MathF.Ceiling(size.X) + 10),
-            Math.Max(1, (int)MathF.Ceiling(size.Y) + 4));
-        b.Draw(Game1.staminaRect, background, Color.Black * 0.37f);
-        Utility.drawTextWithShadow(b, text, font, textPosition, color);
+            Math.Max(1, (int)MathF.Ceiling(layout.Size.X) + 10),
+            Math.Max(1, (int)MathF.Ceiling(layout.Size.Y) + 4));
+        Rectangle border = new(background.X - 1, background.Y - 1, background.Width + 2, background.Height + 2);
+        b.Draw(Game1.staminaRect, border, emphasized ? CaptionHoverBorderColor : CaptionBorderColor);
+        b.Draw(Game1.staminaRect, background, CaptionBackgroundColor);
+
+        string[] lines = layout.Text.Split('\n');
+        float lineAdvance = font.LineSpacing;
+        Vector2 shadowOffset = new(2f, 2f);
+        for (int lineIndex = 0; lineIndex < lines.Length; lineIndex++)
+        {
+            string line = lines[lineIndex];
+            float lineWidth = font.MeasureString(line).X;
+            Vector2 linePosition = new(
+                position.X - lineWidth / 2f,
+                textPosition.Y + lineIndex * lineAdvance);
+            b.DrawString(font, line, linePosition + shadowOffset, Color.Black * 0.72f);
+            b.DrawString(font, line, linePosition, color);
+        }
     }
 
     private int? GetOptionIndex(Vector2 screenPosition, int optionCount)
@@ -224,25 +283,28 @@ internal sealed class CompanionActionWheel
         };
     }
 
-    private static string FitText(string? text, SpriteFont font, float maxWidth)
+    private CaptionLayout CreateCaptionLayout(
+        string? text,
+        SpriteFont font,
+        float maxWidth,
+        bool allowWrap,
+        int maxLines)
     {
-        string value = text ?? "";
-        if (font.MeasureString(value).X <= maxWidth)
-            return value;
+        float safeWidth = Math.Max(1f, maxWidth);
+        CaptionLayoutKey key = new(text ?? "", font, safeWidth, allowWrap, maxLines);
+        if (this.captionLayouts.TryGetValue(key, out CaptionLayout cached))
+            return cached;
 
-        const string suffix = "...";
-        int low = 0;
-        int high = value.Length;
-        while (low < high)
-        {
-            int middle = (low + high + 1) / 2;
-            if (font.MeasureString(value[..middle] + suffix).X <= maxWidth)
-                low = middle;
-            else
-                high = middle - 1;
-        }
-
-        return value[..low] + suffix;
+        CompanionActionWheelTextFit fit = CompanionActionWheelTextLayout.Fit(
+            text,
+            safeWidth,
+            allowWrap,
+            maxLines,
+            candidate => font.MeasureString(candidate).X);
+        Vector2 naturalSize = font.MeasureString(fit.Text);
+        CaptionLayout layout = new(fit.Text, naturalSize);
+        this.captionLayouts[key] = layout;
+        return layout;
     }
 
     private static Vector2 ClampToViewport(Vector2 requested)
