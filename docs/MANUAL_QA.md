@@ -1,6 +1,6 @@
 # Roteiro de QA manual
 
-O validador automatizado compila o mod, executa 31 testes de regressão e verifica
+O validador automatizado compila o mod, executa 32 testes de regressão e verifica
 os arquivos JSON, mas não substitui um teste dentro do Stardew Valley. Execute
 este roteiro antes de publicar uma nova versão.
 
@@ -47,6 +47,9 @@ este roteiro antes de publicar uma nova versão.
   vanilla é capturada antes de follow reassumir, sem warp ou controller residual.
 - Recrutar um pet dormindo, entrar em outro mapa e empurrá-lo; ele deve continuar
   com sprite 32x32 e não alternar para Sleep nem criar trajetória fora do follow.
+- Recrutar, comandar e dispensar gato, cachorro e tartaruga; eles devem funcionar
+  como companions sem exibir balões de fala no recrutamento, em tarefas, no idle
+  ou ao serem dispensados.
 - Com 1, 3 e 12 companions, caminhar por um mapa grande e verificar no profiler
   que a manutenção normal não repete limpeza de rota, reflexão ou BFS completa
   a cada cinco ticks.

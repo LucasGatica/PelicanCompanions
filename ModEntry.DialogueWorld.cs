@@ -42,6 +42,9 @@ public sealed partial class ModEntry
 
     private bool Say(NPC npc, string category, bool force)
     {
+        if (!CompanionDialoguePolicy.CanSpeak(npc is Pet))
+            return false;
+
         if (!force && !this.config.EnableCommunication)
             return false;
 

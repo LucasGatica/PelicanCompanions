@@ -22,6 +22,7 @@ internal static class Program
         new("CompanionActionWheelHitTest mapeia setores variaveis e limites", CompanionActionWheelHitTestMapsSegmentsAndBounds),
         new("CompanionActionWheelTextLayout preserva e equilibra rotulos", CompanionActionWheelTextLayoutPreservesAndBalancesLabels),
         new("RecruitmentContextPolicy permite recrutamento distante no mesmo mapa", RecruitmentContextPolicyAllowsAnyDistanceOnSameMap),
+        new("CompanionDialoguePolicy mantem pets silenciosos", CompanionDialoguePolicyKeepsPetsSilent),
         new("FollowNavigationPolicy reseta recall apenas quando necessario", FollowNavigationPolicyResetsRecallOnlyWhenNecessary),
         new("FollowNavigationPolicy posterga e limita probes", FollowNavigationPolicyDefersAndThrottlesConnectivityProbes),
         new("FollowNavigationPolicy preserva controller e orcamento", FollowNavigationPolicyPreservesControllerAndBudget),
@@ -429,6 +430,12 @@ internal static class Program
         Assert.False(
             RecruitmentContextPolicy.IsLocationValid(ownerHasCurrentLocation: true, npcSharesCurrentLocation: false),
             "O NPC precisa estar no mesmo mapa do jogador.");
+    }
+
+    private static void CompanionDialoguePolicyKeepsPetsSilent()
+    {
+        Assert.False(CompanionDialoguePolicy.CanSpeak(isPet: true), "pet");
+        Assert.True(CompanionDialoguePolicy.CanSpeak(isPet: false), "NPC comum");
     }
 
     private static void FollowNavigationPolicyResetsRecallOnlyWhenNecessary()

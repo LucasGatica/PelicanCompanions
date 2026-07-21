@@ -2,6 +2,15 @@
 
 All notable Pelican Companions changes are documented here.
 
+## Unreleased
+
+### Silent pet companions
+
+- Pets remain recruitable and fully manageable as companions, but no longer use
+  generic NPC dialogue when recruited, dismissed, idle, or performing tasks.
+- Added regression coverage for the pet dialogue policy; the automated harness
+  now has 32 tests.
+
 ## 1.5.3 — 2026-07-20
 
 ### Quick HUD readability
