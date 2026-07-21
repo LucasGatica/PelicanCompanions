@@ -7,6 +7,30 @@ namespace PelicanCompanions;
 
 public sealed partial class ModEntry
 {
+    private static readonly SButton[] WheelHeldNavigationButtons =
+    {
+        SButton.Up,
+        SButton.Down,
+        SButton.Left,
+        SButton.Right,
+        SButton.W,
+        SButton.A,
+        SButton.S,
+        SButton.D,
+        SButton.DPadUp,
+        SButton.DPadDown,
+        SButton.DPadLeft,
+        SButton.DPadRight,
+        SButton.LeftThumbstickUp,
+        SButton.LeftThumbstickDown,
+        SButton.LeftThumbstickLeft,
+        SButton.LeftThumbstickRight,
+        SButton.RightThumbstickUp,
+        SButton.RightThumbstickDown,
+        SButton.RightThumbstickLeft,
+        SButton.RightThumbstickRight
+    };
+
     private enum CompanionNpcWheelAction
     {
         Profile,
@@ -27,8 +51,12 @@ public sealed partial class ModEntry
 
     private void OnMouseWheelScrolled(object? sender, MouseWheelScrolledEventArgs e)
     {
-        if (Context.IsWorldReady && this.companionActionWheels?.Value.IsOpen == true)
-            this.Helper.Input.SuppressScrollWheel();
+        if (!Context.IsWorldReady || this.companionActionWheels?.Value is not { IsOpen: true } wheel)
+            return;
+
+        this.Helper.Input.SuppressScrollWheel();
+        if (e.Delta != 0 && wheel.ChangePage(e.Delta > 0 ? -1 : 1))
+            Game1.playSound("shiny4");
     }
 
     private bool TryHandleCompanionActionWheelInput(ButtonPressedEventArgs e)
@@ -37,25 +65,56 @@ public sealed partial class ModEntry
         if (wheel is null)
             return false;
 
-        bool wheelKeyPressed = this.config.QuickActionWheelKey.JustPressed();
+        bool keyboardWheelKeyPressed = this.config.QuickActionWheelKey.JustPressed();
+        bool controllerWheelKeyPressed = this.config.ControllerQuickActionWheelKey.JustPressed();
+        bool wheelKeyPressed = keyboardWheelKeyPressed || controllerWheelKeyPressed;
         if (wheel.IsOpen)
         {
             if (e.Button == SButton.MouseLeft)
-                wheel.TryActivate(GetUiScreenPixels(e.Cursor));
-            else if (e.Button == SButton.MouseRight || e.Button == SButton.Escape)
+                PlayActionWheelResult(wheel.TryActivate(GetUiScreenPixels(e.Cursor)));
+            else if (e.Button is SButton.MouseRight or SButton.Escape or SButton.ControllerB or SButton.ControllerBack)
             {
                 wheel.Close();
                 Game1.playSound("bigDeSelect");
             }
+            else if (e.Button is SButton.Enter or SButton.Space or SButton.ControllerA)
+            {
+                // Confirmation takes precedence over a custom wheel binding.
+                // This keeps ControllerA usable when a player binds it as the
+                // wheel opener and then presses it again to choose an option.
+                wheel.AnchorPointerForNavigation(GetUiScreenPixels(e.Cursor));
+                PlayActionWheelResult(wheel.TryActivateFocused());
+            }
             else if (wheelKeyPressed)
             {
-                this.Helper.Input.SuppressActiveKeybinds(this.config.QuickActionWheelKey);
+                if (keyboardWheelKeyPressed)
+                    this.Helper.Input.SuppressActiveKeybinds(this.config.QuickActionWheelKey);
+                if (controllerWheelKeyPressed)
+                    this.Helper.Input.SuppressActiveKeybinds(this.config.ControllerQuickActionWheelKey);
                 if (wheel.LastKeybindHandledTick != Game1.ticks)
                 {
                     wheel.MarkKeybindHandled(Game1.ticks);
                     wheel.Close();
                     Game1.playSound("bigDeSelect");
                 }
+            }
+            else if (e.Button is SButton.PageUp or SButton.LeftShoulder)
+            {
+                wheel.AnchorPointerForNavigation(GetUiScreenPixels(e.Cursor));
+                if (wheel.ChangePage(-1))
+                    Game1.playSound("shiny4");
+            }
+            else if (e.Button is SButton.PageDown or SButton.RightShoulder)
+            {
+                wheel.AnchorPointerForNavigation(GetUiScreenPixels(e.Cursor));
+                if (wheel.ChangePage(1))
+                    Game1.playSound("shiny4");
+            }
+            else if (TryGetActionWheelDirection(e.Button, out Vector2 direction))
+            {
+                wheel.AnchorPointerForNavigation(GetUiScreenPixels(e.Cursor));
+                if (wheel.MoveFocus(direction.X, direction.Y))
+                    Game1.playSound("shiny4");
             }
 
             this.Helper.Input.Suppress(e.Button);
@@ -72,7 +131,10 @@ public sealed partial class ModEntry
             return false;
         }
 
-        this.Helper.Input.SuppressActiveKeybinds(this.config.QuickActionWheelKey);
+        if (keyboardWheelKeyPressed)
+            this.Helper.Input.SuppressActiveKeybinds(this.config.QuickActionWheelKey);
+        if (controllerWheelKeyPressed)
+            this.Helper.Input.SuppressActiveKeybinds(this.config.ControllerQuickActionWheelKey);
         if (wheel.LastKeybindHandledTick == Game1.ticks)
             return true;
 
@@ -87,9 +149,48 @@ public sealed partial class ModEntry
         // modal wheel, so it cannot leak through as a tool/action click.
         this.Helper.Input.Suppress(SButton.MouseLeft);
         this.Helper.Input.Suppress(SButton.MouseRight);
+        this.SuppressHeldActionWheelNavigation();
         wheel.Open(model, GetUiScreenPixels(e.Cursor));
         Game1.playSound("smallSelect");
         return true;
+    }
+
+    private static bool TryGetActionWheelDirection(SButton button, out Vector2 direction)
+    {
+        direction = button switch
+        {
+            SButton.Up or SButton.W or SButton.DPadUp or SButton.LeftThumbstickUp or SButton.RightThumbstickUp => new Vector2(0f, -1f),
+            SButton.Down or SButton.S or SButton.DPadDown or SButton.LeftThumbstickDown or SButton.RightThumbstickDown => new Vector2(0f, 1f),
+            SButton.Left or SButton.A or SButton.DPadLeft or SButton.LeftThumbstickLeft or SButton.RightThumbstickLeft => new Vector2(-1f, 0f),
+            SButton.Right or SButton.D or SButton.DPadRight or SButton.LeftThumbstickRight or SButton.RightThumbstickRight => new Vector2(1f, 0f),
+            _ => Vector2.Zero
+        };
+        return direction != Vector2.Zero;
+    }
+
+    private static void PlayActionWheelResult(CompanionActionWheelActivationResult result)
+    {
+        switch (result)
+        {
+            case CompanionActionWheelActivationResult.Activated:
+                Game1.playSound("smallSelect");
+                break;
+            case CompanionActionWheelActivationResult.PageChanged:
+                Game1.playSound("shiny4");
+                break;
+            case CompanionActionWheelActivationResult.Cancelled:
+                Game1.playSound("bigDeSelect");
+                break;
+        }
+    }
+
+    private void SuppressHeldActionWheelNavigation()
+    {
+        foreach (SButton button in WheelHeldNavigationButtons)
+        {
+            if (this.Helper.Input.IsDown(button))
+                this.Helper.Input.Suppress(button);
+        }
     }
 
     private bool TryBuildContextActionWheel(ICursorPosition cursor, out CompanionActionWheelModel model)
@@ -141,21 +242,25 @@ public sealed partial class ModEntry
                 CompanionActionWheelTone.Positive,
                 () => this.RequestContextTask(target, npcName: null))
         };
-        foreach (SquadMemberState worker in workers.Take(3))
+        bool useShortLabels = workers.Count > CompanionActionWheelPagination.PageSize;
+        foreach (SquadMemberState worker in workers.Take(12))
         {
             string workerName = worker.NpcName;
             string displayName = worker.DisplayName;
+            string actionLabel = this.Tr("wheel.send_npc", new { npc = displayName });
             options.Add(new CompanionActionWheelOption(
-                this.Tr("wheel.send_npc", new { npc = displayName }),
+                useShortLabels ? displayName : actionLabel,
                 CompanionActionWheelTone.Profile,
-                () => this.RequestContextTask(target, workerName)));
+                () => this.RequestContextTask(target, workerName),
+                actionLabel));
         }
 
         model = new CompanionActionWheelModel(
             this.Tr(target.TitleKey),
             this.Tr("wheel.hint"),
             options,
-            () => this.IsContextWorldTargetValid(target));
+            () => this.IsContextWorldTargetValid(target),
+            PinnedOptionCount: 1);
         return true;
     }
 
@@ -181,29 +286,176 @@ public sealed partial class ModEntry
             return false;
         }
 
+        Vector2 wheelScreenPosition = GetUiScreenPixels(cursor);
         List<CompanionActionWheelOption> options = new()
         {
+            new(
+                this.Tr("wheel.work"),
+                CompanionActionWheelTone.Positive,
+                () => this.OpenWorkAreaSpecialtyWheel(locationName, tile, wheelScreenPosition)),
             new(
                 this.Tr("management.dismiss_all"),
                 CompanionActionWheelTone.Danger,
                 this.ConfirmDismissAllFromActionWheel)
         };
-        foreach (SquadMemberState worker in this.GetGroundCommandMembers(locationName, tile).Take(3))
+        List<SquadMemberState> workers = this.GetGroundCommandMembers(locationName, tile)
+            .Take(12)
+            .ToList();
+        bool useShortLabels = workers.Count + 1 > CompanionActionWheelPagination.PageSize;
+        foreach (SquadMemberState worker in workers)
         {
             string workerName = worker.NpcName;
             string displayName = worker.DisplayName;
+            string actionLabel = this.Tr("wheel.send_npc", new { npc = displayName });
             options.Add(new CompanionActionWheelOption(
-                this.Tr("wheel.send_npc", new { npc = displayName }),
+                useShortLabels ? displayName : actionLabel,
                 CompanionActionWheelTone.Profile,
-                () => this.RequestMoveCompanionToWait(workerName, locationName, tile)));
+                () => this.RequestMoveCompanionToWait(workerName, locationName, tile),
+                actionLabel));
         }
 
         model = new CompanionActionWheelModel(
             this.Tr("wheel.target.ground"),
             this.Tr("wheel.hint"),
             options,
-            () => this.IsLocalGroundCommandContextValid(locationName, tile));
+            () => this.IsLocalGroundCommandContextValid(locationName, tile),
+            PinnedOptionCount: 2);
         return true;
+    }
+
+    private void OpenWorkAreaSpecialtyWheel(string locationName, Vector2 tile, Vector2 screenPosition)
+    {
+        CompanionActionWheel? wheel = this.companionActionWheels?.Value;
+        if (wheel is null || !this.IsWorkAreaWheelContextValid(locationName, tile))
+            return;
+
+        CompanionActionWheelOption[] options =
+        {
+            new(
+                this.Tr("companion.directive.wood.short"),
+                CompanionActionWheelTone.Positive,
+                () => this.OpenWorkAreaRadiusWheel(locationName, tile, CompanionWorkSpecialty.Wood, screenPosition)),
+            new(
+                this.Tr("companion.directive.mining.short"),
+                CompanionActionWheelTone.Profile,
+                () => this.OpenWorkAreaRadiusWheel(locationName, tile, CompanionWorkSpecialty.Mining, screenPosition)),
+            new(
+                this.Tr("companion.directive.clear.short"),
+                CompanionActionWheelTone.Warning,
+                () => this.OpenWorkAreaRadiusWheel(locationName, tile, CompanionWorkSpecialty.ClearArea, screenPosition))
+        };
+        wheel.Open(
+            new CompanionActionWheelModel(
+                this.Tr("wheel.work"),
+                this.Tr("wheel.hint"),
+                options,
+                () => this.IsWorkAreaWheelContextValid(locationName, tile)),
+            screenPosition);
+    }
+
+    private void OpenWorkAreaRadiusWheel(
+        string locationName,
+        Vector2 tile,
+        CompanionWorkSpecialty specialty,
+        Vector2 screenPosition)
+    {
+        CompanionActionWheel? wheel = this.companionActionWheels?.Value;
+        if (wheel is null || !this.IsWorkAreaWheelContextValid(locationName, tile))
+            return;
+
+        int maximumRadius = CompanionWorkAreaPolicy.NormalizeRadius(this.GetConfiguredWorkRadius());
+        int[] radii = new[] { maximumRadius, 3, 5, 8, 12, 20 }
+            .Where(radius => radius <= maximumRadius)
+            .Distinct()
+            .Take(CompanionActionWheelPagination.MaximumVisibleSlots)
+            .ToArray();
+        CompanionActionWheelOption[] options = radii
+            .Select(radius => new CompanionActionWheelOption(
+                this.Tr(
+                    radius == maximumRadius ? "work_area.radius_max" : "work_area.radius_option",
+                    new { radius }),
+                radius == maximumRadius
+                    ? CompanionActionWheelTone.Positive
+                    : CompanionActionWheelTone.Neutral,
+                () => this.OpenWorkAreaMemberWheel(locationName, tile, specialty, radius, screenPosition)))
+            .ToArray();
+
+        wheel.Open(
+            new CompanionActionWheelModel(
+                this.Tr("work_area.choose_radius"),
+                this.Tr("wheel.hint"),
+                options,
+                () => this.IsWorkAreaWheelContextValid(locationName, tile)),
+            screenPosition);
+    }
+
+    private void OpenWorkAreaMemberWheel(
+        string locationName,
+        Vector2 tile,
+        CompanionWorkSpecialty specialty,
+        int radius,
+        Vector2 screenPosition)
+    {
+        CompanionActionWheel? wheel = this.companionActionWheels?.Value;
+        if (wheel is null || !this.IsWorkAreaWheelContextValid(locationName, tile))
+            return;
+
+        List<SquadMemberState> workers = this.GetGroundCommandMembers(locationName, tile)
+            .Take(12)
+            .ToList();
+        if (workers.Count == 0)
+            return;
+
+        List<CompanionActionWheelOption> options = new()
+        {
+            new(
+                this.Tr("wheel.send_all"),
+                CompanionActionWheelTone.Positive,
+                () => this.RequestWorkArea(
+                    npcName: null,
+                    locationName,
+                    rawCenter: tile,
+                    specialty,
+                    radius))
+        };
+        bool useShortLabels = workers.Count > CompanionActionWheelPagination.PageSize;
+        foreach (SquadMemberState worker in workers)
+        {
+            string workerName = worker.NpcName;
+            string displayName = worker.DisplayName;
+            string actionLabel = this.Tr("wheel.send_npc", new { npc = displayName });
+            options.Add(new CompanionActionWheelOption(
+                useShortLabels ? displayName : actionLabel,
+                CompanionActionWheelTone.Profile,
+                () => this.RequestWorkArea(
+                    workerName,
+                    locationName,
+                    rawCenter: tile,
+                    specialty,
+                    radius),
+                actionLabel));
+        }
+
+        string specialtyKey = specialty switch
+        {
+            CompanionWorkSpecialty.Wood => "wood",
+            CompanionWorkSpecialty.Mining => "mining",
+            _ => "clear"
+        };
+        wheel.Open(
+            new CompanionActionWheelModel(
+                $"{this.Tr("wheel.work")}: {this.Tr($"companion.directive.{specialtyKey}.short")}",
+                this.Tr("wheel.hint"),
+                options,
+                () => this.IsWorkAreaWheelContextValid(locationName, tile),
+                PinnedOptionCount: 1),
+            screenPosition);
+    }
+
+    private bool IsWorkAreaWheelContextValid(string locationName, Vector2 tile)
+    {
+        return this.IsLocalGroundCommandContextValid(locationName, tile)
+            && this.GetGroundCommandMembers(locationName, tile).Any();
     }
 
     private CompanionActionWheelModel BuildOwnedNpcActionWheel(string npcName, string displayName, string locationName)
@@ -319,7 +571,7 @@ public sealed partial class ModEntry
             return;
         }
 
-        this.TryRecruit(npc, Game1.player.UniqueMultiplayerID, showPrompt: false);
+        this.TryRecruit(npc, Game1.player.UniqueMultiplayerID, showPrompt: true);
     }
 
     private bool IsOwnedNpcWheelContextValid(string npcName, string locationName)

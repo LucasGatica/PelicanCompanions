@@ -16,13 +16,15 @@ namespace PelicanCompanions;
 public sealed partial class ModEntry : Mod
 {
     private const string SaveKey = "pelican-companions-state";
-    private const int CurrentSaveVersion = 8;
+    private const int CurrentSaveVersion = 9;
     private const string NpcConfigAssetKey = "Lucas.PelicanCompanions/NpcConfig";
     private const string MessageActionRequest = "CompanionActionRequest";
     private const string MessageStateRequest = "CompanionStateRequest";
     private const string MessageStateSnapshot = "CompanionStateSnapshot";
     private const string MessageStateUnavailable = "CompanionStateUnavailable";
     private const string MessageCommandFeedback = "CompanionCommandFeedback";
+    private const string MessageCompanionExpression = "CompanionExpression";
+    private const string MessageCompanionWorkVisual = "CompanionWorkVisual";
     private const int SquadInventoryCapacity = 36;
     private const int MaxTrailPointsPerOwner = 96;
     private const int FollowUpdateIntervalTicks = 5;
@@ -101,6 +103,7 @@ public sealed partial class ModEntry : Mod
     private readonly Dictionary<string, CompanionMovementControllerState> companionMovementControllers = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> workTargetRetryAfterTicks = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> priorityTaskPlanningMembers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> workAreaPositionRecoveryNeeded = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<NPC, int> suppressedVanillaArrivals = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ReachabilityCacheKey, ReachabilityCacheEntry> reachabilityCache = new();
     private readonly Dictionary<TargetPreviewCacheKey, TargetPreviewCacheEntry> targetPreviewCache = new();
@@ -134,6 +137,8 @@ public sealed partial class ModEntry : Mod
     private int taskPreviewCursor;
     private bool pendingDailyCompanionRefresh;
     private long? commandFeedbackTargetPlayerId;
+    private string? commandFeedbackAction;
+    private string? commandFeedbackCommandId;
     private Harmony? harmony;
 
     private readonly record struct FollowTrailPoint(string LocationName, Vector2 Tile, int Tick);
@@ -152,6 +157,7 @@ public sealed partial class ModEntry : Mod
         string NpcName,
         CompanionDirective? SimulatedDirective,
         string LocationName,
+        string NpcLocationName,
         int OwnerX,
         int OwnerY,
         int NpcX,
@@ -159,8 +165,15 @@ public sealed partial class ModEntry : Mod
         bool SearchWood,
         bool SearchMining,
         bool ClearArea,
+        bool WorkAreaActive,
+        string WorkAreaLocationName,
+        int WorkAreaCenterX,
+        int WorkAreaCenterY,
+        int WorkAreaRadius,
+        CompanionWorkSpecialty WorkAreaSpecialty,
         bool TasksEnabled,
         bool Blocked,
+        bool WorkAreaRecoveryNeeded,
         CompanionMode Mode);
     private readonly record struct TargetPreviewCacheEntry(int Tick, TargetPreview Preview);
     private readonly record struct DeferredActionRequest(long PlayerId, SquadActionMessage Message, int ReceivedTick);
@@ -188,6 +201,7 @@ public sealed partial class ModEntry : Mod
         helper.Events.Input.ButtonPressed += this.OnButtonPressed;
         helper.Events.Input.MouseWheelScrolled += this.OnMouseWheelScrolled;
         helper.Events.Display.RenderedHud += this.OnRenderedHud;
+        helper.Events.Display.RenderedWorld += this.OnRenderedWorld;
         helper.Events.Content.AssetRequested += this.OnAssetRequested;
         helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
         helper.Events.Multiplayer.PeerConnected += this.OnPeerConnected;
@@ -274,6 +288,14 @@ public sealed partial class ModEntry : Mod
             // configurable, so players can move it back after migration.
             this.config.CompanionQuickHudSide = CompanionQuickHudSide.Left;
             this.config.ConfigVersion = 7;
+        }
+
+        if (this.config.ConfigVersion < 8)
+        {
+            this.config.ControllerQuickActionWheelKey ??= KeybindList.Parse("LeftStick");
+            this.config.CommunicationGroupCooldownSeconds = Math.Max(1, this.config.CommunicationGroupCooldownSeconds);
+            this.config.EnablePetExpressions = true;
+            this.config.ConfigVersion = 8;
         }
     }
 

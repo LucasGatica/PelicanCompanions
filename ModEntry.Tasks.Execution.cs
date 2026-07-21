@@ -103,6 +103,15 @@ public sealed partial class ModEntry
             return;
         }
 
+        if (task.UsesFixedWorkArea
+            && (!this.HasActiveWorkArea(member)
+                || !string.Equals(member.WorkAreaOrderId, task.FixedWorkAreaOrderId, StringComparison.Ordinal)
+                || !this.IsTaskInsideWorkArea(member, task.Kind, task.LocationName, task.TargetTile)))
+        {
+            this.RemovePendingTask(task, "companion.task_failure.directive_disabled");
+            return;
+        }
+
         bool taskModeDisabled = task.Kind switch
         {
             CompanionTaskKind.Lumbering => this.config.LumberingMode == TaskMode.Disabled,
@@ -166,7 +175,9 @@ public sealed partial class ModEntry
             return;
         }
 
-        GameLocation location = owner.currentLocation;
+        GameLocation location = task.UsesFixedWorkArea
+            ? Game1.getLocationFromName(task.LocationName) ?? owner.currentLocation
+            : owner.currentLocation;
         if (location.NameOrUniqueName != task.LocationName)
         {
             this.RemovePendingTask(task, "companion.task_failure.location_changed", returning: true);
@@ -258,20 +269,24 @@ public sealed partial class ModEntry
                 return;
         }
 
-        if (!IsWithinCompanionDistance(owner.Tile, targetTile))
+        if (!task.UsesFixedWorkArea && !IsWithinCompanionDistance(owner.Tile, targetTile))
         {
             this.RemovePendingTask(task, "companion.task_failure.owner_too_far", returning: true);
             return;
         }
 
         float ownerDistance = Vector2.Distance(NormalizeTile(owner.Tile), NormalizeTile(npc.Tile));
-        if (ownerDistance > Math.Max(MaxCompanionDistanceTiles, task.ReturnDistance))
+        if (!task.UsesFixedWorkArea
+            && ownerDistance > Math.Max(MaxCompanionDistanceTiles, task.ReturnDistance))
         {
             this.RemovePendingTask(task, "companion.task_failure.owner_too_far", returning: true);
             return;
         }
 
-        if (!this.TryResolveTaskStandTile(location, targetTile, npc, member, task, MaxCompanionDistanceTiles, out Vector2 standTile))
+        int standRadius = task.UsesFixedWorkArea
+            ? member.WorkAreaRadius + 1
+            : MaxCompanionDistanceTiles;
+        if (!this.TryResolveTaskStandTile(location, targetTile, npc, member, task, standRadius, out Vector2 standTile))
         {
             this.RemovePendingTask(task, "companion.task_failure.no_safe_tile", returning: true);
             return;
@@ -285,6 +300,9 @@ public sealed partial class ModEntry
 
         this.StopCompanionMovement(npc);
         this.FaceTile(npc, targetTile);
+        if (this.ShouldWaitForCompanionWorkAnimation(task, npc, targetTile))
+            return;
+        task.AwaitingWorkAnimation = false;
 
         switch (task.Kind)
         {
@@ -293,9 +311,15 @@ public sealed partial class ModEntry
                 this.ShowCompanionWorkSignal(npc, location, targetTile, "water");
                 this.AddCompanionXp(member, 1);
                 this.SetTaskResult(member, "companion.task_result.watered");
+                this.QueueTaskSuccess(
+                    npc,
+                    member,
+                    "Watering",
+                    CompanionTaskKind.Watering,
+                    "companion.task_result.watered",
+                    task.Manual);
                 if (task.Manual)
                 {
-                    this.Say(npc, "Watering", force: false);
                     this.InfoForPlayer(member.OwnerId, "tasks.watered", new { npc = member.DisplayName });
                 }
 
@@ -317,9 +341,16 @@ public sealed partial class ModEntry
                 this.ShowCompanionWorkSignal(npc, location, targetTile, "forage");
                 this.AddCompanionXp(member, 2);
                 this.SetTaskResult(member, "companion.task_result.gathered");
+                this.QueueTaskSuccess(
+                    npc,
+                    member,
+                    "Foraging",
+                    CompanionTaskKind.Gathering,
+                    "companion.task_result.gathered",
+                    task.Manual,
+                    item);
                 if (task.Manual)
                 {
-                    this.Say(npc, "Foraging", force: false);
                     this.InfoForPlayer(member.OwnerId, "tasks.gathered", new { npc = member.DisplayName, item = item.DisplayName });
                 }
 
@@ -346,9 +377,15 @@ public sealed partial class ModEntry
                 this.AddCompanionXp(member, 3);
                 this.SetTaskResult(member, "companion.task_result.harvested");
                 this.InvalidateTargetPreviews();
+                this.QueueTaskSuccess(
+                    npc,
+                    member,
+                    "Harvesting",
+                    CompanionTaskKind.Harvesting,
+                    "companion.task_result.harvested",
+                    task.Manual);
                 if (task.Manual)
                 {
-                    this.Say(npc, "Harvesting", force: false);
                     this.InfoForPlayer(member.OwnerId, "tasks.harvested", new { npc = member.DisplayName });
                 }
 
@@ -359,15 +396,22 @@ public sealed partial class ModEntry
                 this.ShowCompanionWorkSignal(npc, location, targetTile, "pet");
                 this.AddCompanionXp(member, 2);
                 this.SetTaskResult(member, "companion.task_result.petted");
+                this.QueueTaskSuccess(
+                    npc,
+                    member,
+                    "Petting",
+                    CompanionTaskKind.Petting,
+                    "companion.task_result.petted",
+                    task.Manual);
                 if (task.Manual)
                 {
-                    this.Say(npc, "Petting", force: false);
                     this.InfoForPlayer(member.OwnerId, "tasks.petted", new { npc = member.DisplayName, animal = animal.displayName });
                 }
 
                 break;
         }
 
+        this.ShowCompanionWorkSuccessAnimation(npc, task.Kind, targetTile);
         this.CompleteSharedTargetPeers(task);
         this.RemovePendingTask(task);
     }
@@ -406,7 +450,9 @@ public sealed partial class ModEntry
             return;
         }
 
-        GameLocation location = owner.currentLocation;
+        GameLocation location = task.UsesFixedWorkArea
+            ? Game1.getLocationFromName(task.LocationName) ?? owner.currentLocation
+            : owner.currentLocation;
         if (location.NameOrUniqueName != task.LocationName)
         {
             this.RemovePendingTask(task, "companion.task_failure.location_changed", returning: true);
@@ -460,7 +506,7 @@ public sealed partial class ModEntry
 
         float ownerDistance = Vector2.Distance(NormalizeTile(owner.Tile), NormalizeTile(npc.Tile));
         int returnDistance = Math.Max(MaxCompanionDistanceTiles, task.ReturnDistance);
-        if (ownerDistance > returnDistance)
+        if (!task.UsesFixedWorkArea && ownerDistance > returnDistance)
         {
             this.RemovePendingTask(task, "companion.task_failure.owner_too_far", returning: true);
             return;
@@ -468,7 +514,9 @@ public sealed partial class ModEntry
 
         ResetCompanionMovementSpeed(npc);
 
-        int workRadius = Math.Max(MaxCompanionDistanceTiles, task.WorkRadius);
+        int workRadius = task.UsesFixedWorkArea
+            ? member.WorkAreaRadius + 1
+            : Math.Max(MaxCompanionDistanceTiles, task.WorkRadius);
         if (!this.TryResolveTaskStandTile(location, task.TargetTile, npc, member, task, workRadius, out Vector2 standTile))
         {
             this.RemovePendingTask(task, "companion.task_failure.no_safe_tile", returning: true);
@@ -484,8 +532,18 @@ public sealed partial class ModEntry
         if (member.CurrentActivityKey == "companion.status.stuck")
             this.SetCompanionActivity(member, "companion.status.working");
 
-        if (Game1.ticks - task.LastActionTick < this.GetLumberHitCooldown(member))
+        int lumberCooldown = this.GetLumberHitCooldown(member);
+        int lumberElapsed = Math.Max(0, Game1.ticks - task.LastActionTick);
+        int lumberAnimationLead = WorkAnimationSwingTicks + WorkAnimationProcessingSlackTicks;
+        if (!task.AwaitingWorkAnimation
+            && lumberElapsed < Math.Max(0, lumberCooldown - lumberAnimationLead))
             return;
+
+        if (this.ShouldWaitForCompanionWorkAnimation(task, npc, task.TargetTile))
+            return;
+        if (lumberElapsed < lumberCooldown)
+            return;
+        task.AwaitingWorkAnimation = false;
 
         bool finished = this.PerformLumberHit(location, tree, task.TargetTile, member, npc, axe, task.Manual);
         task.InactiveTicks = 0;
@@ -518,7 +576,9 @@ public sealed partial class ModEntry
             return;
         }
 
-        GameLocation location = owner.currentLocation;
+        GameLocation location = task.UsesFixedWorkArea
+            ? Game1.getLocationFromName(task.LocationName) ?? owner.currentLocation
+            : owner.currentLocation;
         if (location.NameOrUniqueName != task.LocationName)
         {
             this.RemovePendingTask(task, "companion.task_failure.location_changed", returning: true);
@@ -557,7 +617,7 @@ public sealed partial class ModEntry
 
         float ownerDistance = Vector2.Distance(NormalizeTile(owner.Tile), NormalizeTile(npc.Tile));
         int returnDistance = Math.Max(MaxCompanionDistanceTiles, task.ReturnDistance);
-        if (ownerDistance > returnDistance)
+        if (!task.UsesFixedWorkArea && ownerDistance > returnDistance)
         {
             this.RemovePendingTask(task, "companion.task_failure.owner_too_far", returning: true);
             return;
@@ -565,7 +625,9 @@ public sealed partial class ModEntry
 
         ResetCompanionMovementSpeed(npc);
 
-        int workRadius = Math.Max(MaxCompanionDistanceTiles, task.WorkRadius);
+        int workRadius = task.UsesFixedWorkArea
+            ? member.WorkAreaRadius + 1
+            : Math.Max(MaxCompanionDistanceTiles, task.WorkRadius);
         if (!this.TryResolveTaskStandTile(location, task.TargetTile, npc, member, task, workRadius, out Vector2 standTile))
         {
             this.RemovePendingTask(task, "companion.task_failure.no_safe_tile", returning: true);
@@ -581,8 +643,18 @@ public sealed partial class ModEntry
         if (member.CurrentActivityKey == "companion.status.stuck")
             this.SetCompanionActivity(member, "companion.status.working");
 
-        if (Game1.ticks - task.LastActionTick < this.GetMiningHitCooldown(member))
+        int miningCooldown = this.GetMiningHitCooldown(member);
+        int miningElapsed = Math.Max(0, Game1.ticks - task.LastActionTick);
+        int miningAnimationLead = WorkAnimationSwingTicks + WorkAnimationProcessingSlackTicks;
+        if (!task.AwaitingWorkAnimation
+            && miningElapsed < Math.Max(0, miningCooldown - miningAnimationLead))
             return;
+
+        if (this.ShouldWaitForCompanionWorkAnimation(task, npc, task.TargetTile))
+            return;
+        if (miningElapsed < miningCooldown)
+            return;
+        task.AwaitingWorkAnimation = false;
 
         bool finished = this.PerformMiningHit(location, obj, task.TargetTile, member, npc, task, pickaxe);
         task.InactiveTicks = 0;
@@ -607,16 +679,20 @@ public sealed partial class ModEntry
         Vector2 npcTile = NormalizeTile(npc.Tile);
         Vector2 currentStandTile = NormalizeTile(task.StandTile);
         targetTile = NormalizeTile(targetTile);
+        Vector2? anchorOverride = task.UsesFixedWorkArea
+            ? NormalizeTile(task.FixedWorkAreaCenter)
+            : null;
         bool rejectedByMissingController = false;
-        if (owner is not null && owner.currentLocation == location)
+        if (anchorOverride.HasValue || owner is not null && owner.currentLocation == location)
         {
+            Vector2 anchorTile = anchorOverride ?? NormalizeTile(owner!.Tile);
             bool isNpcTile = currentStandTile == npcTile;
             // Keep an already-reserved destination when a farmer/animal only
             // occupies it temporarily; dynamic occupancy isn't a structural
             // reason to churn the task route.
             bool tileAvailable = isNpcTile || this.IsTileTraversable(location, currentStandTile);
             bool adjacent = Vector2.Distance(currentStandTile, targetTile) <= TaskArrivalDistance;
-            bool withinOwnerRange = IsWithinOwnerDistance(owner.Tile, currentStandTile, maxOwnerDistance);
+            bool withinOwnerRange = IsWithinOwnerDistance(anchorTile, currentStandTile, maxOwnerDistance);
             bool reservedByAnotherCompanion = this.IsStandTileReserved(
                 location,
                 currentStandTile,
@@ -657,7 +733,8 @@ public sealed partial class ModEntry
                 member,
                 maxOwnerDistance,
                 out standTile,
-                task.RejectedStandTiles)
+                task.RejectedStandTiles,
+                anchorOverride)
             && this.TryReserveStandTile(task.NpcName, task.LocationName, standTile))
         {
             task.StandTile = standTile;
@@ -679,7 +756,8 @@ public sealed partial class ModEntry
         SquadMemberState member,
         int maxOwnerDistance,
         out Vector2 standTile,
-        IReadOnlySet<Vector2>? excludedStandTiles = null)
+        IReadOnlySet<Vector2>? excludedStandTiles = null,
+        Vector2? ownerAnchorOverride = null)
     {
         Vector2 npcTile = NormalizeTile(npc.Tile);
         HashSet<Vector2> candidates = this.GetCandidateTaskStandTiles(
@@ -688,7 +766,8 @@ public sealed partial class ModEntry
                 npc,
                 member,
                 maxOwnerDistance,
-                excludedStandTiles)
+                excludedStandTiles,
+                ownerAnchorOverride)
             .ToHashSet();
         if (candidates.Count == 0)
         {
@@ -720,15 +799,16 @@ public sealed partial class ModEntry
         NPC npc,
         SquadMemberState member,
         int maxOwnerDistance,
-        IReadOnlySet<Vector2>? excludedStandTiles = null)
+        IReadOnlySet<Vector2>? excludedStandTiles = null,
+        Vector2? ownerAnchorOverride = null)
     {
         Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
         Vector2 npcTile = NormalizeTile(npc.Tile);
-        if (owner is null || owner.currentLocation != location)
+        if (!ownerAnchorOverride.HasValue && (owner is null || owner.currentLocation != location))
             return Array.Empty<Vector2>();
 
         targetTile = NormalizeTile(targetTile);
-        Vector2 ownerTile = NormalizeTile(owner.Tile);
+        Vector2 ownerTile = NormalizeTile(ownerAnchorOverride ?? owner!.Tile);
         List<Vector2> candidates = new();
         if (Vector2.Distance(npcTile, targetTile) <= TaskArrivalDistance
             && IsWithinOwnerDistance(ownerTile, npcTile, maxOwnerDistance)
@@ -888,9 +968,6 @@ public sealed partial class ModEntry
     {
         this.StopCompanionMovement(npc);
         this.FaceTile(npc, tile);
-        npc.Sprite.Animate(Game1.currentGameTime, npc.Sprite.currentFrame, 2, 80f);
-        npc.jumpWithoutSound(4f);
-        npc.shake(150);
         tree.shake(tile, doEvenIfStillShaking: true);
         this.ShowCompanionWorkSignal(npc, location, tile, "wood");
         Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
@@ -923,6 +1000,14 @@ public sealed partial class ModEntry
 
             this.AddCompanionXp(member, 8);
             this.SetTaskResult(member, "companion.task_result.lumbered");
+            this.QueueTaskSuccess(
+                npc,
+                member,
+                "Lumbering",
+                CompanionTaskKind.Lumbering,
+                "companion.task_result.lumbered",
+                manual);
+            this.ShowCompanionWorkSuccessAnimation(npc, CompanionTaskKind.Lumbering, tile);
 
             if (manual)
                 this.InfoForPlayer(member.OwnerId, "tasks.lumbered", new { npc = member.DisplayName });
@@ -937,9 +1022,6 @@ public sealed partial class ModEntry
     {
         this.StopCompanionMovement(npc);
         this.FaceTile(npc, tile);
-        npc.Sprite.Animate(Game1.currentGameTime, npc.Sprite.currentFrame, 2, 80f);
-        npc.jumpWithoutSound(4f);
-        npc.shake(150);
         this.ShowCompanionWorkSignal(npc, location, tile, "mining");
         Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
         if (owner is null)
@@ -977,6 +1059,14 @@ public sealed partial class ModEntry
 
         this.AddCompanionXp(member, 6);
         this.SetTaskResult(member, "companion.task_result.mined");
+        this.QueueTaskSuccess(
+            npc,
+            member,
+            "Mining",
+            CompanionTaskKind.Mining,
+            "companion.task_result.mined",
+            task.Manual);
+        this.ShowCompanionWorkSuccessAnimation(npc, CompanionTaskKind.Mining, tile);
         return true;
     }
 

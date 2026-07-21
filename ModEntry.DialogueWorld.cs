@@ -16,62 +16,67 @@ public sealed partial class ModEntry
 {
     private void UpdateAmbientDialogue()
     {
-        if (!this.config.EnableCommunication || this.config.DialogueCooldownSeconds <= 0 || this.IsBlockedGameState(blockForMenu: true))
+        if ((!this.config.EnableCommunication && !this.config.EnablePetExpressions)
+            || this.config.DialogueCooldownSeconds <= 0
+            || this.IsBlockedGameState(blockForMenu: true))
             return;
 
-        long now = DateTimeOffset.UtcNow.UtcTicks;
-        long cooldownTicks = TimeSpan.FromSeconds(this.config.DialogueCooldownSeconds).Ticks;
-
-        foreach (SquadMemberState member in this.members.Values.Where(p => p.Mode == CompanionMode.Following))
+        int intervalTicks = Math.Max(DialogueTicksPerSecond, this.config.DialogueCooldownSeconds * DialogueTicksPerSecond);
+        foreach (IGrouping<long, SquadMemberState> group in this.members.Values
+            .Where(member => member.Mode == CompanionMode.Following)
+            .GroupBy(member => member.OwnerId))
         {
-            if (now - member.LastDialogueUtcTicks < cooldownTicks)
+            long ownerId = group.Key;
+            if (!this.dialogueScheduler.CanScheduleAmbient(ownerId, Game1.ticks, intervalTicks))
                 continue;
 
-            if (this.random.NextDouble() > 0.35)
+            this.dialogueScheduler.MarkAmbientAttempt(ownerId, Game1.ticks);
+            Farmer? owner = this.GetOwnerFarmer(ownerId);
+            if (owner?.currentLocation is null)
                 continue;
 
-            NPC? npc = Game1.getCharacterFromName(member.NpcName, mustBeVillager: false, includeEventActors: false);
-            Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
-            if (npc is null || owner?.currentLocation is null || npc.currentLocation != owner.currentLocation)
+            List<NPC> eligible = group
+                .Where(member => !this.pendingTasks.ContainsKey(member.NpcName)
+                    && !this.activeRecallTargets.ContainsKey(member.NpcName))
+                .Select(member => this.GetNpcByName(member.NpcName))
+                .Where(npc => npc is not null
+                    && npc.currentLocation == owner.currentLocation
+                    && (npc is Pet ? this.config.EnablePetExpressions : this.config.EnableCommunication))
+                .Cast<NPC>()
+                .ToList();
+            if (eligible.Count == 0)
                 continue;
 
-            if (this.Say(npc, "Idle", force: false))
-                member.LastDialogueUtcTicks = now;
+            string? lastSpeaker = this.dialogueScheduler.GetLastSpeaker(ownerId);
+            List<NPC> freshSpeakers = eligible
+                .Where(npc => !string.Equals(npc.Name, lastSpeaker, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            List<NPC> pool = freshSpeakers.Count > 0 ? freshSpeakers : eligible;
+            NPC selected = pool[this.random.Next(pool.Count)];
+            this.Say(selected, "Idle", force: false, ownerIdOverride: ownerId);
         }
     }
 
-    private bool Say(NPC npc, string category, bool force)
+    private bool Say(
+        NPC npc,
+        string category,
+        bool force,
+        long? ownerIdOverride = null,
+        CompanionDialogueContext? context = null)
     {
-        if (!CompanionDialoguePolicy.CanSpeak(npc is Pet))
-            return false;
-
-        if (!force && !this.config.EnableCommunication)
-            return false;
-
-        Farmer owner = this.members.TryGetValue(npc.Name, out SquadMemberState? member)
-            ? this.GetOwnerFarmer(member.OwnerId) ?? Game1.player
-            : Game1.player;
-        string? key = this.PickDialogueKey(npc, category, owner);
-        if (string.IsNullOrWhiteSpace(key))
-            key = $"dialogue.{category}.generic";
-
-        string line = this.Tr(key, new
-        {
-            npc = npc.displayName,
-            player = owner.displayName,
-            hearts = this.GetFriendshipHearts(npc, owner)
-        });
-
-        if (string.IsNullOrWhiteSpace(line) || line == key)
-            return false;
-
-        npc.showTextAboveHead(line);
-        return true;
+        context ??= new CompanionDialogueContext { TaskKind = GetTaskKindForDialogueCategory(category) };
+        return this.QueueCompanionCommunication(npc, category, force, ownerIdOverride, context);
     }
 
-    private string? PickDialogueKey(NPC npc, string category, Farmer owner)
+    private CompanionDialogueLine? PickDialogueLine(
+        NPC npc,
+        string category,
+        Farmer owner,
+        CompanionDialogueContext context,
+        IReadOnlyCollection<string> recentKeys)
     {
-        List<CompanionDialogueLine> candidates = new();
+        List<(CompanionDialogueLine Line, int SourcePriority)>? eligible = null;
+        int fallbackSourcePriority = 2;
         foreach (string profileKey in this.GetProfileKeys(npc))
         {
             if (this.npcProfiles.TryGetValue(profileKey, out NpcCompanionProfile? profile)
@@ -79,34 +84,138 @@ public sealed partial class ModEntry
                 && profile.Dialogue.TryGetValue(category, out List<CompanionDialogueLine>? lines)
                 && lines is not null)
             {
-                candidates.AddRange(lines
+                CompanionDialogueLine[] matching = lines
                     .Where(line => line is not null)
-                    .Where(line => this.ConditionMatches(npc, line.Condition, owner)));
+                    .Where(line => this.ConditionMatches(npc, line.Condition, owner, context))
+                    .Where(line => this.dialogueScheduler.CanPresentIdentity(
+                        owner.UniqueMultiplayerID,
+                        CompanionDialogueSelectionPolicy.GetIdentity(line),
+                        Game1.ticks,
+                        Math.Clamp(line.MinIntervalSeconds, 0, 3600) * DialogueTicksPerSecond))
+                    .ToArray();
+                if (matching.Length == 0)
+                    continue;
+
+                if (eligible is null)
+                {
+                    eligible = matching
+                        .Select(line => (line, SourcePriority: 0))
+                        .ToList();
+                    continue;
+                }
+
+                // Lower-priority profiles can't replace authored NPC lines,
+                // but explicitly marked contextual overlays may enrich an
+                // unconditional exact line (for example season or friendship).
+                // Normal fallback lines remain available only when every
+                // matching primary line is recent, so repetition can be avoided.
+                eligible.AddRange(matching
+                    .Select(line => (line, SourcePriority: line.Overlay ? 1 : fallbackSourcePriority)));
+                fallbackSourcePriority++;
             }
         }
 
-        return candidates.Count == 0 ? null : candidates[this.random.Next(candidates.Count)].TextKey;
+        if (eligible is null || eligible.Count == 0)
+            return null;
+
+        List<(CompanionDialogueLine Line, int SourcePriority)> fresh = eligible
+            .Where(candidate => !recentKeys.Contains(
+                CompanionDialogueSelectionPolicy.GetIdentity(candidate.Line),
+                StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        List<(CompanionDialogueLine Line, int SourcePriority)> pool = fresh.Count > 0
+            ? fresh
+            : eligible;
+        if (fresh.Any(candidate => candidate.SourcePriority == 0))
+            pool = pool.Where(candidate => candidate.SourcePriority <= 1).ToList();
+
+        if (pool.Any(candidate => candidate.SourcePriority <= 1))
+        {
+            // The primary profile and its explicit overlays form one authored
+            // tier: a contextual overlay may enrich an unconditional base line.
+            pool = pool.Where(candidate => candidate.SourcePriority <= 1).ToList();
+            int bestSpecificity = pool.Max(candidate => GetDialogueConditionSpecificity(candidate.Line));
+            pool = pool
+                .Where(candidate => GetDialogueConditionSpecificity(candidate.Line) == bestSpecificity)
+                .ToList();
+            int bestSourcePriority = pool.Min(candidate => candidate.SourcePriority);
+            pool = pool
+                .Where(candidate => candidate.SourcePriority == bestSourcePriority)
+                .ToList();
+        }
+        else
+        {
+            // Normal fallback profiles are a strict hierarchy. A more generic
+            // profile must not leapfrog an earlier source just because its line
+            // has more condition clauses.
+            int bestSourcePriority = pool.Min(candidate => candidate.SourcePriority);
+            pool = pool
+                .Where(candidate => candidate.SourcePriority == bestSourcePriority)
+                .ToList();
+            int bestSpecificity = pool.Max(candidate => GetDialogueConditionSpecificity(candidate.Line));
+            pool = pool
+                .Where(candidate => GetDialogueConditionSpecificity(candidate.Line) == bestSpecificity)
+                .ToList();
+        }
+
+        return CompanionDialogueSelectionPolicy.Select(
+            pool.Select(candidate => candidate.Line).ToArray(),
+            recentKeys,
+            this.random.Next());
+    }
+
+    private bool HasConfiguredDialogueCategory(NPC npc, string category)
+    {
+        foreach (string profileKey in this.GetProfileKeys(npc))
+        {
+            if (this.npcProfiles.TryGetValue(profileKey, out NpcCompanionProfile? profile)
+                && profile?.Dialogue is not null
+                && profile.Dialogue.ContainsKey(category))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int GetDialogueConditionSpecificity(CompanionDialogueLine line)
+    {
+        return string.IsNullOrWhiteSpace(line.Condition)
+            ? 0
+            : line.Condition.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Length;
     }
 
     private IEnumerable<string> GetProfileKeys(NPC npc)
     {
-        yield return "Generic";
+        HashSet<string> yielded = new(StringComparer.OrdinalIgnoreCase);
+        if (yielded.Add(npc.Name))
+            yield return npc.Name;
 
-        if (npc is Pet)
+        if (npc is Pet pet)
         {
-            string name = npc.Name;
-            if (name.Contains("Cat", StringComparison.OrdinalIgnoreCase))
-                yield return "All_Cat";
-            else if (name.Contains("Dog", StringComparison.OrdinalIgnoreCase))
-                yield return "All_Dog";
-            else if (name.Contains("Turtle", StringComparison.OrdinalIgnoreCase))
-                yield return "All_Turtle";
+            string petType = pet.petType.Value ?? "";
+            string normalizedType = new(petType.Where(char.IsLetterOrDigit).ToArray());
+            if (!string.IsNullOrWhiteSpace(normalizedType) && yielded.Add($"All_{normalizedType}"))
+                yield return $"All_{normalizedType}";
+            if (yielded.Add("All_Pet"))
+                yield return "All_Pet";
+        }
+        else
+        {
+            if (npc.IsVillager && yielded.Add("All_Villager"))
+                yield return "All_Villager";
         }
 
-        yield return npc.Name;
+        if (yielded.Add("Generic"))
+            yield return "Generic";
     }
 
-    private bool ConditionMatches(NPC npc, string? condition, Farmer owner)
+    private bool ConditionMatches(
+        NPC npc,
+        string? condition,
+        Farmer owner,
+        CompanionDialogueContext context)
     {
         if (string.IsNullOrWhiteSpace(condition))
             return true;
@@ -115,19 +224,54 @@ public sealed partial class ModEntry
         {
             bool invert = rawToken.StartsWith('!');
             string token = invert ? rawToken[1..] : rawToken;
-            bool result = token switch
+            string normalized = token.ToLowerInvariant();
+            bool result = normalized switch
             {
-                "spouse" => owner.spouse == npc.Name,
-                "night" => Game1.timeOfDay >= 1800,
+                "spouse" => context.IsSpouse,
+                "morning" => context.DayPeriod == "morning",
+                "afternoon" => context.DayPeriod == "afternoon",
+                "evening" => context.DayPeriod == "evening",
+                "night" => context.TimeOfDay >= 1800,
                 "farm" => owner.currentLocation?.Name == "Farm",
                 "mine" => owner.currentLocation is StardewValley.Locations.MineShaft,
                 "volcano" => owner.currentLocation is StardewValley.Locations.VolcanoDungeon,
                 "pet" => npc is Pet,
                 "villager" => npc.IsVillager,
-                _ when token.StartsWith("hearts>=", StringComparison.OrdinalIgnoreCase)
+                "outdoors" => context.IsOutdoors,
+                "indoors" => !context.IsOutdoors,
+                "sun" or "rain" or "storm" or "snow" or "green_rain" => context.Weather == normalized,
+                "spring" or "summer" or "fall" or "winter" => context.Season.Equals(normalized, StringComparison.OrdinalIgnoreCase),
+                "success" => !string.IsNullOrWhiteSpace(context.ResultKey),
+                "failure" => !string.IsNullOrWhiteSpace(context.FailureKey),
+                "item_found" => !string.IsNullOrWhiteSpace(context.ItemId) || !string.IsNullOrWhiteSpace(context.ItemName),
+                "manual" => context.IsManual,
+                _ when normalized.StartsWith("hearts>=", StringComparison.Ordinal)
                     => this.GetFriendshipHearts(npc, owner) >= this.ParseTrailingInt(token),
-                _ when token.StartsWith("hearts<", StringComparison.OrdinalIgnoreCase)
+                _ when normalized.StartsWith("hearts<", StringComparison.Ordinal)
                     => this.GetFriendshipHearts(npc, owner) < this.ParseTrailingInt(token),
+                _ when normalized.StartsWith("time>=", StringComparison.Ordinal)
+                    => context.TimeOfDay >= this.ParseTrailingInt(token),
+                _ when normalized.StartsWith("time<", StringComparison.Ordinal)
+                    => context.TimeOfDay < this.ParseTrailingInt(token),
+                _ when normalized.StartsWith("season=", StringComparison.Ordinal)
+                    => context.Season.Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase),
+                _ when normalized.StartsWith("weather=", StringComparison.Ordinal)
+                    => context.Weather.Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase),
+                _ when normalized.StartsWith("period=", StringComparison.Ordinal)
+                    => context.DayPeriod.Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase),
+                _ when normalized.StartsWith("location=", StringComparison.Ordinal)
+                    => context.LocationName.Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase),
+                _ when normalized.StartsWith("context=", StringComparison.Ordinal)
+                    => context.LocationContext.Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase),
+                _ when normalized.StartsWith("task=", StringComparison.Ordinal)
+                    => context.TaskKind?.ToString().Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase) == true,
+                _ when normalized.StartsWith("result=", StringComparison.Ordinal)
+                    => context.ResultKey.Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase),
+                _ when normalized.StartsWith("failure=", StringComparison.Ordinal)
+                    => context.FailureKey.Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase),
+                _ when normalized.StartsWith("item=", StringComparison.Ordinal)
+                    => context.ItemId.Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase)
+                        || context.ItemName.Equals(token[(token.IndexOf('=') + 1)..], StringComparison.OrdinalIgnoreCase),
                 _ => false
             };
 
@@ -317,6 +461,7 @@ public sealed partial class ModEntry
     {
         return this.members.Values.FirstOrDefault(p => p.OwnerId == ownerId
             && p.Mode == CompanionMode.Following
+            && !this.HasActiveWorkArea(p)
             && !this.pendingTasks.ContainsKey(p.NpcName)
             && !this.activeRecallTargets.ContainsKey(p.NpcName));
     }
@@ -1510,7 +1655,7 @@ public sealed partial class ModEntry
         this.pendingTasks.Remove(task.NpcName);
         if (!task.Manual
             && task.Kind is CompanionTaskKind.Lumbering or CompanionTaskKind.Mining
-            && (task.UsesWorkDirective || task.UsesConfiguredAutonomy)
+            && (task.UsesWorkDirective || task.UsesConfiguredAutonomy || task.UsesFixedWorkArea)
             && failureKey is "companion.task_failure.task_timeout"
                 or "companion.task_failure.no_safe_tile"
                 or "companion.task_failure.path_recovery"
@@ -1528,6 +1673,17 @@ public sealed partial class ModEntry
             {
                 try
                 {
+                    if (!string.IsNullOrWhiteSpace(failureKey)
+                        && task.Kind != CompanionTaskKind.MovingToWait
+                        && failureKey is not "companion.task_failure.recalled"
+                            and not "companion.task_failure.tasks_disabled"
+                            and not "companion.task_failure.directive_disabled"
+                            and not "companion.task_failure.location_changed"
+                            and not "companion.task_failure.owner_unavailable")
+                    {
+                        this.ShowCompanionWorkFailureAnimation(npc, task.Kind, task.TargetTile);
+                    }
+
                     this.StopCompanionMovement(npc);
                 }
                 catch (Exception ex)
@@ -1544,11 +1700,18 @@ public sealed partial class ModEntry
             {
                 CompanionMode.Waiting => "companion.status.waiting",
                 CompanionMode.ParkedForDisconnect => "companion.status.parked",
+                _ when task.UsesFixedWorkArea && this.HasActiveWorkArea(member) =>
+                    failureKey == "companion.task_failure.tasks_disabled"
+                        ? "companion.status.work_area_paused"
+                        : string.IsNullOrWhiteSpace(failureKey)
+                            ? "companion.status.work_area"
+                            : "companion.status.work_area_blocked",
                 _ when returning => "companion.status.returning",
                 _ => "companion.status.following"
             };
             this.SetCompanionActivity(member, nextActivity);
-            if (!returning
+            bool shouldResumeFixedArea = task.UsesFixedWorkArea && this.HasActiveWorkArea(member);
+            if ((!returning || shouldResumeFixedArea)
                 && member.Mode == CompanionMode.Following
                 && (this.HasActiveWorkDirective(member) || task.UsesConfiguredAutonomy))
             {
@@ -1560,7 +1723,7 @@ public sealed partial class ModEntry
                     : Math.Min(this.nextTaskScanTick, deferredScanTick);
             }
 
-            if (returning)
+            if (returning && !shouldResumeFixedArea)
             {
                 if (npc?.currentLocation is not null)
                     this.ShowCompanionWorkSignal(npc, npc.currentLocation, npc.Tile, "return");

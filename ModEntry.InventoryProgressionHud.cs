@@ -458,6 +458,17 @@ public sealed partial class ModEntry
                 new Color(96, 165, 220));
             Game1.playSound("newArtifact");
         }
+
+        NPC? npc = this.GetNpcByName(member.NpcName);
+        if (npc is not null)
+        {
+            this.Say(
+                npc,
+                "LevelUp",
+                force: false,
+                ownerIdOverride: member.OwnerId,
+                context: new CompanionDialogueContext { Level = newLevel });
+        }
     }
 
     private void RecordCompanionLoot(SquadMemberState member, Item item, string sourceKey)
@@ -487,6 +498,21 @@ public sealed partial class ModEntry
                 item.QualifiedItemId,
                 new Color(218, 170, 65));
             Game1.playSound("discoverMineral");
+
+            NPC? npc = this.GetNpcByName(member.NpcName);
+            if (npc is not null)
+            {
+                this.Say(
+                    npc,
+                    "LootFound",
+                    force: false,
+                    ownerIdOverride: member.OwnerId,
+                    context: new CompanionDialogueContext
+                    {
+                        ItemName = item.DisplayName,
+                        ItemId = item.QualifiedItemId
+                    });
+            }
         }
     }
 

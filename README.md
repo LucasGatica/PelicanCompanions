@@ -23,6 +23,7 @@ Release documentation:
 | Default | Action |
 | --- | --- |
 | `X` | Open the contextual radial wheel for the NPC, resource, or safe empty ground under the cursor. |
+| `Left Stick` | Open the same contextual wheel on a controller. Use either stick or the D-pad to select, `A` to confirm, `B` to close, and the shoulder buttons to change pages. |
 | `F5` | Recruit/manage a nearby NPC or pet. |
 | `F6` | Run an enabled safe manual task at the aimed tile. |
 | `F7` | Open the shared squad inventory summary. |
@@ -38,16 +39,20 @@ All bindings can be changed in `config.json` or through GMCM.
   friendship, capacity, ownership, NPC support, and safe-game-state checks still apply.
   Dismiss, wait, resume, and recall remain available for recruited companions.
 - Natural follower pathing at a conservative fixed NPC speed, location-change placement, visible recovery, and Adaptive/Behind/Compact formations.
-- Mouse-centered contextual wheel: owned companions expose Profile, Work, Stop, Dismiss, and Follow; unrecruited NPCs expose Recruit; mature trees, breakable stones, and mature grab-crops expose Send all plus up to three named local companions. Safe empty ground exposes Dismiss all plus up to three named companions; choosing one sends them to that tile and leaves them waiting there after arrival. A polished quick-HUD dock sits on the left by default, and the responsive F9 panel remains available for full management.
+- Mouse/controller contextual wheel with pagination for groups of up to 12 companions. Owned companions expose Profile, Work, Stop, Dismiss, and Follow; unrecruited NPCs expose Recruit; mature trees, breakable stones, and mature grab-crops expose Send all plus named local companions. Safe empty ground can move a companion there, dismiss the group, or open the fixed-area work flow. Mouse wheel/Page Up/Page Down and controller shoulder buttons change pages; keyboard, D-pad, and either analog stick move focus.
+- Persistent fixed work areas: mark safe ground, select Wood, Mining, or Clear Area, choose a radius and one companion or the whole local group. Workers stay inside the marked circle across saves until the area is complete, paused, or explicitly replaced by another order.
+- Visible work feedback for every implemented task: companions face the target, swing an axe/pickaxe/watering can or use a hand gesture, then celebrate success or visibly react to failure. Cosmetic work state is synchronized to farmhands.
 - Per-companion XP, ten levels, skill points, a responsive three-branch skill tree with useful Lumbering/Mining/Utility effects, and saved recent-loot history.
 - Per-member inventory and shared squad inventory with conservative fallback routing.
 - Manual/mimic/autonomous support where applicable for watering, safe forage pickup, mature grab-crop harvesting, mature untapped tree chopping, breakable-stone mining, and animal petting.
 - Beehouse flower protection and bounded per-member Wood/Mining/Clear Area directives.
-- Data-driven dialogue profiles, English and Brazilian Portuguese i18n, and optional GMCM registration.
-- Namespaced save data with migration for older Pelican Companions states.
+- Owner-scoped communication scheduling with a shared group cooldown, bounded priority queue, deduplication, and recent-line memory. Important task, loot, level, failure, and command reactions take precedence over ambient chatter.
+- Personality-specific dialogue profiles for the 34 social vanilla NPCs, with contextual selection for friendship, weather, season, time, location, task, result, failure, and found items. English and Brazilian Portuguese text and optional GMCM registration are included.
+- Pets remain silent: they respond through hearts/question marks, jumps, shakes, and their configured bark/meow/content sounds instead of speech bubbles.
+- Namespaced save data with migration for older Pelican Companions states, including fixed-area orders and recent dialogue memory.
 - Host-authoritative multiplayer simulation: farmhands send idempotent commands, the host alone controls NPCs/tasks/world/inventories, and versioned snapshots keep remote HUDs, panels, directives, skills, and withdrawals synchronized.
 
-Combat, fishing, shearing, milking, sitting, riding, custom task/idle sprite playback, and companion inventory deposits are not implemented. Inert options and the unfinished Combat skill branch are intentionally hidden instead of being presented as working features. Multiplayer remains experimental until the manual co-op checklist is completed; crop harvesting by a farmhand's companion is conservatively disabled because Stardew Valley's crop API credits `Game1.player` instead of an explicit owner.
+Combat, fishing, shearing, milking, sitting, riding, custom idle sprite playback, and companion inventory deposits are not implemented. Inert options and the unfinished Combat skill branch are intentionally hidden instead of being presented as working features. Multiplayer remains experimental until the manual co-op checklist is completed; crop harvesting by a farmhand's companion is conservatively disabled because Stardew Valley's crop API credits `Game1.player` instead of an explicit owner.
 
 ## Build
 
@@ -63,7 +68,7 @@ Expected release zip after the release build:
 ## Verification status
 
 Run `scripts/validate.sh` to restore/build the mod, execute the package-free
-31-test regression harness, validate all JSON files, and verify English/PT-BR
+42-test regression harness, validate all JSON files, and verify English/PT-BR
 key and interpolation-token parity. The current in-game checklist still needs
 to be run before release; multiplayer remains explicitly experimental until
 that pass is complete.

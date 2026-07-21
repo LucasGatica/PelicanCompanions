@@ -44,8 +44,17 @@ public sealed partial class ModEntry
 
     private void TryRecruit(NPC npc, long ownerId, bool showPrompt)
     {
-        if (!Context.IsMainPlayer && ownerId == Game1.player.UniqueMultiplayerID)
+        if (!Context.IsMainPlayer)
         {
+            if (ownerId != Game1.player.UniqueMultiplayerID)
+                return;
+
+            if (showPrompt)
+            {
+                this.ShowRecruitmentPrompt(npc, ownerId);
+                return;
+            }
+
             this.SendActionRequest("Recruit", npc.Name);
             this.Info("recruitment.request_sent", new { npc = npc.displayName });
             return;
@@ -55,7 +64,7 @@ public sealed partial class ModEntry
         if (!eligibility.Allowed)
         {
             if (eligibility.ReasonKey == "recruitment.friendship_low")
-                this.Say(npc, "FriendshipTooLow", force: true);
+                this.Say(npc, "FriendshipTooLow", force: true, ownerIdOverride: ownerId);
 
             this.Warn(eligibility.ReasonKey, new { npc = npc.displayName, required = this.config.FriendshipRequirement });
             return;
@@ -63,24 +72,47 @@ public sealed partial class ModEntry
 
         if (showPrompt)
         {
-            string question = this.Tr("recruitment.prompt", new { npc = npc.displayName });
-            Game1.currentLocation.createQuestionDialogue(
-                question,
-                new[] { new Response("Recruit", this.Tr("generic.yes")), new Response("Cancel", this.Tr("generic.cancel")) },
-                (_, answer) =>
-                {
-                    if (answer == "Recruit")
-                    {
-                        // The world may have changed while the confirmation prompt was
-                        // open (ownership, friendship, squad capacity, location, etc.).
-                        // Run the full eligibility check again at the commit point.
-                        this.TryRecruit(npc, ownerId, showPrompt: false);
-                    }
-                });
+            this.ShowRecruitmentPrompt(npc, ownerId);
             return;
         }
 
         this.AddMember(npc, ownerId);
+    }
+
+    private void ShowRecruitmentPrompt(NPC npc, long ownerId)
+    {
+        string question = this.Tr("recruitment.prompt", new { npc = npc.displayName });
+        Game1.currentLocation.createQuestionDialogue(
+            question,
+            new[] { new Response("Recruit", this.Tr("generic.yes")), new Response("Cancel", this.Tr("generic.cancel")) },
+            (_, answer) =>
+            {
+                if (answer == "Recruit")
+                {
+                    // The world may have changed while the confirmation prompt was
+                    // open (ownership, friendship, squad capacity, location, etc.).
+                    // Run the full host-side eligibility check at the commit point.
+                    this.TryRecruit(npc, ownerId, showPrompt: false);
+                }
+                else if (answer == "Cancel")
+                {
+                    this.DeclineRecruitment(npc, ownerId);
+                }
+            });
+    }
+
+    private void DeclineRecruitment(NPC npc, long ownerId)
+    {
+        if (!Context.IsMainPlayer && ownerId == Game1.player.UniqueMultiplayerID)
+        {
+            this.SendActionRequest(
+                "RecruitmentRefusal",
+                npc.Name,
+                expectedLocationName: npc.currentLocation?.NameOrUniqueName ?? "");
+            return;
+        }
+
+        this.Say(npc, "RecruitmentRefusal", force: true, ownerIdOverride: ownerId);
     }
 
     private EligibilityResult CanRecruit(NPC npc, long ownerId)
@@ -137,6 +169,7 @@ public sealed partial class ModEntry
         CaptureOriginalNpcState(member, npc, captureSchedule: true);
         this.deferredNpcRestores.Remove(npc.Name);
         this.members[npc.Name] = member;
+        this.lastObservedCommunicationFailures[npc.Name] = "";
         try
         {
             this.RemovePendingTask(npc.Name);
@@ -146,6 +179,7 @@ public sealed partial class ModEntry
         catch (Exception ex)
         {
             this.members.Remove(npc.Name);
+            this.lastObservedCommunicationFailures.Remove(npc.Name);
             this.ClearFollowState(npc.Name);
             this.ReleaseWorkTargetsForNpc(npc.Name);
             try
@@ -166,7 +200,7 @@ public sealed partial class ModEntry
 
         this.MarkStateDirty();
         this.Info("recruitment.joined", new { npc = npc.displayName });
-        this.Say(npc, "Recruit", force: true);
+        this.Say(npc, "Recruit", force: true, ownerIdOverride: ownerId);
     }
 
     private void OpenManagementMenu(NPC npc, SquadMemberState member)
@@ -292,7 +326,7 @@ public sealed partial class ModEntry
         {
             try
             {
-                this.Say(npc, "Dismiss", force: true);
+                this.Say(npc, "Dismiss", force: true, ownerIdOverride: requester);
                 this.RestoreNpcSchedule(npc, member);
             }
             catch (Exception ex)
@@ -321,6 +355,8 @@ public sealed partial class ModEntry
         }
 
         this.members.Remove(npcName);
+        this.lastObservedCommunicationFailures.Remove(npcName);
+        this.workAreaPositionRecoveryNeeded.Remove(npcName);
         this.ClearFollowState(npcName);
         this.RemovePendingTask(npcName);
         if (!deferNpcRestore)
@@ -364,6 +400,7 @@ public sealed partial class ModEntry
 
         member.Mode = CompanionMode.Waiting;
         this.ClearCompanionTarget(member);
+        this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.not_following"));
         this.SetCompanionActivity(member, "companion.status.waiting");
         this.MarkStateDirty();
         if (showMessage && this.ShouldShowFeedbackFor(ownerId))
@@ -391,10 +428,41 @@ public sealed partial class ModEntry
             && owner is not null
             && (npc.currentLocation != owner.currentLocation
                 || Vector2.Distance(NormalizeTile(npc.Tile), NormalizeTile(owner.Tile)) > MaxCompanionDistanceTiles);
+        bool tasksEnabled = this.AreTasksEnabled(member.OwnerId);
+        bool hasWorkArea = this.HasActiveWorkArea(member);
+        bool workAreaRecoveryPending = hasWorkArea && this.HasPendingWorkAreaRecovery(member);
         if (npc is not null)
             this.DisableNpcSchedule(npc, stopCurrentRoute: true);
 
-        this.SetCompanionActivity(member, needsReturn ? "companion.status.returning" : "companion.status.following");
+        this.SetCompanionActivity(
+            member,
+            hasWorkArea
+                ? tasksEnabled && !workAreaRecoveryPending
+                    ? "companion.status.work_area"
+                    : "companion.status.work_area_paused"
+                : needsReturn
+                    ? "companion.status.returning"
+                    : "companion.status.following");
+        if (hasWorkArea && !tasksEnabled)
+            this.SetTaskFailure(member, "companion.task_failure.tasks_disabled");
+        else if (workAreaRecoveryPending)
+            this.SetTaskFailure(member, "companion.task_failure.work_area_unavailable");
+        else if (tasksEnabled && member.LastFailureReasonKey == "companion.task_failure.tasks_disabled")
+            this.SetTaskFailure(member, "");
+        this.UpdateTargetPreview(
+            member,
+            !tasksEnabled
+                ? new TargetPreview(false, "", -1, -1, "companion.preview.tasks_disabled")
+                : workAreaRecoveryPending
+                    ? new TargetPreview(false, "", -1, -1, "companion.task_failure.work_area_unavailable")
+                    : this.HasActiveWorkDirective(member)
+                        ? new TargetPreview(false, "", -1, -1, "companion.preview.planning")
+                        : new TargetPreview(false, "", -1, -1, "companion.preview.inactive"));
+        if (hasWorkArea && tasksEnabled)
+        {
+            this.priorityTaskPlanningMembers.Add(member.NpcName);
+            this.nextTaskScanTick = Game1.ticks + 1;
+        }
         this.MarkStateDirty();
         if (showMessage && this.ShouldShowFeedbackFor(ownerId))
             this.Info("management.resumed", new { npc = member.DisplayName });

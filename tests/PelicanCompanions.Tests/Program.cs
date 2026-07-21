@@ -20,9 +20,19 @@ internal static class Program
         new("CompanionSkillTreePolicy respeita caixa e limite de pontos", CompanionSkillTreePolicyHonorsCasingAndPointBoundary),
         new("IGenericModConfigMenuApiCompat e publica", GenericModConfigMenuCompatibilityApiIsPublic),
         new("CompanionActionWheelHitTest mapeia setores variaveis e limites", CompanionActionWheelHitTestMapsSegmentsAndBounds),
+        new("CompanionActionWheelPagination pagina doze companions sem perdas", CompanionActionWheelPaginationMapsTwelveCompanions),
+        new("CompanionActionWheelNavigation navega e ignora slots vazios", CompanionActionWheelNavigationMovesFocusAndSkipsEmptySlots),
         new("CompanionActionWheelTextLayout preserva e equilibra rotulos", CompanionActionWheelTextLayoutPreservesAndBalancesLabels),
+        new("CompanionWorkAreaPolicy usa geometria circular com borda inclusiva", CompanionWorkAreaPolicyUsesCircularInclusiveGeometry),
+        new("CompanionWorkAreaPolicy aplica padding sem encolher a area", CompanionWorkAreaPolicyAppliesNonNegativePadding),
+        new("CompanionWorkAreaPolicy limita raios entre tres e vinte", CompanionWorkAreaPolicyNormalizesRadiusBounds),
+        new("CompanionWorkAreaPolicy restringe tarefas por especialidade", CompanionWorkAreaPolicyRestrictsTasksBySpecialty),
+        new("CompanionWorkAreaPolicy valida estado persistido ativo", CompanionWorkAreaPolicyValidatesPersistedState),
         new("RecruitmentContextPolicy permite recrutamento distante no mesmo mapa", RecruitmentContextPolicyAllowsAnyDistanceOnSameMap),
         new("CompanionDialoguePolicy mantem pets silenciosos", CompanionDialoguePolicyKeepsPetsSilent),
+        new("CompanionDialogueSelectionPolicy evita repeticao e usa a menos recente", CompanionDialogueSelectionPolicyAvoidsRecentLines),
+        new("CompanionDialogueScheduler compartilha cooldown por owner", CompanionDialogueSchedulerSharesOwnerCooldown),
+        new("CompanionDialogueScheduler prioriza e deduplica pedidos", CompanionDialogueSchedulerPrioritizesAndDeduplicates),
         new("FollowNavigationPolicy reseta recall apenas quando necessario", FollowNavigationPolicyResetsRecallOnlyWhenNecessary),
         new("FollowNavigationPolicy posterga e limita probes", FollowNavigationPolicyDefersAndThrottlesConnectivityProbes),
         new("FollowNavigationPolicy preserva controller e orcamento", FollowNavigationPolicyPreservesControllerAndBudget),
@@ -79,6 +89,7 @@ internal static class Program
         ModConfig config = new()
         {
             QuickActionWheelKey = null!,
+            ControllerQuickActionWheelKey = null!,
             RecruitKey = null!,
             ManualTaskKey = null!,
             OpenSquadInventoryKey = null!,
@@ -90,6 +101,7 @@ internal static class Program
         config.Validate();
 
         Assert.NotNull(config.QuickActionWheelKey, nameof(config.QuickActionWheelKey));
+        Assert.NotNull(config.ControllerQuickActionWheelKey, nameof(config.ControllerQuickActionWheelKey));
         Assert.NotNull(config.RecruitKey, nameof(config.RecruitKey));
         Assert.NotNull(config.ManualTaskKey, nameof(config.ManualTaskKey));
         Assert.NotNull(config.OpenSquadInventoryKey, nameof(config.OpenSquadInventoryKey));
@@ -110,6 +122,7 @@ internal static class Program
             CompanionWorkReturnDistance = 0,
             CompanionQuickHudMaxRows = 0,
             DialogueCooldownSeconds = -1,
+            CommunicationGroupCooldownSeconds = -1,
             ProtectBeehouseFlowers = -1,
             ParkTimeoutMinutes = -1
         };
@@ -124,6 +137,7 @@ internal static class Program
         Assert.Equal(3, config.CompanionWorkReturnDistance, nameof(config.CompanionWorkReturnDistance));
         Assert.Equal(1, config.CompanionQuickHudMaxRows, nameof(config.CompanionQuickHudMaxRows));
         Assert.Equal(0, config.DialogueCooldownSeconds, nameof(config.DialogueCooldownSeconds));
+        Assert.Equal(1, config.CommunicationGroupCooldownSeconds, nameof(config.CommunicationGroupCooldownSeconds));
         Assert.Equal(0, config.ProtectBeehouseFlowers, nameof(config.ProtectBeehouseFlowers));
         Assert.Equal(0, config.ParkTimeoutMinutes, nameof(config.ParkTimeoutMinutes));
     }
@@ -137,7 +151,8 @@ internal static class Program
             CompanionInventorySlots = 99,
             CompanionWorkRadius = 99,
             CompanionWorkReturnDistance = 99,
-            CompanionQuickHudMaxRows = 99
+            CompanionQuickHudMaxRows = 99,
+            CommunicationGroupCooldownSeconds = 99
         };
 
         config.Validate();
@@ -148,6 +163,7 @@ internal static class Program
         Assert.Equal(20, config.CompanionWorkRadius, nameof(config.CompanionWorkRadius));
         Assert.Equal(40, config.CompanionWorkReturnDistance, nameof(config.CompanionWorkReturnDistance));
         Assert.Equal(12, config.CompanionQuickHudMaxRows, nameof(config.CompanionQuickHudMaxRows));
+        Assert.Equal(30, config.CommunicationGroupCooldownSeconds, nameof(config.CommunicationGroupCooldownSeconds));
 
         config.CompanionWorkRadius = 18;
         config.CompanionWorkReturnDistance = 7;
@@ -363,6 +379,99 @@ internal static class Program
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(80f, 0f, inner, outer, 0, firstCenter), "quantidade de setores invalida");
     }
 
+    private static void CompanionActionWheelPaginationMapsTwelveCompanions()
+    {
+        CompanionActionWheelPageLayout unpaged = CompanionActionWheelPagination.Create(
+            optionCount: 4,
+            pinnedOptionCount: 1,
+            requestedPageIndex: 8);
+        Assert.Equal(1, unpaged.PageCount, "tres companions nao precisam de paginacao");
+        Assert.Equal(4, unpaged.Slots.Length, "layout legado deve continuar compacto");
+
+        List<int> companionOptionIndexes = new();
+        for (int pageIndex = 0; pageIndex < 4; pageIndex++)
+        {
+            CompanionActionWheelPageLayout page = CompanionActionWheelPagination.Create(
+                optionCount: 13,
+                pinnedOptionCount: 1,
+                requestedPageIndex: pageIndex);
+            Assert.Equal(4, page.PageCount, "doze companions devem formar quatro paginas");
+            Assert.Equal(6, page.Slots.Length, "pagina deve preservar seis setores geometricos");
+            Assert.Equal(
+                new CompanionActionWheelSlot(CompanionActionWheelSlotKind.Option, 0),
+                page.Slots[0],
+                "acao global deve permanecer fixa");
+            Assert.Equal(CompanionActionWheelSlotKind.NextPage, page.Slots[1].Kind, "proxima pagina no setor superior direito");
+            Assert.Equal(CompanionActionWheelSlotKind.PreviousPage, page.Slots[5].Kind, "pagina anterior no setor superior esquerdo");
+
+            companionOptionIndexes.AddRange(
+                page.Slots
+                    .Where(slot => slot.Kind == CompanionActionWheelSlotKind.Option && slot.OptionIndex > 0)
+                    .Select(slot => slot.OptionIndex));
+        }
+
+        Assert.SequenceEqual(
+            Enumerable.Range(1, 12),
+            companionOptionIndexes,
+            "cada companion deve aparecer exatamente uma vez");
+
+        CompanionActionWheelPageLayout wrapped = CompanionActionWheelPagination.Create(13, 1, -1);
+        Assert.Equal(3, wrapped.PageIndex, "pagina anterior a primeira deve voltar para a ultima");
+        Assert.SequenceEqual(
+            new[] { 10, 11, 12 },
+            wrapped.Slots.Where(slot => slot.Kind == CompanionActionWheelSlotKind.Option && slot.OptionIndex > 0)
+                .Select(slot => slot.OptionIndex),
+            "ultima pagina deve preservar os tres companions finais");
+
+        List<int> groundPagedOptionIndexes = new();
+        for (int pageIndex = 0; pageIndex < 6; pageIndex++)
+        {
+            CompanionActionWheelPageLayout groundPage = CompanionActionWheelPagination.Create(
+                optionCount: 14,
+                pinnedOptionCount: 2,
+                requestedPageIndex: pageIndex);
+            Assert.Equal(6, groundPage.PageCount, "duas acoes globais e doze companions devem formar seis paginas");
+            Assert.Equal(
+                new CompanionActionWheelSlot(CompanionActionWheelSlotKind.Option, 0),
+                groundPage.Slots[0],
+                "primeira acao global deve permanecer fixa");
+            Assert.Equal(
+                new CompanionActionWheelSlot(CompanionActionWheelSlotKind.Option, 1),
+                groundPage.Slots[1],
+                "segunda acao global deve permanecer fixa");
+            groundPagedOptionIndexes.AddRange(
+                groundPage.Slots
+                    .Where(slot => slot.Kind == CompanionActionWheelSlotKind.Option && slot.OptionIndex >= 2)
+                    .Select(slot => slot.OptionIndex));
+        }
+
+        Assert.SequenceEqual(
+            Enumerable.Range(2, 12),
+            groundPagedOptionIndexes,
+            "as duas acoes globais nao podem ocultar nenhum dos doze companions");
+    }
+
+    private static void CompanionActionWheelNavigationMovesFocusAndSkipsEmptySlots()
+    {
+        const float firstCenter = -MathF.PI / 2f;
+        CompanionActionWheelPageLayout full = CompanionActionWheelPagination.Create(13, 1, 0);
+
+        Assert.Equal<int?>(0, CompanionActionWheelNavigation.MoveFocus(full.Slots, null, 0f, -1f, firstCenter), "cima escolhe setor superior");
+        Assert.Equal<int?>(1, CompanionActionWheelNavigation.MoveFocus(full.Slots, 0, 1f, 0f, firstCenter), "direita alcanca proxima pagina");
+        Assert.Equal<int?>(2, CompanionActionWheelNavigation.MoveFocus(full.Slots, 1, 0f, 1f, firstCenter), "baixo alcanca primeiro companion");
+        Assert.Equal<int?>(3, CompanionActionWheelNavigation.MoveFocus(full.Slots, 2, 0f, 1f, firstCenter), "baixo continua espacialmente");
+        Assert.Equal<int?>(2, CompanionActionWheelNavigation.MoveFocus(full.Slots, 2, 0f, 0f, firstCenter), "vetor neutro preserva foco");
+
+        CompanionActionWheelPageLayout partial = CompanionActionWheelPagination.Create(
+            optionCount: 11,
+            pinnedOptionCount: 1,
+            requestedPageIndex: 3);
+        Assert.Equal(CompanionActionWheelSlotKind.Option, partial.Slots[2].Kind, "ultimo companion permanece selecionavel");
+        Assert.Equal(CompanionActionWheelSlotKind.Empty, partial.Slots[3].Kind, "primeiro excedente deve ser vazio");
+        Assert.Equal(CompanionActionWheelSlotKind.Empty, partial.Slots[4].Kind, "segundo excedente deve ser vazio");
+        Assert.Equal<int?>(2, CompanionActionWheelNavigation.MoveFocus(partial.Slots, null, 0f, 1f, firstCenter), "foco inicial deve ignorar placeholders");
+    }
+
     private static void CompanionActionWheelTextLayoutPreservesAndBalancesLabels()
     {
         static float Measure(string text)
@@ -419,6 +528,82 @@ internal static class Program
             "frase localizada deve caber sem mudar o tamanho da fonte");
     }
 
+    private static void CompanionWorkAreaPolicyUsesCircularInclusiveGeometry()
+    {
+        const int centerX = 10;
+        const int centerY = 20;
+
+        Assert.True(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX, centerY), "centro");
+        Assert.True(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX + 3, centerY), "borda cardinal inclusiva");
+        Assert.True(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX + 2, centerY + 2), "diagonal interna");
+        Assert.False(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX + 3, centerY + 1), "fora do circulo mas dentro do quadrado");
+        Assert.False(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX - 4, centerY), "fora da borda negativa");
+    }
+
+    private static void CompanionWorkAreaPolicyAppliesNonNegativePadding()
+    {
+        const int centerX = 7;
+        const int centerY = 11;
+
+        Assert.False(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX + 4, centerY), "sem padding");
+        Assert.True(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX + 4, centerY, padding: 1), "padding cardinal");
+        Assert.False(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX + 4, centerY, padding: -10), "padding negativo deve valer zero");
+        Assert.True(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX + 3, centerY + 4, padding: 2), "borda 3-4-5 com padding");
+        Assert.False(CompanionWorkAreaPolicy.Contains(centerX, centerY, 3, centerX + 4, centerY + 4, padding: 2), "padding tambem permanece circular");
+    }
+
+    private static void CompanionWorkAreaPolicyNormalizesRadiusBounds()
+    {
+        Assert.Equal(3, CompanionWorkAreaPolicy.NormalizeRadius(int.MinValue), "raio abaixo do minimo");
+        Assert.Equal(3, CompanionWorkAreaPolicy.NormalizeRadius(3), "raio minimo");
+        Assert.Equal(20, CompanionWorkAreaPolicy.NormalizeRadius(20), "raio maximo");
+        Assert.Equal(20, CompanionWorkAreaPolicy.NormalizeRadius(int.MaxValue), "raio acima do maximo");
+
+        Assert.True(CompanionWorkAreaPolicy.Contains(0, 0, 0, 3, 0), "Contains deve normalizar para tres");
+        Assert.False(CompanionWorkAreaPolicy.Contains(0, 0, 0, 4, 0), "limite normalizado inferior");
+        Assert.True(CompanionWorkAreaPolicy.Contains(0, 0, 99, 20, 0), "Contains deve normalizar para vinte");
+        Assert.False(CompanionWorkAreaPolicy.Contains(0, 0, 99, 21, 0), "limite normalizado superior");
+    }
+
+    private static void CompanionWorkAreaPolicyRestrictsTasksBySpecialty()
+    {
+        Assert.True(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Wood, CompanionTaskKind.Lumbering), "madeira permite corte");
+        Assert.False(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Wood, CompanionTaskKind.Mining), "madeira rejeita mineracao");
+        Assert.True(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Mining, CompanionTaskKind.Mining), "mineracao permite pedras");
+        Assert.False(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Mining, CompanionTaskKind.Lumbering), "mineracao rejeita corte");
+        Assert.True(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.ClearArea, CompanionTaskKind.Lumbering), "limpar permite corte");
+        Assert.True(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.ClearArea, CompanionTaskKind.Mining), "limpar permite mineracao");
+        Assert.False(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.ClearArea, CompanionTaskKind.Watering), "area fixa nao inclui rega");
+        Assert.False(CompanionWorkAreaPolicy.Allows((CompanionWorkSpecialty)999, CompanionTaskKind.Lumbering), "especialidade desconhecida");
+    }
+
+    private static void CompanionWorkAreaPolicyValidatesPersistedState()
+    {
+        Assert.True(
+            CompanionWorkAreaPolicy.IsPersistedStateValid(false, null, null, -1, -1, -1, (CompanionWorkSpecialty)999),
+            "estado inativo nao exige payload");
+        Assert.False(
+            CompanionWorkAreaPolicy.IsActiveStateValid(false, null, null, -1, -1, -1, (CompanionWorkSpecialty)999),
+            "estado inativo valido nao pode ser interpretado como area ativa");
+        Assert.True(
+            CompanionWorkAreaPolicy.IsActiveStateValid(true, "order-active", "Farm", 4, 5, 8, CompanionWorkSpecialty.ClearArea),
+            "helper ativo exige flag e payload validos");
+        Assert.True(
+            CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order-1", "Farm", 0, 0, 3, CompanionWorkSpecialty.Wood),
+            "estado valido no limite inferior");
+        Assert.True(
+            CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order-2", "Mine", 80, 120, 20, CompanionWorkSpecialty.Mining),
+            "estado valido no limite superior");
+
+        Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, " ", "Farm", 1, 1, 8, CompanionWorkSpecialty.ClearArea), "order id vazio");
+        Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", " ", 1, 1, 8, CompanionWorkSpecialty.ClearArea), "mapa vazio");
+        Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", "Farm", -1, 1, 8, CompanionWorkSpecialty.ClearArea), "centro X negativo");
+        Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", "Farm", 1, -1, 8, CompanionWorkSpecialty.ClearArea), "centro Y negativo");
+        Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", "Farm", 1, 1, 2, CompanionWorkSpecialty.ClearArea), "raio abaixo de tres");
+        Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", "Farm", 1, 1, 21, CompanionWorkSpecialty.ClearArea), "raio acima de vinte");
+        Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", "Farm", 1, 1, 8, (CompanionWorkSpecialty)999), "especialidade desconhecida");
+    }
+
     private static void RecruitmentContextPolicyAllowsAnyDistanceOnSameMap()
     {
         Assert.True(
@@ -436,6 +621,78 @@ internal static class Program
     {
         Assert.False(CompanionDialoguePolicy.CanSpeak(isPet: true), "pet");
         Assert.True(CompanionDialoguePolicy.CanSpeak(isPet: false), "NPC comum");
+        Assert.Equal(CompanionExpressionKind.PetExpression, CompanionDialoguePolicy.GetExpressionKind(isPet: true), "expressao de pet");
+        Assert.Equal(CompanionExpressionKind.Speech, CompanionDialoguePolicy.GetExpressionKind(isPet: false), "fala de NPC");
+    }
+
+    private static void CompanionDialogueSelectionPolicyAvoidsRecentLines()
+    {
+        CompanionDialogueLine first = new() { Id = "first", TextKey = "dialogue.first" };
+        CompanionDialogueLine second = new() { Id = "second", TextKey = "dialogue.second" };
+        CompanionDialogueLine third = new() { Id = "third", TextKey = "dialogue.third" };
+        CompanionDialogueLine? fresh = CompanionDialogueSelectionPolicy.Select(
+            new[] { first, second, third },
+            new[] { "first", "second" },
+            weightedRoll: 0);
+        Assert.Equal("third", fresh?.Id, "linha ainda nao usada");
+
+        CompanionDialogueLine? oldest = CompanionDialogueSelectionPolicy.Select(
+            new[] { first, second, third },
+            new[] { "first", "second", "third" },
+            weightedRoll: 0);
+        Assert.Equal("third", oldest?.Id, "linha usada ha mais tempo");
+    }
+
+    private static void CompanionDialogueSchedulerSharesOwnerCooldown()
+    {
+        CompanionDialogueScheduler scheduler = new();
+        CompanionDialogueContext context = new();
+        scheduler.Enqueue(new CompanionDialogueRequest(1, "Abigail", "Idle", CompanionDialoguePriority.Ambient, context, false, 100, 600, "a"));
+        scheduler.Enqueue(new CompanionDialogueRequest(1, "Sebastian", "Idle", CompanionDialoguePriority.Ambient, context, false, 100, 600, "b"));
+
+        Assert.True(scheduler.TryDequeue(1, 100, 180, out CompanionDialogueRequest first), "primeira fala deve sair");
+        scheduler.MarkPresented(1, first.NpcName, "line.a", 100, minimumGapTicks: 60);
+        Assert.False(scheduler.CanPresent(1, 279, 180), "consulta de cooldown deve compartilhar o mesmo limite");
+        Assert.False(scheduler.CanPresentIdentity(1, "line.a", 159, 60), "intervalo minimo deve bloquear somente a identidade recente");
+        Assert.True(scheduler.CanPresentIdentity(1, "line.a", 160, 60), "intervalo da identidade deve vencer no limite");
+        Assert.True(scheduler.CanPresentIdentity(1, "line.b", 101, 600), "outra identidade nao deve herdar o intervalo");
+        Assert.False(scheduler.TryDequeue(1, 279, 180, out _), "segundo NPC deve respeitar cooldown do grupo");
+        Assert.True(scheduler.TryDequeue(1, 280, 180, out CompanionDialogueRequest second), "cooldown deve vencer no limite");
+        Assert.Equal("Sebastian", second.NpcName, "segundo speaker");
+
+        CompanionDialogueScheduler boundedIntervals = new();
+        for (int i = 0; i < CompanionDialogueScheduler.IdentityIntervalHistoryLimit; i++)
+        {
+            Assert.True(
+                boundedIntervals.CanPresentIdentity(1, $"line.{i}", i, 10_000),
+                "identidade nova deve caber enquanto houver slot protegido");
+            boundedIntervals.MarkPresented(1, "Leah", $"line.{i}", i, minimumGapTicks: 10_000);
+        }
+        Assert.False(
+            boundedIntervals.CanPresentIdentity(1, "overflow", CompanionDialogueScheduler.IdentityIntervalHistoryLimit, 10_000),
+            "historico cheio nao deve expulsar um intervalo ainda ativo");
+        Assert.False(
+            boundedIntervals.CanPresentIdentity(1, "line.0", 9_999, 10_000),
+            "identidade protegida deve respeitar todo o intervalo mesmo com o historico cheio");
+        Assert.True(
+            boundedIntervals.CanPresentIdentity(1, "overflow", 10_000, 10_000),
+            "um slot deve ser liberado assim que o intervalo mais antigo vencer");
+    }
+
+    private static void CompanionDialogueSchedulerPrioritizesAndDeduplicates()
+    {
+        CompanionDialogueScheduler scheduler = new();
+        CompanionDialogueContext context = new();
+        scheduler.Enqueue(new CompanionDialogueRequest(1, "Leah", "Idle", CompanionDialoguePriority.Ambient, context, false, 10, 600, "same"));
+        scheduler.Enqueue(new CompanionDialogueRequest(1, "Leah", "TaskFailure", CompanionDialoguePriority.Command, context, false, 11, 600, "same"));
+        scheduler.Enqueue(new CompanionDialogueRequest(1, "Robin", "Lumbering", CompanionDialoguePriority.Task, context, false, 12, 600, "other"));
+
+        Assert.True(scheduler.TryDequeue(1, 12, 180, out CompanionDialogueRequest selected), "pedido prioritario deve sair");
+        Assert.Equal("TaskFailure", selected.Category, "dedupe deve substituir pedido inferior");
+        scheduler.MarkPresented(1, selected.NpcName, "failure", 12);
+        Assert.True(scheduler.TryDequeue(1, 192, 180, out CompanionDialogueRequest remaining), "outro pedido deve permanecer na fila");
+        Assert.Equal("Lumbering", remaining.Category, "fila deduplicada deve manter somente o pedido distinto");
+        Assert.False(scheduler.TryDequeue(1, 400, 180, out _), "nenhuma copia do pedido substituido deve restar");
     }
 
     private static void FollowNavigationPolicyResetsRecallOnlyWhenNecessary()

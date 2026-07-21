@@ -25,7 +25,9 @@ default_keys="$(mktemp)"
 ptbr_keys="$(mktemp)"
 default_tokens="$(mktemp)"
 ptbr_tokens="$(mktemp)"
-trap 'rm -f "$default_keys" "$ptbr_keys" "$default_tokens" "$ptbr_tokens"' EXIT
+profile_text_keys="$(mktemp)"
+missing_profile_text_keys="$(mktemp)"
+trap 'rm -f "$default_keys" "$ptbr_keys" "$default_tokens" "$ptbr_tokens" "$profile_text_keys" "$missing_profile_text_keys"' EXIT
 
 jq -r 'keys[]' i18n/default.json | sort >"$default_keys"
 jq -r 'keys[]' i18n/pt-BR.json | sort >"$ptbr_keys"
@@ -44,4 +46,17 @@ if ! diff -u "$default_tokens" "$ptbr_tokens"; then
     exit 1
 fi
 
-echo "Validation passed: build, regression test harness, JSON syntax, translation keys, and token parity."
+if ! jq -e '[.. | objects | select(has("TextKey")) | select((.TextKey | type) != "string" or (.TextKey | length) == 0)] | length == 0' assets/NpcConfig.json >/dev/null; then
+    echo "NpcConfig.json contains a missing or invalid TextKey." >&2
+    exit 1
+fi
+
+jq -r '.. | objects | .TextKey? // empty' assets/NpcConfig.json | sort -u >"$profile_text_keys"
+comm -23 "$profile_text_keys" "$default_keys" >"$missing_profile_text_keys"
+if [[ -s "$missing_profile_text_keys" ]]; then
+    echo "NpcConfig.json references missing default translation keys:" >&2
+    sed 's/^/ - /' "$missing_profile_text_keys" >&2
+    exit 1
+fi
+
+echo "Validation passed: build, regression test harness, JSON syntax, translation/profile coverage, and token parity."

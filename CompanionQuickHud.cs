@@ -390,6 +390,7 @@ internal sealed class CompanionQuickHud : IClickableMenu
     private Color GetIndicatorColor(SquadMemberState member, bool directWork)
     {
         if (member.CurrentActivityKey == "companion.status.stuck"
+            || member.CurrentActivityKey is "companion.status.work_area_paused" or "companion.status.work_area_blocked"
             || member.LastFailureReasonKey == "companion.task_failure.npc_missing")
             return WarningIndicator;
         if (member.CurrentActivityKey == "companion.status.moving_to_wait")

@@ -29,6 +29,7 @@ public sealed partial class ModEntry
                 if (Context.IsMainPlayer && !this.saveWritesBlocked)
                 {
                     this.RebalanceMemberInventoriesForCapacity();
+                    this.EnforceConfiguredWorkAreaRadius();
                     this.MarkStateDirty();
                 }
                 this.Helper.WriteConfig(this.config);
@@ -40,6 +41,7 @@ public sealed partial class ModEntry
         this.AddSection(gmcm, "config.section.controls");
         this.AddParagraph(gmcm, "config.section.controls.description");
         this.AddKeybindOption(gmcm, "quickActionWheelKey", () => this.config.QuickActionWheelKey, value => this.config.QuickActionWheelKey = value);
+        this.AddKeybindOption(gmcm, "controllerQuickActionWheelKey", () => this.config.ControllerQuickActionWheelKey, value => this.config.ControllerQuickActionWheelKey = value);
         this.AddKeybindOption(gmcm, "recruitKey", () => this.config.RecruitKey, value => this.config.RecruitKey = value);
         this.AddKeybindOption(gmcm, "manualTaskKey", () => this.config.ManualTaskKey, value => this.config.ManualTaskKey = value);
         this.AddKeybindOption(gmcm, "openSquadInventoryKey", () => this.config.OpenSquadInventoryKey, value => this.config.OpenSquadInventoryKey = value);
@@ -76,6 +78,8 @@ public sealed partial class ModEntry
         this.AddSection(gmcm, "config.section.dialogue");
         this.AddBoolOption(gmcm, "enableCommunication", () => this.config.EnableCommunication, value => this.config.EnableCommunication = value);
         this.AddIntOption(gmcm, "dialogueCooldownSeconds", () => this.config.DialogueCooldownSeconds, value => this.config.DialogueCooldownSeconds = value);
+        this.AddIntOption(gmcm, "communicationGroupCooldownSeconds", () => this.config.CommunicationGroupCooldownSeconds, value => this.config.CommunicationGroupCooldownSeconds = value);
+        this.AddBoolOption(gmcm, "enablePetExpressions", () => this.config.EnablePetExpressions, value => this.config.EnablePetExpressions = value);
 
         this.AddSection(gmcm, "config.section.tasks");
         this.AddBoolOption(gmcm, "enableGathering", () => this.config.EnableGathering, value => this.config.EnableGathering = value);
@@ -230,7 +234,13 @@ public sealed partial class ModEntry
             try
             {
                 this.Helper.Multiplayer.SendMessage(
-                    new CompanionCommandFeedbackMessage { Text = text, IsError = isError },
+                    new CompanionCommandFeedbackMessage
+                    {
+                        Text = text,
+                        IsError = isError,
+                        Action = this.commandFeedbackAction ?? "",
+                        CommandId = this.commandFeedbackCommandId ?? ""
+                    },
                     MessageCommandFeedback,
                     modIDs: new[] { this.ModManifest.UniqueID },
                     playerIDs: new[] { targetPlayerId });

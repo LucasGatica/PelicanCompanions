@@ -56,7 +56,7 @@ public sealed partial class ModEntry
         try
         {
             HashSet<string> activeFollowerNames = this.members.Values
-            .Where(member => member.Mode == CompanionMode.Following)
+            .Where(member => member.Mode == CompanionMode.Following && !this.HasActiveWorkArea(member))
             .Select(member => member.NpcName)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (string staleName in this.disconnectedFollowRecovery.Keys.Where(name => !activeFollowerNames.Contains(name)).ToList())
@@ -76,6 +76,24 @@ public sealed partial class ModEntry
                     member.ParkedAtUtcTicks = 0;
                     member.WaitingLocationName = null;
                     this.SetCompanionActivity(member, "companion.status.returning");
+                    bool tasksEnabled = this.AreTasksEnabled(member.OwnerId);
+                    this.UpdateTargetPreview(
+                        member,
+                        new TargetPreview(
+                            false,
+                            "",
+                            -1,
+                            -1,
+                            !tasksEnabled
+                                ? "companion.preview.tasks_disabled"
+                                : this.HasActiveWorkDirective(member)
+                                    ? "companion.preview.planning"
+                                    : "companion.preview.inactive"));
+                    if (tasksEnabled && this.HasActiveWorkArea(member))
+                    {
+                        this.priorityTaskPlanningMembers.Add(member.NpcName);
+                        this.nextTaskScanTick = Game1.ticks + 1;
+                    }
                     this.ClearFollowState(member.NpcName);
                     this.MarkStateDirty();
                 }
@@ -98,6 +116,51 @@ public sealed partial class ModEntry
 
                 if (member.LastFailureReasonKey == "companion.task_failure.npc_missing")
                     this.SetTaskFailure(member, "");
+
+                if (this.HasActiveWorkArea(member))
+                {
+                    if (owner is null)
+                    {
+                        this.StoreWaitingPosition(member, npc);
+                        member.Mode = CompanionMode.ParkedForDisconnect;
+                        member.ParkedAtUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
+                        this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.not_following"));
+                        this.SetCompanionActivity(member, "companion.status.parked");
+                        if (this.IsOwnedCompanionController(npc))
+                            this.StopCompanionMovement(npc);
+                        this.MarkStateDirty();
+                        continue;
+                    }
+
+                    if (this.IsOwnedCompanionController(npc))
+                        this.StopCompanionMovement(npc);
+                    if (!this.AreTasksEnabled(member.OwnerId))
+                    {
+                        this.SetCompanionActivity(member, "companion.status.work_area_paused");
+                        this.SetTaskFailure(member, "companion.task_failure.tasks_disabled");
+                        this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.tasks_disabled"));
+                    }
+                    else if (this.HasPendingWorkAreaRecovery(member))
+                    {
+                        this.SetCompanionActivity(member, "companion.status.work_area_paused");
+                        this.SetTaskFailure(member, "companion.task_failure.work_area_unavailable");
+                        this.UpdateTargetPreview(
+                            member,
+                            new TargetPreview(false, "", -1, -1, "companion.task_failure.work_area_unavailable"));
+                    }
+                    else if (member.CurrentActivityKey is "companion.status.following"
+                        or "companion.status.returning"
+                        or "companion.status.parked"
+                        || (member.CurrentActivityKey == "companion.status.work_area_paused"
+                            && member.LastFailureReasonKey == "companion.task_failure.tasks_disabled"))
+                    {
+                        if (member.LastFailureReasonKey == "companion.task_failure.tasks_disabled")
+                            this.SetTaskFailure(member, "");
+                        this.SetCompanionActivity(member, "companion.status.work_area");
+                        this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.planning"));
+                    }
+                    continue;
+                }
 
                 if (HasIndependentNpcMovementSystem(npc))
                 {
@@ -122,6 +185,7 @@ public sealed partial class ModEntry
                         this.StoreWaitingPosition(member, npc);
                         member.Mode = CompanionMode.ParkedForDisconnect;
                         member.ParkedAtUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
+                        this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.not_following"));
                         this.SetCompanionActivity(member, "companion.status.parked");
                         this.StopCompanionMovement(npc);
                         this.MarkStateDirty();

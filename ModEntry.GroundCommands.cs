@@ -155,6 +155,7 @@ public sealed partial class ModEntry
         // Everything above is a read-only prepare phase. Replacing the old
         // order starts only after definite disconnection has been ruled out;
         // a bounded inconclusive result is left to the real path controller.
+        this.ClearCompanionWorkArea(member, cancelPendingAreaTask: true);
         this.RemovePendingTask(member.NpcName);
         this.ResumeFollowing(member.NpcName, ownerId, showMessage: false);
         if (!this.IsGroundCommandTileAvailable(location, tile)
@@ -185,6 +186,7 @@ public sealed partial class ModEntry
         this.SetTaskFailure(member, "");
         this.SetCompanionActivity(member, "companion.status.moving_to_wait");
         this.SetCompanionTarget(member, CompanionTaskKind.MovingToWait, tile);
+        this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.inactive"));
 
         this.MarkStateDirty();
         this.InfoForPlayer(ownerId, "wheel.sent_to_wait", new { npc = member.DisplayName });
@@ -306,6 +308,7 @@ public sealed partial class ModEntry
         this.StoreWaitingPosition(member, npc);
         this.SetTaskResult(member, "companion.task_result.waiting_at_point");
         this.RemovePendingTask(task);
+        this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.not_following"));
         this.ClearFollowState(member.NpcName);
         this.DisableNpcSchedule(npc, stopCurrentRoute: true);
         this.MarkStateDirty();
@@ -327,6 +330,14 @@ public sealed partial class ModEntry
         }
 
         this.RemovePendingTask(task, failureKey);
+        this.UpdateTargetPreview(
+            member,
+            new TargetPreview(
+                false,
+                "",
+                -1,
+                -1,
+                canWaitWhereStopped ? "companion.preview.not_following" : "companion.preview.inactive"));
         this.ClearFollowState(member.NpcName);
         if (npc is not null)
             this.DisableNpcSchedule(npc, stopCurrentRoute: true);

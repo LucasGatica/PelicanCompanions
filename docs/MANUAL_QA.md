@@ -1,6 +1,6 @@
 # Roteiro de QA manual
 
-O validador automatizado compila o mod, executa 32 testes de regressão e verifica
+O validador automatizado compila o mod, executa a suíte de regressão e verifica
 os arquivos JSON, mas não substitui um teste dentro do Stardew Valley. Execute
 este roteiro antes de publicar uma nova versão.
 
@@ -26,6 +26,13 @@ este roteiro antes de publicar uma nova versão.
 - Carregar com um NPC customizado ausente, disponibilizá-lo mais tarde na mesma
   sessão, dispensá-lo e confirmar captura/restauração da velocidade antes do
   primeiro controller do mod.
+- Atualizar um save schema 8 para 9 com uma ordem de área ativa e histórico de
+  diálogo. Centro/mapa/raio/especialidade e até quatro chaves recentes por NPC
+  devem sobreviver; path, target, reserva, preview, fala enfileirada e animação
+  não podem reaparecer como runtime antigo.
+- Salvar no meio de uma área ativa, recarregar e confirmar que o NPC volta ao
+  mapa/centro salvo e replaneja apenas recursos ainda existentes. Um payload de
+  área inválido deve ser limpo sem apagar o companion ou seu inventário.
 
 ## Follow, mapas e recall
 
@@ -81,6 +88,83 @@ este roteiro antes de publicar uma nova versão.
   Preview, cancelamento, Follow/Wait e troca de mapa não podem ressuscitar uma
   tarefa antiga ou criar path no frame do clique.
 
+## Áreas de trabalho e animações
+
+- Em chão vazio seguro, abrir `X > Trabalhar`, escolher Madeira, Mineração e
+  Limpar área, selecionar um dos raios oferecidos e, em cada caso, testar Mandar
+  todos e um NPC específico. Madeira não pode escolher pedras, Mineração não
+  pode escolher árvores e Limpar deve processar ambos; modo correspondente
+  desativado deve produzir feedback sem gravar uma ordem impossível.
+- Ajustar `CompanionWorkRadius` primeiro para 3 e depois para 20. A roda deve
+  nunca oferecer/acatar valor acima do máximo do host. A marca deve
+  mostrar centro e borda circular, incluir o tile exatamente no raio e excluir
+  diagonais que caberiam apenas no quadrado envolvente. O preview deve sumir sem
+  deixar overlay permanente; uma ordem rejeitada pelo host deve removê-lo assim
+  que o feedback chegar ao farmhand.
+- Preparar recursos logo dentro e logo fora da borda. O NPC pode ocupar um stand
+  adjacente até um tile fora do círculo, mas nunca selecionar o recurso externo.
+  Repetir nas quatro direções e em diagonal.
+- Com dois companions na mesma área, reservar ou bloquear temporariamente os
+  únicos stands. O estado deve indicar área bloqueada e tentar novamente depois;
+  não pode anunciar conclusão enquanto ainda houver recurso compatível. Remover
+  de fato o último recurso deve concluir uma única vez e deixar o NPC Waiting.
+- Trocar o owner de mapa durante a ordem: workers e centro devem permanecer no
+  mapa marcado. Usar Wait deve pausar sem apagar a área; Resume deve retomá-la.
+  `F8` deve pausar/retomar o planejamento, enquanto Follow, Recall ou uma ordem
+  direta incompatível deve cancelar a área explicitamente.
+- Salvar/recarregar e avançar o dia com área ativa. Confirmar o mesmo mapa,
+  centro, raio e especialidade, sem ressuscitar target já removido nem duplicar
+  reserva. Desconectar/reconectar o owner deve preservar a intenção com o estado
+  de estacionamento seguro esperado. Em mapa customizado, forçar uma falha de
+  posicionamento, liberar depois um tile seguro no mesmo mapa e confirmar que o
+  retry periódico recupera a área sem exigir troca de location. Repetir o reload
+  com `F8` desligado: o status deve continuar pausado até reativar tarefas. Ainda
+  durante uma falha de posicionamento, remover o último recurso compatível e
+  confirmar que a área conclui em vez de tentar recovery para sempre.
+- Para Lumber, Mine e Water, observar que o NPC chega ao stand, olha para o
+  target e só então mostra Axe, Pickaxe ou Watering Can. Para Gather, Harvest e
+  Pet, deve aparecer uma ação de mão legível; nenhuma animação pode começar
+  enquanto o companion ainda está caminhando, e o alvo não pode mudar ou sumir
+  antes de o movimento visível chegar ao impacto. Comparar vários golpes de
+  Axe/Pickaxe: o swing deve ocupar o cooldown existente, sem somar uma espera
+  extra à cadência anterior.
+- Forçar sucesso e falha em cada família de tarefa. Sucesso deve mostrar
+  impacto/check e reação positiva; falha deve mostrar pergunta/tremor sem
+  consumir recurso ou conceder item/XP. Troca de mapa, menu e reload devem
+  limpar efeitos transitórios sem deixar ferramenta desenhada no NPC.
+
+## Comunicação contextual e pets
+
+- Recrutar três NPCs, reduzir `DialogueCooldownSeconds` e colocar
+  `CommunicationGroupCooldownSeconds` em um valor observável. Disparar idle,
+  tarefa, falha e conclusão em sequência: nunca deve haver duas falas dentro do
+  intervalo coletivo, e milestone/comando deve sair antes de tarefa/ambiental.
+- Enfileirar repetidamente a mesma categoria e provocar eventos depois do TTL.
+  Pedidos equivalentes devem ser deduplicados, eventos vencidos não devem falar
+  tarde e chatter não pode crescer sem limite nem inundar balões/HUD.
+- Com um perfil de teste contendo pelo menos três IDs de fala, observar várias
+  emissões e recarregar o save. Enquanto houver alternativa, a mesma linha não
+  deve repetir no grupo nem no mesmo speaker; o último speaker de idle deve ser
+  evitado quando outro companion for elegível.
+- Criar uma linha específica para um NPC e fallbacks `All_Villager`/`Generic`.
+  Confirmar prioridade do nome exato e condições isoladas/combinadas para
+  amizade, spouse, manhã/noite, estação, sol/chuva/neve, interior/exterior,
+  Farm/Mine, tarefa, manual, sucesso/falha e item. Tokens visíveis devem refletir
+  o owner e o contexto reais, nunca `Game1.player` de outra tela. Se a linha
+  exata estiver recente, `All_Villager` ainda deve preceder `Generic`, mesmo que
+  este tenha mais condições. Em co-op com locales diferentes, cada cliente deve
+  traduzir localmente; se não tiver a chave, deve conservar o texto do host.
+- Cancelar o recrutamento pelo atalho e pela roda, como host e farmhand. A recusa
+  deve passar pelo scheduler do host e produzir fala do NPC ou expressão
+  silenciosa do pet; confirmar deve continuar revalidando elegibilidade no host.
+- Recrutar gato, cachorro e tartaruga e provocar Recruit, Idle, sucesso, falha,
+  recusa e Dismiss. Não pode aparecer texto acima do pet; devem surgir somente
+  emote, som e pulo/tremor adequados. Desativar `EnablePetExpressions` deve
+  silenciar também esses efeitos sem afetar comandos ou tarefas.
+- Desativar `EnableCommunication`: NPCs comuns deixam de falar espontaneamente,
+  pets continuam obedecendo sua opção separada e nenhuma fila antiga deve
+  despejar várias falas ao reativar.
+
 ## Interface
 
 - Passar o cursor pelo corpo/cabeça de dois NPCs sobrepostos e confirmar que X
@@ -95,9 +179,10 @@ este roteiro antes de publicar uma nova versão.
   sem sobreposição entre setores.
 - Em NPC não recrutado no mesmo mapa, confirmar que aparece apenas Recrutar e
   que a ação funciona tanto ao lado quanto do outro lado da área visível, sem
-  depender da distância do jogador. Amizade, suporte do NPC e lotação continuam
-  revalidados no clique; um NPC de outro mapa deve ser rejeitado. Em companion
-  de outro jogador, nenhuma ação mutável deve abrir.
+  depender da distância do jogador. A roda deve pedir confirmação. Amizade,
+  suporte do NPC e lotação continuam revalidados no commit; um NPC de outro mapa
+  deve ser rejeitado. Em companion de outro jogador, nenhuma ação mutável deve
+  abrir.
 - Centro, fora do círculo, separadores, botão direito, Escape e um segundo X
   devem cancelar sem executar ação no mundo.
 - Apontar para o tronco ou a copa de árvore adulta não-tapped, pedra quebrável e cultura
@@ -124,9 +209,15 @@ este roteiro antes de publicar uma nova versão.
   acidental ao escolher Trabalhar novamente.
 - Abrir a roda junto às quatro bordas, com UI scale diferente e em split-screen;
   círculo, nome, texto de ajuda e hitboxes devem permanecer dentro do viewport.
-- Pressionar X sobre chão vazio, seguro e alcançável com 1, 2, 3 e mais de 3
-  companions recrutados. Conferir Dispensar todos e no máximo três opções
-  Mandar NPC, ordenadas de modo estável, sem o quarto nome vazar para a roda.
+- Pressionar X sobre chão vazio, seguro e alcançável com 1, 2, 3, 6 e 12
+  companions recrutados. Conferir Trabalhar e Dispensar todos fixos e percorrer
+  todas as páginas: cada opção Mandar NPC deve aparecer exatamente uma vez, em
+  ordem estável, inclusive o 12º nome e a última página parcial.
+- Repetir a roda de chão, recurso e seleção da área sem mouse. Setas/WASD,
+  D-pad e ambos os sticks devem mover o foco espacial sem parar em slot vazio;
+  A/Enter ativa, B/Escape cancela e shoulders/Page Up/Page Down trocam páginas.
+  Repetir com scroll do mouse, voltar da última à primeira página e confirmar
+  que a ação global continua acessível em todas elas.
 - Repetir em um tile visível a mais de três tiles do farmer e com o companion
   seguindo, trabalhando ou esperando também fora desse raio. A roda e o nome
   devem aparecer; água, bloqueios, outro mapa e rota definitivamente impossível
@@ -216,6 +307,20 @@ este roteiro antes de publicar uma nova versão.
   segurança, reachability e reserva; comando atrasado/repetido ou
   mudança de mapa antes do processamento deve falhar sem movimento, dismiss ou
   feedback no HUD do jogador errado.
+- Como farmhand, executar Trabalhar > Madeira/Mineração/Limpar > um/todos com
+  raio 3 e 20. O host deve revalidar owner, mapa, centro seguro, raio,
+  especialidade, modos e membros; replay, raio forjado, mapa stale ou companion
+  de outro owner não pode criar área nem cancelar o trabalho anterior.
+- Observar a mesma tarefa simultaneamente no host e farmhand: cada ação deve
+  produzir uma animação e um commit, sem ferramenta/efeito duplicado nem item/XP
+  extra. Repetir com fala de NPC e pet: texto/emote/som deve aparecer uma vez em
+  cada cliente, e mensagem cosmética enviada por farmhand deve ser ignorada.
+- Enquanto uma animação ou a prévia circular estiver visível no farmhand,
+  forçar snapshots frequentes. Eles não podem interromper o efeito nem apagar a
+  prévia recém-criada.
+- Com companions de owners diferentes no mesmo mapa, saturar as duas filas de
+  comunicação. O cooldown deve ser compartilhado dentro de cada grupo, não entre
+  owners; nenhum texto ou expressão pode ser entregue à tela/mapa incorreto.
 - Durante um Mandar NPC remoto, bloquear o destino ou desconectar o owner e
   confirmar liberação da reserva, ausência de teleporte e snapshot coerente de
   Following/Waiting após reconexão.

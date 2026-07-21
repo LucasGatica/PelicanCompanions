@@ -5,9 +5,10 @@ namespace PelicanCompanions;
 
 internal sealed class ModConfig
 {
-    public int ConfigVersion { get; set; } = 7;
+    public int ConfigVersion { get; set; } = 8;
 
     public KeybindList QuickActionWheelKey { get; set; } = KeybindList.Parse("X");
+    public KeybindList ControllerQuickActionWheelKey { get; set; } = KeybindList.Parse("LeftStick");
     public KeybindList RecruitKey { get; set; } = KeybindList.Parse("F5");
     public KeybindList ManualTaskKey { get; set; } = KeybindList.Parse("F6");
     public KeybindList OpenSquadInventoryKey { get; set; } = KeybindList.Parse("F7");
@@ -39,6 +40,8 @@ internal sealed class ModConfig
 
     public bool EnableCommunication { get; set; } = true;
     public int DialogueCooldownSeconds { get; set; } = 45;
+    public int CommunicationGroupCooldownSeconds { get; set; } = 3;
+    public bool EnablePetExpressions { get; set; } = true;
     public bool EnableIdleAnimations { get; set; } = false;
 
     public bool EnableGathering { get; set; } = false;
@@ -63,6 +66,7 @@ internal sealed class ModConfig
     public void Validate()
     {
         this.QuickActionWheelKey ??= KeybindList.Parse("X");
+        this.ControllerQuickActionWheelKey ??= KeybindList.Parse("LeftStick");
         this.RecruitKey ??= KeybindList.Parse("F5");
         this.ManualTaskKey ??= KeybindList.Parse("F6");
         this.OpenSquadInventoryKey ??= KeybindList.Parse("F7");
@@ -102,6 +106,7 @@ internal sealed class ModConfig
         this.MilkingMode = NormalizeTaskMode(this.MilkingMode, TaskMode.Disabled);
 
         this.DialogueCooldownSeconds = Math.Max(0, this.DialogueCooldownSeconds);
+        this.CommunicationGroupCooldownSeconds = Math.Clamp(this.CommunicationGroupCooldownSeconds, 1, 30);
         this.ProtectBeehouseFlowers = Math.Max(0, this.ProtectBeehouseFlowers);
         this.ParkTimeoutMinutes = Math.Max(0, this.ParkTimeoutMinutes);
     }

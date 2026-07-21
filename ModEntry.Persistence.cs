@@ -49,43 +49,85 @@ public sealed partial class ModEntry
         }
     }
 
-    private void RestorePersistedMemberPositions(bool logFailures = true)
+    private void RestorePersistedMemberPositions(
+        bool logFailures = true,
+        bool restoreWorkAreas = true,
+        bool retryUnavailableWorkAreasOnly = false)
     {
         foreach (SquadMemberState member in this.members.Values)
         {
             try
             {
-                if (member.Mode is not (CompanionMode.Waiting or CompanionMode.ParkedForDisconnect)
-                    || string.IsNullOrWhiteSpace(member.WaitingLocationName))
+                if (retryUnavailableWorkAreasOnly
+                    && this.IsOwnerSimulationBlocked(member.OwnerId, blockForMenu: false))
                 {
                     continue;
                 }
 
                 NPC? npc = this.GetNpcByName(member.NpcName);
-                GameLocation? location = Game1.getLocationFromName(member.WaitingLocationName);
+                bool workAreaNeedsRecovery = npc?.currentLocation is null
+                    || !string.Equals(
+                        npc.currentLocation.NameOrUniqueName,
+                        member.WorkAreaLocationName,
+                        StringComparison.Ordinal)
+                    || this.workAreaPositionRecoveryNeeded.Contains(member.NpcName);
+                bool restoreWorkArea = restoreWorkAreas
+                    && member.WorkAreaActive
+                    && !string.IsNullOrWhiteSpace(member.WorkAreaLocationName)
+                    && (!retryUnavailableWorkAreasOnly || workAreaNeedsRecovery);
+                bool restoreWaiting = member.Mode is CompanionMode.Waiting or CompanionMode.ParkedForDisconnect
+                    && !string.IsNullOrWhiteSpace(member.WaitingLocationName);
+                if (!restoreWorkArea && !restoreWaiting)
+                {
+                    continue;
+                }
+
+                // An explicit Wait pauses (but doesn't forget) an area order,
+                // so its exact waiting position takes precedence on reload.
+                string locationName = restoreWaiting
+                    ? member.WaitingLocationName!
+                    : member.WorkAreaLocationName;
+                GameLocation? location = Game1.getLocationFromName(locationName);
+                bool restoringActiveWorkArea = restoreWorkArea
+                    && !restoreWaiting
+                    && member.Mode == CompanionMode.Following;
+                if (restoringActiveWorkArea)
+                    this.workAreaPositionRecoveryNeeded.Add(member.NpcName);
                 if (npc is null || location is null)
                 {
+                    if (restoringActiveWorkArea && npc is not null)
+                    {
+                        this.SetCompanionActivity(member, "companion.status.work_area_paused");
+                        this.SetTaskFailure(member, "companion.task_failure.work_area_unavailable");
+                    }
                     if (logFailures)
                     {
                         this.Monitor.Log(
-                            $"Could not restore waiting position for '{member.NpcName}' in '{member.WaitingLocationName}'. The saved state was kept.",
+                            $"Could not restore persisted companion position for '{member.NpcName}' in '{locationName}'. The saved state was kept.",
                             LogLevel.Warn);
                     }
                     continue;
                 }
 
-                Vector2 waitingTile = NormalizeTile(new Vector2(member.WaitingTileX, member.WaitingTileY));
-                if (npc.currentLocation != location || NormalizeTile(npc.Tile) != waitingTile)
+                Vector2 desiredTile = restoreWaiting
+                    ? NormalizeTile(new Vector2(member.WaitingTileX, member.WaitingTileY))
+                    : NormalizeTile(new Vector2(member.WorkAreaCenterX, member.WorkAreaCenterY));
+                if (npc.currentLocation != location || NormalizeTile(npc.Tile) != desiredTile)
                 {
-                    if (!this.PlaceNpc(npc, location, waitingTile))
+                    if (!this.PlaceNpc(npc, location, desiredTile))
                     {
+                        if (restoringActiveWorkArea)
+                        {
+                            this.SetCompanionActivity(member, "companion.status.work_area_paused");
+                            this.SetTaskFailure(member, "companion.task_failure.work_area_unavailable");
+                        }
                         if (logFailures)
-                            this.Monitor.Log($"Could not find a safe waiting tile for '{member.NpcName}' in '{member.WaitingLocationName}'.", LogLevel.Warn);
+                            this.Monitor.Log($"Could not find a safe persisted tile for '{member.NpcName}' in '{locationName}'.", LogLevel.Warn);
                         continue;
                     }
 
                     Vector2 restoredTile = NormalizeTile(npc.Tile);
-                    if (restoredTile != waitingTile)
+                    if (restoreWaiting && restoredTile != desiredTile)
                     {
                         member.WaitingTileX = restoredTile.X;
                         member.WaitingTileY = restoredTile.Y;
@@ -94,6 +136,29 @@ public sealed partial class ModEntry
                 }
 
                 this.DisableNpcSchedule(npc, stopCurrentRoute: true);
+                if (restoringActiveWorkArea)
+                {
+                    this.workAreaPositionRecoveryNeeded.Remove(member.NpcName);
+                    if (!this.AreTasksEnabled(member.OwnerId))
+                    {
+                        this.SetCompanionActivity(member, "companion.status.work_area_paused");
+                        this.SetTaskFailure(member, "companion.task_failure.tasks_disabled");
+                    }
+                    else
+                    {
+                        if (member.LastFailureReasonKey is "companion.task_failure.work_area_unavailable"
+                            or "companion.task_failure.tasks_disabled")
+                        {
+                            this.SetTaskFailure(member, "");
+                        }
+                        this.SetCompanionActivity(member, "companion.status.work_area");
+                        this.priorityTaskPlanningMembers.Add(member.NpcName);
+                        int deferredScanTick = Game1.ticks + 1;
+                        this.nextTaskScanTick = this.nextTaskScanTick <= Game1.ticks
+                            ? deferredScanTick
+                            : Math.Min(this.nextTaskScanTick, deferredScanTick);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -151,6 +216,26 @@ public sealed partial class ModEntry
         if (!Enum.IsDefined(member.PreferredWorkSpecialty))
             member.PreferredWorkSpecialty = CompanionWorkSpecialty.ClearArea;
 
+        member.WorkAreaOrderId ??= "";
+        member.WorkAreaLocationName ??= "";
+        if (member.WorkAreaActive && !CompanionWorkAreaPolicy.IsActiveStateValid(
+                member.WorkAreaActive,
+                member.WorkAreaOrderId,
+                member.WorkAreaLocationName,
+                member.WorkAreaCenterX,
+                member.WorkAreaCenterY,
+                member.WorkAreaRadius,
+                member.WorkAreaSpecialty))
+        {
+            ClearPersistedWorkArea(member);
+        }
+        else if (!member.WorkAreaActive)
+        {
+            if (!Enum.IsDefined(member.WorkAreaSpecialty))
+                member.WorkAreaSpecialty = CompanionWorkSpecialty.ClearArea;
+            member.WorkAreaRadius = CompanionWorkAreaPolicy.NormalizeRadius(member.WorkAreaRadius);
+        }
+
         if (!member.ClearArea)
         {
             if (member.SearchWood && !member.SearchMining)
@@ -177,6 +262,11 @@ public sealed partial class ModEntry
         member.UnlockedSkillIds ??= new List<string>();
         member.UnlockedSkillIds = member.UnlockedSkillIds
             .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToList();
+        member.RecentDialogueKeys = (member.RecentDialogueKeys ?? new List<string>())
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .TakeLast(4)
             .ToList();
         member.UnspentSkillPoints += CompanionProgression.GetLegacySkillPointRefund(member.UnlockedSkillIds);
         member.UnspentSkillPoints = Math.Max(0, member.UnspentSkillPoints);
@@ -210,6 +300,7 @@ public sealed partial class ModEntry
         {
             CompanionMode.Waiting => "companion.status.waiting",
             CompanionMode.ParkedForDisconnect => "companion.status.parked",
+            _ when member.WorkAreaActive => "companion.status.work_area",
             _ => "companion.status.following"
         };
         member.LastTaskResultKey ??= "";
@@ -535,7 +626,7 @@ public sealed partial class ModEntry
         // Commit only after the full payload has been validated, normalized, and
         // materialized. A malformed custom item or member can no longer clear a
         // client's last known-good snapshot or consume its revision.
-        this.ResetRuntimeState(clearProfiles: false);
+        this.ResetRuntimeState(clearProfiles: false, preserveCosmeticRuntime: true);
         foreach ((string npcName, SquadMemberState member) in prepared.Members)
             this.members.Add(npcName, member);
         foreach ((long ownerId, bool enabled) in prepared.TaskToggles)
@@ -659,6 +750,25 @@ public sealed partial class ModEntry
             member.Mode = CompanionMode.Following;
         if (!Enum.IsDefined(member.PreferredWorkSpecialty))
             member.PreferredWorkSpecialty = CompanionWorkSpecialty.ClearArea;
+        member.WorkAreaOrderId ??= "";
+        member.WorkAreaLocationName ??= "";
+        if (member.WorkAreaActive && !CompanionWorkAreaPolicy.IsActiveStateValid(
+                member.WorkAreaActive,
+                member.WorkAreaOrderId,
+                member.WorkAreaLocationName,
+                member.WorkAreaCenterX,
+                member.WorkAreaCenterY,
+                member.WorkAreaRadius,
+                member.WorkAreaSpecialty))
+        {
+            ClearPersistedWorkArea(member);
+        }
+        else if (!member.WorkAreaActive)
+        {
+            if (!Enum.IsDefined(member.WorkAreaSpecialty))
+                member.WorkAreaSpecialty = CompanionWorkSpecialty.ClearArea;
+            member.WorkAreaRadius = CompanionWorkAreaPolicy.NormalizeRadius(member.WorkAreaRadius);
+        }
 
         member.DisplayName ??= member.NpcName;
         member.Level = Math.Clamp(member.Level, 1, CompanionProgression.MaxLevel);
@@ -667,6 +777,11 @@ public sealed partial class ModEntry
         member.UnlockedSkillIds = (member.UnlockedSkillIds ?? new List<string>())
             .Where(id => !string.IsNullOrWhiteSpace(id))
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        member.RecentDialogueKeys = (member.RecentDialogueKeys ?? new List<string>())
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .TakeLast(4)
             .ToList();
         member.Inventory = (member.Inventory ?? new List<SavedItemStack>())
             .Where(saved => saved is not null && !string.IsNullOrWhiteSpace(saved.QualifiedItemId) && saved.Stack > 0)
@@ -684,6 +799,17 @@ public sealed partial class ModEntry
         member.CurrentTargetKey ??= "";
         member.PreviewTargetKey ??= "";
         member.PreviewReasonKey ??= "";
+    }
+
+    private static void ClearPersistedWorkArea(SquadMemberState member)
+    {
+        member.WorkAreaActive = false;
+        member.WorkAreaOrderId = "";
+        member.WorkAreaLocationName = "";
+        member.WorkAreaCenterX = -1;
+        member.WorkAreaCenterY = -1;
+        member.WorkAreaRadius = 8;
+        member.WorkAreaSpecialty = CompanionWorkSpecialty.ClearArea;
     }
 
     private bool IsCompanionProgressionEnabled()
@@ -722,7 +848,7 @@ public sealed partial class ModEntry
         return this.commandReplayGuard.TryRegister(playerId, commandId);
     }
 
-    private void SendActionRequest(
+    private string SendActionRequest(
         string action,
         string npcName = "",
         string argument = "",
@@ -733,10 +859,11 @@ public sealed partial class ModEntry
         string? expectedLocationName = null)
     {
         Vector2 normalizedTile = NormalizeTile(tile ?? Vector2.Zero);
+        string commandId = Guid.NewGuid().ToString("N");
         this.Helper.Multiplayer.SendMessage(
             new SquadActionMessage
             {
-                CommandId = Guid.NewGuid().ToString("N"),
+                CommandId = commandId,
                 Action = action,
                 NpcName = npcName,
                 Argument = argument,
@@ -750,5 +877,6 @@ public sealed partial class ModEntry
             MessageActionRequest,
             modIDs: new[] { this.ModManifest.UniqueID },
             playerIDs: new[] { Game1.MasterPlayer.UniqueMultiplayerID });
+        return commandId;
     }
 }

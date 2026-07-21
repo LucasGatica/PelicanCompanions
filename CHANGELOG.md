@@ -4,12 +4,83 @@ All notable Pelican Companions changes are documented here.
 
 ## Unreleased
 
-### Silent pet companions
+### Visible companion work
 
-- Pets remain recruitable and fully manageable as companions, but no longer use
-  generic NPC dialogue when recruited, dismissed, idle, or performing tasks.
-- Added regression coverage for the pet dialogue policy; the automated harness
-  now has 32 tests.
+- Companions now face their target and show a short tool or hand motion only
+  after reaching the reserved stand tile. Lumbering, mining, watering,
+  gathering, harvesting, and petting each have readable visual feedback.
+- Successful actions show a colored impact/check reaction; rejected actions
+  show a shake and question reaction. These effects are cosmetic and never
+  advance a task or mutate the world by themselves.
+- The host replicates start/success/failure visuals to multiplayer clients so
+  every player sees the same action without duplicating its gameplay commit.
+- Lumbering/mining motions begin inside the existing hit cooldown, preserving
+  their prior impact cadence while still committing only after the visible swing.
+
+### Persistent work areas
+
+- `X` on safe empty ground now offers Work, then Wood, Mining, or Clear Area,
+  a radius preset up to the host-configured maximum, and finally Send all or a
+  specific companion. The chosen 3–20 tile radius is rendered as a temporary
+  circular boundary.
+- Area workers remain anchored to the selected map and center, accept only
+  matching resources inside the inclusive circle, and may stand one adjacent
+  tile outside it. Reserved or unreachable targets pause the order instead of
+  falsely completing it.
+- Bounded reachability checks may hand an inconclusive long route to the real
+  path controller, and multiplayer snapshots preserve in-progress area previews
+  and cosmetic work motions instead of cutting them short. Rejected remote
+  orders clear their optimistic preview immediately, and failed placement is
+  retried even when the NPC is already in the area's location.
+- A truly exhausted area ends in Waiting with clear success feedback. The area
+  intent survives save/reload while target, path, reservation, preview, and
+  animation remain transient; save schema is now 9. Reloading with tasks disabled
+  preserves the paused state, and exhaustion still completes during placement
+  recovery instead of retrying forever.
+
+### Anti-repeat companion communication
+
+- Replaced independent speech timers with a bounded queue per owner. Requests
+  are deduplicated, expire by TTL, and prefer milestone/command/task reactions
+  over ambient chatter while sharing one configurable group cooldown.
+- Ambient speech rotates away from the previous speaker when possible. Recent
+  lines are tracked for the whole group and each NPC, with the last four NPC
+  identities persisted so reloads don't immediately restart the same phrases;
+  per-line interval bookkeeping is bounded without evicting active intervals.
+- Added communication and pet-expression settings to config schema 8.
+
+### Silent but expressive pets
+
+- Pets remain recruitable and fully manageable without ever receiving NPC text
+  above their heads. Recruit, idle, success, failure, refusal, and dismiss
+  intents become pet-appropriate emotes, sounds, hops, or shakes instead.
+- Pet expressions use the same cooldown and host replication as other
+  communication, preventing duplicate barks/emotes in multiplayer.
+
+### NPC-specific contextual dialogue
+
+- Dialogue resolution prefers an exact NPC profile, then type/villager and
+  Generic fallbacks. Explicit fallback overlays can enrich an exact profile
+  with shared season, weather, or friendship reactions; equally specific
+  authored NPC lines still win before weighted anti-repeat selection.
+- Recruitment confirmation and refusal now use the same host-authoritative flow
+  from the hotkey, action wheel, and farmhands. Multiplayer speech is translated
+  per client, with the host-resolved text retained if a locale lacks the key.
+- Authored lines can react to friendship, spouse status, time/period, season,
+  weather, indoor/outdoor location, map/context, task, manual orders, outcome,
+  failure reason, and discovered item, with matching runtime tokens.
+
+### Large-squad and controller action wheel
+
+- Context and ground wheels now expose all eligible companions in squads of up
+  to 12 through stable pages, while keeping global actions such as Send all,
+  Work, and Dismiss all pinned and reachable.
+- Added spatial focus navigation for arrows/WASD, D-pad, and both sticks;
+  A/Enter activates, B/Escape cancels, shoulders/Page Up/Page Down or mouse
+  wheel change pages, and modal input remains suppressed from the world below.
+- Added pure regression coverage for pagination, focus navigation, dialogue
+  scheduling/selection, and work-area geometry, radius, specialties, and saved
+  state validation.
 
 ## 1.5.3 — 2026-07-20
 

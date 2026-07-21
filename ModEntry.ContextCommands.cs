@@ -322,6 +322,7 @@ public sealed partial class ModEntry
         // reservable stand tile have their previous order replaced.
         foreach (ContextWorkerPlan plan in plans)
         {
+            this.ClearCompanionWorkArea(plan.Member, cancelPendingAreaTask: true);
             this.RemovePendingTask(plan.Member.NpcName);
             this.ResumeFollowing(plan.Member.NpcName, ownerId, showMessage: false);
             this.SetTaskFailure(plan.Member, "");

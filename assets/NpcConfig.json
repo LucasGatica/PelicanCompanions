@@ -22,11 +22,66 @@
         {
           "TextKey": "dialogue.Idle.night",
           "Condition": "night"
+        },
+        {
+          "Id": "generic.idle.spring",
+          "TextKey": "dialogue.Idle.spring",
+          "Condition": "spring",
+          "Overlay": true
+        },
+        {
+          "Id": "generic.idle.summer",
+          "TextKey": "dialogue.Idle.summer",
+          "Condition": "summer",
+          "Overlay": true
+        },
+        {
+          "Id": "generic.idle.fall",
+          "TextKey": "dialogue.Idle.fall",
+          "Condition": "fall",
+          "Overlay": true
+        },
+        {
+          "Id": "generic.idle.winter",
+          "TextKey": "dialogue.Idle.winter",
+          "Condition": "winter",
+          "Overlay": true
+        },
+        {
+          "Id": "generic.idle.rain",
+          "TextKey": "dialogue.Idle.rain",
+          "Condition": "rain",
+          "Overlay": true
+        },
+        {
+          "Id": "generic.idle.storm",
+          "TextKey": "dialogue.Idle.storm",
+          "Condition": "storm",
+          "Overlay": true
+        },
+        {
+          "Id": "generic.idle.snow",
+          "TextKey": "dialogue.Idle.snow",
+          "Condition": "snow",
+          "Overlay": true
+        },
+        {
+          "Id": "generic.idle.green-rain",
+          "TextKey": "dialogue.Idle.green_rain",
+          "Condition": "green_rain",
+          "Overlay": true
+        },
+        {
+          "Id": "generic.idle.friend",
+          "TextKey": "dialogue.Idle.friend",
+          "Condition": "hearts>=8",
+          "Overlay": true
         }
       ],
       "Watering": [
         {
-          "TextKey": "dialogue.Watering.generic"
+          "TextKey": "dialogue.Watering.generic",
+          "Condition": "success"
         }
       ],
       "Attacking": [
@@ -36,22 +91,26 @@
       ],
       "Lumbering": [
         {
-          "TextKey": "dialogue.Lumbering.generic"
+          "TextKey": "dialogue.Lumbering.generic",
+          "Condition": "success"
         }
       ],
       "Mining": [
         {
-          "TextKey": "dialogue.Mining.generic"
+          "TextKey": "dialogue.Mining.generic",
+          "Condition": "success"
         }
       ],
       "Harvesting": [
         {
-          "TextKey": "dialogue.Harvesting.generic"
+          "TextKey": "dialogue.Harvesting.generic",
+          "Condition": "success"
         }
       ],
       "Foraging": [
         {
-          "TextKey": "dialogue.Foraging.generic"
+          "TextKey": "dialogue.Foraging.generic",
+          "Condition": "success"
         }
       ],
       "Fishing_Waiting": [
@@ -66,7 +125,33 @@
       ],
       "Petting": [
         {
-          "TextKey": "dialogue.Petting.generic"
+          "TextKey": "dialogue.Petting.generic",
+          "Condition": "success"
+        }
+      ],
+      "LootFound": [
+        {
+          "Id": "generic.loot.found",
+          "TextKey": "dialogue.LootFound.generic",
+          "Condition": "item_found"
+        }
+      ],
+      "LevelUp": [
+        {
+          "Id": "generic.level.up",
+          "TextKey": "dialogue.LevelUp.generic"
+        }
+      ],
+      "WorkAreaComplete": [
+        {
+          "Id": "generic.work-area.complete",
+          "TextKey": "dialogue.WorkAreaComplete.generic"
+        }
+      ],
+      "TaskFailure": [
+        {
+          "Id": "generic.task.failure",
+          "TextKey": "dialogue.TaskFailure.generic"
         }
       ],
       "FriendshipTooLow": [
@@ -79,6 +164,516 @@
           "TextKey": "dialogue.RecruitmentRefusal.generic"
         }
       ]
+    },
+    "IdleAnimations": []
+  },
+  "Abigail": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "abigail.recruit", "TextKey": "dialogue.Abigail.Recruit" }],
+      "Dismiss": [{ "Id": "abigail.dismiss", "TextKey": "dialogue.Abigail.Dismiss" }],
+      "Idle": [
+        { "Id": "abigail.idle", "TextKey": "dialogue.Abigail.Idle" },
+        { "Id": "abigail.idle.rain", "TextKey": "dialogue.Abigail.Idle.rain", "Condition": "rain" },
+        { "Id": "abigail.idle.night", "TextKey": "dialogue.Abigail.Idle.night", "Condition": "night" },
+        { "Id": "abigail.idle.place", "TextKey": "dialogue.Abigail.Idle.place", "Condition": "mine" }
+      ],
+      "Mining": [{ "Id": "abigail.task.mining", "TextKey": "dialogue.Abigail.Task.Mining", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "abigail.task.failure", "TextKey": "dialogue.Abigail.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Alex": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "alex.recruit", "TextKey": "dialogue.Alex.Recruit" }],
+      "Dismiss": [{ "Id": "alex.dismiss", "TextKey": "dialogue.Alex.Dismiss" }],
+      "Idle": [
+        { "Id": "alex.idle", "TextKey": "dialogue.Alex.Idle" },
+        { "Id": "alex.idle.rain", "TextKey": "dialogue.Alex.Idle.rain", "Condition": "rain" },
+        { "Id": "alex.idle.night", "TextKey": "dialogue.Alex.Idle.night", "Condition": "night" },
+        { "Id": "alex.idle.place", "TextKey": "dialogue.Alex.Idle.place", "Condition": "farm" }
+      ],
+      "Petting": [{ "Id": "alex.task.petting", "TextKey": "dialogue.Alex.Task.Petting", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "alex.task.failure", "TextKey": "dialogue.Alex.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Caroline": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "caroline.recruit", "TextKey": "dialogue.Caroline.Recruit" }],
+      "Dismiss": [{ "Id": "caroline.dismiss", "TextKey": "dialogue.Caroline.Dismiss" }],
+      "Idle": [
+        { "Id": "caroline.idle", "TextKey": "dialogue.Caroline.Idle" },
+        { "Id": "caroline.idle.rain", "TextKey": "dialogue.Caroline.Idle.rain", "Condition": "rain" },
+        { "Id": "caroline.idle.night", "TextKey": "dialogue.Caroline.Idle.night", "Condition": "night" },
+        { "Id": "caroline.idle.place", "TextKey": "dialogue.Caroline.Idle.place", "Condition": "farm" }
+      ],
+      "Watering": [{ "Id": "caroline.task.watering", "TextKey": "dialogue.Caroline.Task.Watering", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "caroline.task.failure", "TextKey": "dialogue.Caroline.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Clint": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "clint.recruit", "TextKey": "dialogue.Clint.Recruit" }],
+      "Dismiss": [{ "Id": "clint.dismiss", "TextKey": "dialogue.Clint.Dismiss" }],
+      "Idle": [
+        { "Id": "clint.idle", "TextKey": "dialogue.Clint.Idle" },
+        { "Id": "clint.idle.rain", "TextKey": "dialogue.Clint.Idle.rain", "Condition": "rain" },
+        { "Id": "clint.idle.night", "TextKey": "dialogue.Clint.Idle.night", "Condition": "night" },
+        { "Id": "clint.idle.place", "TextKey": "dialogue.Clint.Idle.place", "Condition": "mine" }
+      ],
+      "Mining": [{ "Id": "clint.task.mining", "TextKey": "dialogue.Clint.Task.Mining", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "clint.task.failure", "TextKey": "dialogue.Clint.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Demetrius": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "demetrius.recruit", "TextKey": "dialogue.Demetrius.Recruit" }],
+      "Dismiss": [{ "Id": "demetrius.dismiss", "TextKey": "dialogue.Demetrius.Dismiss" }],
+      "Idle": [
+        { "Id": "demetrius.idle", "TextKey": "dialogue.Demetrius.Idle" },
+        { "Id": "demetrius.idle.rain", "TextKey": "dialogue.Demetrius.Idle.rain", "Condition": "rain" },
+        { "Id": "demetrius.idle.night", "TextKey": "dialogue.Demetrius.Idle.night", "Condition": "night" },
+        { "Id": "demetrius.idle.place", "TextKey": "dialogue.Demetrius.Idle.place", "Condition": "farm" }
+      ],
+      "Foraging": [{ "Id": "demetrius.task.foraging", "TextKey": "dialogue.Demetrius.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "demetrius.task.failure", "TextKey": "dialogue.Demetrius.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Dwarf": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "dwarf.recruit", "TextKey": "dialogue.Dwarf.Recruit" }],
+      "Dismiss": [{ "Id": "dwarf.dismiss", "TextKey": "dialogue.Dwarf.Dismiss" }],
+      "Idle": [
+        { "Id": "dwarf.idle", "TextKey": "dialogue.Dwarf.Idle" },
+        { "Id": "dwarf.idle.rain", "TextKey": "dialogue.Dwarf.Idle.rain", "Condition": "rain" },
+        { "Id": "dwarf.idle.night", "TextKey": "dialogue.Dwarf.Idle.night", "Condition": "night" },
+        { "Id": "dwarf.idle.place", "TextKey": "dialogue.Dwarf.Idle.place", "Condition": "mine" }
+      ],
+      "Mining": [{ "Id": "dwarf.task.mining", "TextKey": "dialogue.Dwarf.Task.Mining", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "dwarf.task.failure", "TextKey": "dialogue.Dwarf.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Elliott": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "elliott.recruit", "TextKey": "dialogue.Elliott.Recruit" }],
+      "Dismiss": [{ "Id": "elliott.dismiss", "TextKey": "dialogue.Elliott.Dismiss" }],
+      "Idle": [
+        { "Id": "elliott.idle", "TextKey": "dialogue.Elliott.Idle" },
+        { "Id": "elliott.idle.rain", "TextKey": "dialogue.Elliott.Idle.rain", "Condition": "rain" },
+        { "Id": "elliott.idle.night", "TextKey": "dialogue.Elliott.Idle.night", "Condition": "night" },
+        { "Id": "elliott.idle.place", "TextKey": "dialogue.Elliott.Idle.place", "Condition": "location=Beach" }
+      ],
+      "Foraging": [{ "Id": "elliott.task.foraging", "TextKey": "dialogue.Elliott.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "elliott.task.failure", "TextKey": "dialogue.Elliott.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Emily": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "emily.recruit", "TextKey": "dialogue.Emily.Recruit" }],
+      "Dismiss": [{ "Id": "emily.dismiss", "TextKey": "dialogue.Emily.Dismiss" }],
+      "Idle": [
+        { "Id": "emily.idle", "TextKey": "dialogue.Emily.Idle" },
+        { "Id": "emily.idle.rain", "TextKey": "dialogue.Emily.Idle.rain", "Condition": "rain" },
+        { "Id": "emily.idle.night", "TextKey": "dialogue.Emily.Idle.night", "Condition": "night" },
+        { "Id": "emily.idle.place", "TextKey": "dialogue.Emily.Idle.place", "Condition": "farm" }
+      ],
+      "Petting": [{ "Id": "emily.task.petting", "TextKey": "dialogue.Emily.Task.Petting", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "emily.task.failure", "TextKey": "dialogue.Emily.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Evelyn": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "evelyn.recruit", "TextKey": "dialogue.Evelyn.Recruit" }],
+      "Dismiss": [{ "Id": "evelyn.dismiss", "TextKey": "dialogue.Evelyn.Dismiss" }],
+      "Idle": [
+        { "Id": "evelyn.idle", "TextKey": "dialogue.Evelyn.Idle" },
+        { "Id": "evelyn.idle.rain", "TextKey": "dialogue.Evelyn.Idle.rain", "Condition": "rain" },
+        { "Id": "evelyn.idle.night", "TextKey": "dialogue.Evelyn.Idle.night", "Condition": "night" },
+        { "Id": "evelyn.idle.place", "TextKey": "dialogue.Evelyn.Idle.place", "Condition": "farm" }
+      ],
+      "Watering": [{ "Id": "evelyn.task.watering", "TextKey": "dialogue.Evelyn.Task.Watering", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "evelyn.task.failure", "TextKey": "dialogue.Evelyn.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "George": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "george.recruit", "TextKey": "dialogue.George.Recruit" }],
+      "Dismiss": [{ "Id": "george.dismiss", "TextKey": "dialogue.George.Dismiss" }],
+      "Idle": [
+        { "Id": "george.idle", "TextKey": "dialogue.George.Idle" },
+        { "Id": "george.idle.rain", "TextKey": "dialogue.George.Idle.rain", "Condition": "rain" },
+        { "Id": "george.idle.night", "TextKey": "dialogue.George.Idle.night", "Condition": "night" },
+        { "Id": "george.idle.place", "TextKey": "dialogue.George.Idle.place", "Condition": "farm" }
+      ],
+      "Foraging": [{ "Id": "george.task.foraging", "TextKey": "dialogue.George.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "george.task.failure", "TextKey": "dialogue.George.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Gus": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "gus.recruit", "TextKey": "dialogue.Gus.Recruit" }],
+      "Dismiss": [{ "Id": "gus.dismiss", "TextKey": "dialogue.Gus.Dismiss" }],
+      "Idle": [
+        { "Id": "gus.idle", "TextKey": "dialogue.Gus.Idle" },
+        { "Id": "gus.idle.rain", "TextKey": "dialogue.Gus.Idle.rain", "Condition": "rain" },
+        { "Id": "gus.idle.night", "TextKey": "dialogue.Gus.Idle.night", "Condition": "night" },
+        { "Id": "gus.idle.place", "TextKey": "dialogue.Gus.Idle.place", "Condition": "farm" }
+      ],
+      "Foraging": [{ "Id": "gus.task.foraging", "TextKey": "dialogue.Gus.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "gus.task.failure", "TextKey": "dialogue.Gus.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Haley": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "haley.recruit", "TextKey": "dialogue.Haley.Recruit" }],
+      "Dismiss": [{ "Id": "haley.dismiss", "TextKey": "dialogue.Haley.Dismiss" }],
+      "Idle": [
+        { "Id": "haley.idle", "TextKey": "dialogue.Haley.Idle" },
+        { "Id": "haley.idle.rain", "TextKey": "dialogue.Haley.Idle.rain", "Condition": "rain" },
+        { "Id": "haley.idle.night", "TextKey": "dialogue.Haley.Idle.night", "Condition": "night" },
+        { "Id": "haley.idle.place", "TextKey": "dialogue.Haley.Idle.place", "Condition": "farm" }
+      ],
+      "Harvesting": [{ "Id": "haley.task.harvesting", "TextKey": "dialogue.Haley.Task.Harvesting", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "haley.task.failure", "TextKey": "dialogue.Haley.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Harvey": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "harvey.recruit", "TextKey": "dialogue.Harvey.Recruit" }],
+      "Dismiss": [{ "Id": "harvey.dismiss", "TextKey": "dialogue.Harvey.Dismiss" }],
+      "Idle": [
+        { "Id": "harvey.idle", "TextKey": "dialogue.Harvey.Idle" },
+        { "Id": "harvey.idle.rain", "TextKey": "dialogue.Harvey.Idle.rain", "Condition": "rain" },
+        { "Id": "harvey.idle.night", "TextKey": "dialogue.Harvey.Idle.night", "Condition": "night" },
+        { "Id": "harvey.idle.place", "TextKey": "dialogue.Harvey.Idle.place", "Condition": "farm" }
+      ],
+      "Foraging": [{ "Id": "harvey.task.foraging", "TextKey": "dialogue.Harvey.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "harvey.task.failure", "TextKey": "dialogue.Harvey.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Jas": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "jas.recruit", "TextKey": "dialogue.Jas.Recruit" }],
+      "Dismiss": [{ "Id": "jas.dismiss", "TextKey": "dialogue.Jas.Dismiss" }],
+      "Idle": [
+        { "Id": "jas.idle", "TextKey": "dialogue.Jas.Idle" },
+        { "Id": "jas.idle.rain", "TextKey": "dialogue.Jas.Idle.rain", "Condition": "rain" },
+        { "Id": "jas.idle.night", "TextKey": "dialogue.Jas.Idle.night", "Condition": "night" },
+        { "Id": "jas.idle.place", "TextKey": "dialogue.Jas.Idle.place", "Condition": "farm" }
+      ],
+      "Petting": [{ "Id": "jas.task.petting", "TextKey": "dialogue.Jas.Task.Petting", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "jas.task.failure", "TextKey": "dialogue.Jas.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Jodi": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "jodi.recruit", "TextKey": "dialogue.Jodi.Recruit" }],
+      "Dismiss": [{ "Id": "jodi.dismiss", "TextKey": "dialogue.Jodi.Dismiss" }],
+      "Idle": [
+        { "Id": "jodi.idle", "TextKey": "dialogue.Jodi.Idle" },
+        { "Id": "jodi.idle.rain", "TextKey": "dialogue.Jodi.Idle.rain", "Condition": "rain" },
+        { "Id": "jodi.idle.night", "TextKey": "dialogue.Jodi.Idle.night", "Condition": "night" },
+        { "Id": "jodi.idle.place", "TextKey": "dialogue.Jodi.Idle.place", "Condition": "farm" }
+      ],
+      "Harvesting": [{ "Id": "jodi.task.harvesting", "TextKey": "dialogue.Jodi.Task.Harvesting", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "jodi.task.failure", "TextKey": "dialogue.Jodi.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Kent": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "kent.recruit", "TextKey": "dialogue.Kent.Recruit" }],
+      "Dismiss": [{ "Id": "kent.dismiss", "TextKey": "dialogue.Kent.Dismiss" }],
+      "Idle": [
+        { "Id": "kent.idle", "TextKey": "dialogue.Kent.Idle" },
+        { "Id": "kent.idle.rain", "TextKey": "dialogue.Kent.Idle.rain", "Condition": "rain" },
+        { "Id": "kent.idle.night", "TextKey": "dialogue.Kent.Idle.night", "Condition": "night" },
+        { "Id": "kent.idle.place", "TextKey": "dialogue.Kent.Idle.place", "Condition": "farm" }
+      ],
+      "Lumbering": [{ "Id": "kent.task.lumbering", "TextKey": "dialogue.Kent.Task.Lumbering", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "kent.task.failure", "TextKey": "dialogue.Kent.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Krobus": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "krobus.recruit", "TextKey": "dialogue.Krobus.Recruit" }],
+      "Dismiss": [{ "Id": "krobus.dismiss", "TextKey": "dialogue.Krobus.Dismiss" }],
+      "Idle": [
+        { "Id": "krobus.idle", "TextKey": "dialogue.Krobus.Idle" },
+        { "Id": "krobus.idle.rain", "TextKey": "dialogue.Krobus.Idle.rain", "Condition": "rain" },
+        { "Id": "krobus.idle.night", "TextKey": "dialogue.Krobus.Idle.night", "Condition": "night" },
+        { "Id": "krobus.idle.place", "TextKey": "dialogue.Krobus.Idle.place", "Condition": "location=Sewer" }
+      ],
+      "Mining": [{ "Id": "krobus.task.mining", "TextKey": "dialogue.Krobus.Task.Mining", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "krobus.task.failure", "TextKey": "dialogue.Krobus.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Leah": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "leah.recruit", "TextKey": "dialogue.Leah.Recruit" }],
+      "Dismiss": [{ "Id": "leah.dismiss", "TextKey": "dialogue.Leah.Dismiss" }],
+      "Idle": [
+        { "Id": "leah.idle", "TextKey": "dialogue.Leah.Idle" },
+        { "Id": "leah.idle.rain", "TextKey": "dialogue.Leah.Idle.rain", "Condition": "rain" },
+        { "Id": "leah.idle.night", "TextKey": "dialogue.Leah.Idle.night", "Condition": "night" },
+        { "Id": "leah.idle.place", "TextKey": "dialogue.Leah.Idle.place", "Condition": "farm" }
+      ],
+      "Lumbering": [{ "Id": "leah.task.lumbering", "TextKey": "dialogue.Leah.Task.Lumbering", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "leah.task.failure", "TextKey": "dialogue.Leah.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Leo": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "leo.recruit", "TextKey": "dialogue.Leo.Recruit" }],
+      "Dismiss": [{ "Id": "leo.dismiss", "TextKey": "dialogue.Leo.Dismiss" }],
+      "Idle": [
+        { "Id": "leo.idle", "TextKey": "dialogue.Leo.Idle" },
+        { "Id": "leo.idle.rain", "TextKey": "dialogue.Leo.Idle.rain", "Condition": "rain" },
+        { "Id": "leo.idle.night", "TextKey": "dialogue.Leo.Idle.night", "Condition": "night" },
+        { "Id": "leo.idle.place", "TextKey": "dialogue.Leo.Idle.place", "Condition": "context=Island" }
+      ],
+      "Foraging": [{ "Id": "leo.task.foraging", "TextKey": "dialogue.Leo.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "leo.task.failure", "TextKey": "dialogue.Leo.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Lewis": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "lewis.recruit", "TextKey": "dialogue.Lewis.Recruit" }],
+      "Dismiss": [{ "Id": "lewis.dismiss", "TextKey": "dialogue.Lewis.Dismiss" }],
+      "Idle": [
+        { "Id": "lewis.idle", "TextKey": "dialogue.Lewis.Idle" },
+        { "Id": "lewis.idle.rain", "TextKey": "dialogue.Lewis.Idle.rain", "Condition": "rain" },
+        { "Id": "lewis.idle.night", "TextKey": "dialogue.Lewis.Idle.night", "Condition": "night" },
+        { "Id": "lewis.idle.place", "TextKey": "dialogue.Lewis.Idle.place", "Condition": "farm" }
+      ],
+      "Harvesting": [{ "Id": "lewis.task.harvesting", "TextKey": "dialogue.Lewis.Task.Harvesting", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "lewis.task.failure", "TextKey": "dialogue.Lewis.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Linus": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "linus.recruit", "TextKey": "dialogue.Linus.Recruit" }],
+      "Dismiss": [{ "Id": "linus.dismiss", "TextKey": "dialogue.Linus.Dismiss" }],
+      "Idle": [
+        { "Id": "linus.idle", "TextKey": "dialogue.Linus.Idle" },
+        { "Id": "linus.idle.rain", "TextKey": "dialogue.Linus.Idle.rain", "Condition": "rain" },
+        { "Id": "linus.idle.night", "TextKey": "dialogue.Linus.Idle.night", "Condition": "night" },
+        { "Id": "linus.idle.place", "TextKey": "dialogue.Linus.Idle.place", "Condition": "farm" }
+      ],
+      "Foraging": [{ "Id": "linus.task.foraging", "TextKey": "dialogue.Linus.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "linus.task.failure", "TextKey": "dialogue.Linus.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Marnie": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "marnie.recruit", "TextKey": "dialogue.Marnie.Recruit" }],
+      "Dismiss": [{ "Id": "marnie.dismiss", "TextKey": "dialogue.Marnie.Dismiss" }],
+      "Idle": [
+        { "Id": "marnie.idle", "TextKey": "dialogue.Marnie.Idle" },
+        { "Id": "marnie.idle.rain", "TextKey": "dialogue.Marnie.Idle.rain", "Condition": "rain" },
+        { "Id": "marnie.idle.night", "TextKey": "dialogue.Marnie.Idle.night", "Condition": "night" },
+        { "Id": "marnie.idle.place", "TextKey": "dialogue.Marnie.Idle.place", "Condition": "farm" }
+      ],
+      "Petting": [{ "Id": "marnie.task.petting", "TextKey": "dialogue.Marnie.Task.Petting", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "marnie.task.failure", "TextKey": "dialogue.Marnie.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Maru": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "maru.recruit", "TextKey": "dialogue.Maru.Recruit" }],
+      "Dismiss": [{ "Id": "maru.dismiss", "TextKey": "dialogue.Maru.Dismiss" }],
+      "Idle": [
+        { "Id": "maru.idle", "TextKey": "dialogue.Maru.Idle" },
+        { "Id": "maru.idle.rain", "TextKey": "dialogue.Maru.Idle.rain", "Condition": "rain" },
+        { "Id": "maru.idle.night", "TextKey": "dialogue.Maru.Idle.night", "Condition": "night" },
+        { "Id": "maru.idle.place", "TextKey": "dialogue.Maru.Idle.place", "Condition": "farm" }
+      ],
+      "Mining": [{ "Id": "maru.task.mining", "TextKey": "dialogue.Maru.Task.Mining", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "maru.task.failure", "TextKey": "dialogue.Maru.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Pam": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "pam.recruit", "TextKey": "dialogue.Pam.Recruit" }],
+      "Dismiss": [{ "Id": "pam.dismiss", "TextKey": "dialogue.Pam.Dismiss" }],
+      "Idle": [
+        { "Id": "pam.idle", "TextKey": "dialogue.Pam.Idle" },
+        { "Id": "pam.idle.rain", "TextKey": "dialogue.Pam.Idle.rain", "Condition": "rain" },
+        { "Id": "pam.idle.night", "TextKey": "dialogue.Pam.Idle.night", "Condition": "night" },
+        { "Id": "pam.idle.place", "TextKey": "dialogue.Pam.Idle.place", "Condition": "farm" }
+      ],
+      "Lumbering": [{ "Id": "pam.task.lumbering", "TextKey": "dialogue.Pam.Task.Lumbering", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "pam.task.failure", "TextKey": "dialogue.Pam.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Penny": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "penny.recruit", "TextKey": "dialogue.Penny.Recruit" }],
+      "Dismiss": [{ "Id": "penny.dismiss", "TextKey": "dialogue.Penny.Dismiss" }],
+      "Idle": [
+        { "Id": "penny.idle", "TextKey": "dialogue.Penny.Idle" },
+        { "Id": "penny.idle.rain", "TextKey": "dialogue.Penny.Idle.rain", "Condition": "rain" },
+        { "Id": "penny.idle.night", "TextKey": "dialogue.Penny.Idle.night", "Condition": "night" },
+        { "Id": "penny.idle.place", "TextKey": "dialogue.Penny.Idle.place", "Condition": "farm" }
+      ],
+      "Watering": [{ "Id": "penny.task.watering", "TextKey": "dialogue.Penny.Task.Watering", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "penny.task.failure", "TextKey": "dialogue.Penny.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Pierre": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "pierre.recruit", "TextKey": "dialogue.Pierre.Recruit" }],
+      "Dismiss": [{ "Id": "pierre.dismiss", "TextKey": "dialogue.Pierre.Dismiss" }],
+      "Idle": [
+        { "Id": "pierre.idle", "TextKey": "dialogue.Pierre.Idle" },
+        { "Id": "pierre.idle.rain", "TextKey": "dialogue.Pierre.Idle.rain", "Condition": "rain" },
+        { "Id": "pierre.idle.night", "TextKey": "dialogue.Pierre.Idle.night", "Condition": "night" },
+        { "Id": "pierre.idle.place", "TextKey": "dialogue.Pierre.Idle.place", "Condition": "farm" }
+      ],
+      "Harvesting": [{ "Id": "pierre.task.harvesting", "TextKey": "dialogue.Pierre.Task.Harvesting", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "pierre.task.failure", "TextKey": "dialogue.Pierre.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Robin": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "robin.recruit", "TextKey": "dialogue.Robin.Recruit" }],
+      "Dismiss": [{ "Id": "robin.dismiss", "TextKey": "dialogue.Robin.Dismiss" }],
+      "Idle": [
+        { "Id": "robin.idle", "TextKey": "dialogue.Robin.Idle" },
+        { "Id": "robin.idle.rain", "TextKey": "dialogue.Robin.Idle.rain", "Condition": "rain" },
+        { "Id": "robin.idle.night", "TextKey": "dialogue.Robin.Idle.night", "Condition": "night" },
+        { "Id": "robin.idle.place", "TextKey": "dialogue.Robin.Idle.place", "Condition": "farm" }
+      ],
+      "Lumbering": [{ "Id": "robin.task.lumbering", "TextKey": "dialogue.Robin.Task.Lumbering", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "robin.task.failure", "TextKey": "dialogue.Robin.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Sam": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "sam.recruit", "TextKey": "dialogue.Sam.Recruit" }],
+      "Dismiss": [{ "Id": "sam.dismiss", "TextKey": "dialogue.Sam.Dismiss" }],
+      "Idle": [
+        { "Id": "sam.idle", "TextKey": "dialogue.Sam.Idle" },
+        { "Id": "sam.idle.rain", "TextKey": "dialogue.Sam.Idle.rain", "Condition": "rain" },
+        { "Id": "sam.idle.night", "TextKey": "dialogue.Sam.Idle.night", "Condition": "night" },
+        { "Id": "sam.idle.place", "TextKey": "dialogue.Sam.Idle.place", "Condition": "farm" }
+      ],
+      "Lumbering": [{ "Id": "sam.task.lumbering", "TextKey": "dialogue.Sam.Task.Lumbering", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "sam.task.failure", "TextKey": "dialogue.Sam.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Sandy": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "sandy.recruit", "TextKey": "dialogue.Sandy.Recruit" }],
+      "Dismiss": [{ "Id": "sandy.dismiss", "TextKey": "dialogue.Sandy.Dismiss" }],
+      "Idle": [
+        { "Id": "sandy.idle", "TextKey": "dialogue.Sandy.Idle" },
+        { "Id": "sandy.idle.rain", "TextKey": "dialogue.Sandy.Idle.rain", "Condition": "rain" },
+        { "Id": "sandy.idle.night", "TextKey": "dialogue.Sandy.Idle.night", "Condition": "night" },
+        { "Id": "sandy.idle.place", "TextKey": "dialogue.Sandy.Idle.place", "Condition": "location=Desert" }
+      ],
+      "Foraging": [{ "Id": "sandy.task.foraging", "TextKey": "dialogue.Sandy.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "sandy.task.failure", "TextKey": "dialogue.Sandy.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Sebastian": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "sebastian.recruit", "TextKey": "dialogue.Sebastian.Recruit" }],
+      "Dismiss": [{ "Id": "sebastian.dismiss", "TextKey": "dialogue.Sebastian.Dismiss" }],
+      "Idle": [
+        { "Id": "sebastian.idle", "TextKey": "dialogue.Sebastian.Idle" },
+        { "Id": "sebastian.idle.rain", "TextKey": "dialogue.Sebastian.Idle.rain", "Condition": "rain" },
+        { "Id": "sebastian.idle.night", "TextKey": "dialogue.Sebastian.Idle.night", "Condition": "night" },
+        { "Id": "sebastian.idle.place", "TextKey": "dialogue.Sebastian.Idle.place", "Condition": "mine" }
+      ],
+      "Mining": [{ "Id": "sebastian.task.mining", "TextKey": "dialogue.Sebastian.Task.Mining", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "sebastian.task.failure", "TextKey": "dialogue.Sebastian.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Shane": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "shane.recruit", "TextKey": "dialogue.Shane.Recruit" }],
+      "Dismiss": [{ "Id": "shane.dismiss", "TextKey": "dialogue.Shane.Dismiss" }],
+      "Idle": [
+        { "Id": "shane.idle", "TextKey": "dialogue.Shane.Idle" },
+        { "Id": "shane.idle.rain", "TextKey": "dialogue.Shane.Idle.rain", "Condition": "rain" },
+        { "Id": "shane.idle.night", "TextKey": "dialogue.Shane.Idle.night", "Condition": "night" },
+        { "Id": "shane.idle.place", "TextKey": "dialogue.Shane.Idle.place", "Condition": "farm" }
+      ],
+      "Petting": [{ "Id": "shane.task.petting", "TextKey": "dialogue.Shane.Task.Petting", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "shane.task.failure", "TextKey": "dialogue.Shane.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Vincent": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "vincent.recruit", "TextKey": "dialogue.Vincent.Recruit" }],
+      "Dismiss": [{ "Id": "vincent.dismiss", "TextKey": "dialogue.Vincent.Dismiss" }],
+      "Idle": [
+        { "Id": "vincent.idle", "TextKey": "dialogue.Vincent.Idle" },
+        { "Id": "vincent.idle.rain", "TextKey": "dialogue.Vincent.Idle.rain", "Condition": "rain" },
+        { "Id": "vincent.idle.night", "TextKey": "dialogue.Vincent.Idle.night", "Condition": "night" },
+        { "Id": "vincent.idle.place", "TextKey": "dialogue.Vincent.Idle.place", "Condition": "farm" }
+      ],
+      "Foraging": [{ "Id": "vincent.task.foraging", "TextKey": "dialogue.Vincent.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "vincent.task.failure", "TextKey": "dialogue.Vincent.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Willy": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "willy.recruit", "TextKey": "dialogue.Willy.Recruit" }],
+      "Dismiss": [{ "Id": "willy.dismiss", "TextKey": "dialogue.Willy.Dismiss" }],
+      "Idle": [
+        { "Id": "willy.idle", "TextKey": "dialogue.Willy.Idle" },
+        { "Id": "willy.idle.rain", "TextKey": "dialogue.Willy.Idle.rain", "Condition": "rain" },
+        { "Id": "willy.idle.night", "TextKey": "dialogue.Willy.Idle.night", "Condition": "night" },
+        { "Id": "willy.idle.place", "TextKey": "dialogue.Willy.Idle.place", "Condition": "location=Beach" }
+      ],
+      "Foraging": [{ "Id": "willy.task.foraging", "TextKey": "dialogue.Willy.Task.Foraging", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "willy.task.failure", "TextKey": "dialogue.Willy.TaskFailure" }]
+    },
+    "IdleAnimations": []
+  },
+  "Wizard": {
+    "Dialogue": {
+      "Recruit": [{ "Id": "wizard.recruit", "TextKey": "dialogue.Wizard.Recruit" }],
+      "Dismiss": [{ "Id": "wizard.dismiss", "TextKey": "dialogue.Wizard.Dismiss" }],
+      "Idle": [
+        { "Id": "wizard.idle", "TextKey": "dialogue.Wizard.Idle" },
+        { "Id": "wizard.idle.rain", "TextKey": "dialogue.Wizard.Idle.rain", "Condition": "rain" },
+        { "Id": "wizard.idle.night", "TextKey": "dialogue.Wizard.Idle.night", "Condition": "night" },
+        { "Id": "wizard.idle.place", "TextKey": "dialogue.Wizard.Idle.place", "Condition": "location=WizardHouse" }
+      ],
+      "Mining": [{ "Id": "wizard.task.mining", "TextKey": "dialogue.Wizard.Task.Mining", "Condition": "success" }],
+      "TaskFailure": [{ "Id": "wizard.task.failure", "TextKey": "dialogue.Wizard.TaskFailure" }]
     },
     "IdleAnimations": []
   },

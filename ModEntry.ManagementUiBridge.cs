@@ -70,12 +70,14 @@ public sealed partial class ModEntry
             if (!isActive)
                 return;
 
+            this.ClearCompanionWorkArea(member, cancelPendingAreaTask: true);
             member.SearchWood = false;
             member.SearchMining = false;
             member.ClearArea = false;
             this.RemovePendingTask(member.NpcName);
             this.SetCompanionActivity(member, "companion.status.following");
             this.ClearCompanionTarget(member);
+            this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.inactive"));
             this.InvalidateTargetPreviews();
             this.MarkStateDirty();
             if (this.ShouldShowFeedbackFor(ownerId))
@@ -107,7 +109,7 @@ public sealed partial class ModEntry
 
         // Even if the selected companion is already working, an explicit Work
         // command must restore the owner's global task gate before returning.
-        if (isActive)
+        if (isActive || this.HasActiveWorkArea(member))
         {
             if (restoredWorkState)
             {
@@ -233,9 +235,11 @@ public sealed partial class ModEntry
         member.SearchWood = false;
         member.SearchMining = false;
         member.ClearArea = false;
+        this.ClearCompanionWorkArea(member, cancelPendingAreaTask: true);
         this.RemovePendingTask(member.NpcName);
         this.ReleaseWorkTargetsForNpc(member.NpcName);
         this.ClearCompanionTarget(member);
+        this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.inactive"));
 
         member.Mode = CompanionMode.Following;
         member.WaitingLocationName = null;
@@ -399,6 +403,13 @@ public sealed partial class ModEntry
         if (member.CurrentActivityKey == "companion.status.stuck")
             return this.Tr("companion.status.stuck");
 
+        if (member.CurrentActivityKey is "companion.status.work_area"
+            or "companion.status.work_area_paused"
+            or "companion.status.work_area_blocked")
+        {
+            return this.Tr(member.CurrentActivityKey);
+        }
+
         if (this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? pendingTask)
             && pendingTask.Kind == CompanionTaskKind.MovingToWait)
         {
@@ -428,7 +439,9 @@ public sealed partial class ModEntry
         List<SquadMemberState> localMembers = this.GetLocalMembers().ToList();
         int working = localMembers.Count(p => (this.pendingTasks.TryGetValue(p.NpcName, out PendingCompanionTask? task)
                 && task.Kind != CompanionTaskKind.MovingToWait)
-            || p.CurrentActivityKey == "companion.status.working");
+            || p.CurrentActivityKey == "companion.status.working"
+            || (p.Mode == CompanionMode.Following
+                && p.CurrentActivityKey == "companion.status.work_area"));
         int fullInventories = localMembers.Count(p => p.Inventory.Count >= this.GetCompanionInventoryCapacity());
         string tasksState = this.AreTasksEnabled(Game1.player.UniqueMultiplayerID)
             ? this.Tr("companion.panel.tasks_on")
@@ -547,7 +560,10 @@ public sealed partial class ModEntry
 
     private void RefreshCompanionPanelPreviews()
     {
-        if (!Context.IsWorldReady)
+        // Farmhands consume the host-authored preview in snapshots. Recomputing
+        // against their cosmetic world state can contradict recovery/path state
+        // which intentionally exists only in the host simulation.
+        if (!Context.IsWorldReady || !Context.IsMainPlayer)
             return;
 
         List<SquadMemberState> localMembers = this.GetLocalMembers().ToList();
@@ -872,6 +888,11 @@ public sealed partial class ModEntry
 
         if (IsDirectiveEnabled(member, directive) == enabled)
             return;
+
+        // A free-roaming directive replaces a fixed-area order. This keeps the
+        // two targeting models mutually exclusive and makes the panel action
+        // behave like an explicit new command.
+        this.ClearCompanionWorkArea(member, cancelPendingAreaTask: true);
 
         switch (directive)
         {

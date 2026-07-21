@@ -120,7 +120,10 @@ public sealed partial class ModEntry
             // this phase fails, rollback is complete and save writes can safely
             // remain disabled without leaving a character under partial control.
             this.ValidateLoadedMembers();
+            this.EnforceConfiguredWorkAreaRadius();
             this.ReloadOverflowInventoryIntoSquad();
+            foreach (SquadMemberState member in this.members.Values)
+                this.lastObservedCommunicationFailures[member.NpcName] = member.LastFailureReasonKey ?? "";
         }
         catch (Exception ex)
         {
@@ -285,7 +288,7 @@ public sealed partial class ModEntry
     /// next one when the player returns to the title screen without restarting
     /// the game.
     /// </remarks>
-    private void ResetRuntimeState(bool clearProfiles)
+    private void ResetRuntimeState(bool clearProfiles, bool preserveCosmeticRuntime = false)
     {
         this.members.Clear();
         this.pendingTasks.Clear();
@@ -314,6 +317,7 @@ public sealed partial class ModEntry
         this.companionMovementControllers.Clear();
         this.workTargetRetryAfterTicks.Clear();
         this.priorityTaskPlanningMembers.Clear();
+        this.workAreaPositionRecoveryNeeded.Clear();
         this.suppressedVanillaArrivals.Clear();
         this.reachabilityCache.Clear();
         this.targetPreviewCache.Clear();
@@ -323,11 +327,18 @@ public sealed partial class ModEntry
         this.companionHudNotices.Clear();
         this.deferredActionRequests.Clear();
         this.commandReplayGuard.Clear();
+        this.dialogueScheduler.Clear();
+        this.lastObservedCommunicationFailures.Clear();
         this.vanillaMovementAllowances.Clear();
         this.controlledNpcLeases.Clear();
         this.localOwnerSimulationBlocks.Clear();
         this.followDestinationsThisUpdate.Clear();
         this.workStandReservations.Clear();
+        if (!preserveCosmeticRuntime)
+        {
+            this.workAreaPreviews.Clear();
+            this.ResetCompanionWorkAnimations();
+        }
         this.deferredNpcRestores.Clear();
         this.nextTaskScanTick = 0;
         this.stateRevision = 0;
@@ -421,6 +432,12 @@ public sealed partial class ModEntry
         }
     }
 
+    private void OnRenderedWorld(object? sender, RenderedWorldEventArgs e)
+    {
+        this.DrawCompanionWorkAreas(e.SpriteBatch);
+        this.DrawCompanionWorkAnimations(e.SpriteBatch);
+    }
+
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
     {
         if (!Context.IsWorldReady)
@@ -435,9 +452,6 @@ public sealed partial class ModEntry
         {
             if (!Context.IsOnHostComputer && e.IsMultipleOf(120) && this.lastAppliedStateRevision < 0)
                 this.RequestStateSnapshot();
-
-            if (e.IsMultipleOf(30) && Game1.activeClickableMenu is CompanionPanelMenu)
-                this.RefreshCompanionPanelPreviews();
 
             return;
         }
@@ -455,6 +469,7 @@ public sealed partial class ModEntry
             this.ProcessDeferredActionRequests();
             this.UpdateOwnerTrails();
             this.ProcessPendingTasks();
+            this.UpdateCompanionCommunication();
         }
 
         if (e.IsMultipleOf(30)
@@ -475,7 +490,12 @@ public sealed partial class ModEntry
             this.UpdateFollowers();
 
         if (e.IsMultipleOf(300) && !this.IsBlockedGameState(blockForMenu: false))
-            this.RestorePersistedMemberPositions(logFailures: false);
+        {
+            this.RestorePersistedMemberPositions(
+                logFailures: false,
+                restoreWorkAreas: true,
+                retryUnavailableWorkAreasOnly: true);
+        }
 
         if (e.IsMultipleOf(60))
         {
@@ -559,6 +579,7 @@ public sealed partial class ModEntry
 
                 member.Mode = CompanionMode.ParkedForDisconnect;
                 member.ParkedAtUtcTicks = DateTimeOffset.UtcNow.UtcTicks;
+                this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.not_following"));
                 this.SetCompanionActivity(member, "companion.status.parked");
                 if (npc is not null)
                     this.StopCompanionMovement(npc);
@@ -578,6 +599,37 @@ public sealed partial class ModEntry
         if (e.FromModID != this.ModManifest.UniqueID)
             return;
 
+        if (this.TryHandleCompanionWorkVisualMessage(e))
+            return;
+
+        if (e.Type == MessageCompanionExpression
+            && !Context.IsMainPlayer
+            && e.FromPlayerID == Game1.MasterPlayer.UniqueMultiplayerID)
+        {
+            try
+            {
+                CompanionExpressionMessage expression = e.ReadAs<CompanionExpressionMessage>();
+                if (expression is not null
+                    && expression.NpcName.Length is > 0 and <= 128
+                    && expression.LocationName.Length is > 0 and <= 256
+                    && expression.Text.Length <= 512
+                    && expression.TextKey.Length <= 256
+                    && IsValidCompanionDialogueContext(expression.Context)
+                    && expression.SoundCue.Length <= 128
+                    && expression.EmoteId is >= -1 and <= 64
+                    && expression.JumpHeight is >= 0f and <= 6f
+                    && expression.ShakeMilliseconds is >= 0 and <= 1000)
+                {
+                    this.ApplyCompanionExpression(expression);
+                }
+            }
+            catch (Exception ex)
+            {
+                this.Monitor.Log($"Ignored invalid companion expression: {ex.Message}", LogLevel.Warn);
+            }
+            return;
+        }
+
         if (e.Type == MessageCommandFeedback
             && !Context.IsMainPlayer
             && e.FromPlayerID == Game1.MasterPlayer.UniqueMultiplayerID)
@@ -585,8 +637,21 @@ public sealed partial class ModEntry
             try
             {
                 CompanionCommandFeedbackMessage feedback = e.ReadAs<CompanionCommandFeedbackMessage>();
-                if (feedback is not null && !string.IsNullOrWhiteSpace(feedback.Text) && feedback.Text.Length <= 1024)
+                if (feedback is not null
+                    && !string.IsNullOrWhiteSpace(feedback.Text)
+                    && feedback.Text.Length <= 1024
+                    && (feedback.Action?.Length ?? 0) <= 64
+                    && (feedback.CommandId?.Length ?? 0) <= 64)
                 {
+                    long localOwnerId = Game1.player.UniqueMultiplayerID;
+                    if (feedback.IsError
+                        && string.Equals(feedback.Action, "SetWorkArea", StringComparison.Ordinal)
+                        && this.workAreaPreviews.TryGetValue(localOwnerId, out WorkAreaPreviewState preview)
+                        && !string.IsNullOrWhiteSpace(feedback.CommandId)
+                        && string.Equals(preview.CommandId, feedback.CommandId, StringComparison.Ordinal))
+                    {
+                        this.workAreaPreviews.Remove(Game1.player.UniqueMultiplayerID);
+                    }
                     Game1.addHUDMessage(feedback.IsError
                         ? new HUDMessage(feedback.Text, HUDMessage.error_type)
                         : new HUDMessage(feedback.Text));
@@ -722,13 +787,13 @@ public sealed partial class ModEntry
             return;
         }
 
-        if (action is "ManualTask" or "MimicToolUse" or "MimicAction" or "ContextTask" or "MoveToWait")
+        if (action is "ManualTask" or "MimicToolUse" or "MimicAction" or "ContextTask" or "MoveToWait" or "SetWorkArea" or "RecruitmentRefusal")
         {
             Farmer? owner = this.GetOwnerFarmer(playerId);
             if (owner?.currentLocation is null
                 || !string.Equals(owner.currentLocation.NameOrUniqueName, message.LocationName, StringComparison.Ordinal))
             {
-                if (action is "ContextTask" or "MoveToWait")
+                if (action is "ContextTask" or "MoveToWait" or "SetWorkArea")
                     this.Warn("multiplayer.command_stale");
                 return;
             }
@@ -740,6 +805,17 @@ public sealed partial class ModEntry
                 NPC? npc = Game1.getCharacterFromName(message.NpcName, mustBeVillager: false, includeEventActors: false);
                 if (npc is not null)
                     this.TryRecruit(npc, playerId, showPrompt: false);
+                break;
+
+            case "RecruitmentRefusal":
+                NPC? refusedNpc = Game1.getCharacterFromName(message.NpcName, mustBeVillager: false, includeEventActors: false);
+                Farmer? refusingOwner = this.GetOwnerFarmer(playerId);
+                if (refusedNpc?.currentLocation is not null
+                    && refusingOwner?.currentLocation == refusedNpc.currentLocation
+                    && string.Equals(refusedNpc.currentLocation.NameOrUniqueName, message.LocationName, StringComparison.Ordinal))
+                {
+                    this.Say(refusedNpc, "RecruitmentRefusal", force: true, ownerIdOverride: playerId);
+                }
                 break;
 
             case "Dismiss":
@@ -810,6 +886,20 @@ public sealed partial class ModEntry
                     new Vector2(message.TileX, message.TileY));
                 break;
 
+            case "SetWorkArea":
+                if (Enum.TryParse(message.Argument, ignoreCase: true, out CompanionWorkSpecialty workSpecialty)
+                    && Enum.IsDefined(workSpecialty))
+                {
+                    this.TryAssignWorkArea(
+                        playerId,
+                        string.IsNullOrWhiteSpace(message.NpcName) ? null : message.NpcName,
+                        message.LocationName,
+                        new Vector2(message.TileX, message.TileY),
+                        workSpecialty,
+                        message.Index);
+                }
+                break;
+
             case "MimicToolUse":
                 this.TryMimicToolUse(playerId, new Vector2(message.TileX, message.TileY));
                 break;
@@ -870,7 +960,11 @@ public sealed partial class ModEntry
     private void HandleActionRequestSafely(long playerId, SquadActionMessage message)
     {
         long? previousFeedbackTarget = this.commandFeedbackTargetPlayerId;
+        string? previousFeedbackAction = this.commandFeedbackAction;
+        string? previousFeedbackCommandId = this.commandFeedbackCommandId;
         this.commandFeedbackTargetPlayerId = playerId;
+        this.commandFeedbackAction = message.Action;
+        this.commandFeedbackCommandId = message.CommandId;
         try
         {
             this.HandleActionRequest(playerId, message);
@@ -885,6 +979,8 @@ public sealed partial class ModEntry
         finally
         {
             this.commandFeedbackTargetPlayerId = previousFeedbackTarget;
+            this.commandFeedbackAction = previousFeedbackAction;
+            this.commandFeedbackCommandId = previousFeedbackCommandId;
         }
     }
 }

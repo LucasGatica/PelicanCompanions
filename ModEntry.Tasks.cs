@@ -640,10 +640,66 @@ public sealed partial class ModEntry
 
         this.taskToggles[ownerId] = enabled;
         if (!enabled)
+        {
             this.CancelPendingTasksForOwner(
                 ownerId,
                 "companion.task_failure.tasks_disabled",
                 includeMovementOrders: false);
+            foreach (SquadMemberState member in this.members.Values.Where(member => member.OwnerId == ownerId))
+            {
+                this.UpdateTargetPreview(
+                    member,
+                    new TargetPreview(false, "", -1, -1, "companion.preview.tasks_disabled"));
+                if (member.Mode == CompanionMode.Following && this.HasActiveWorkArea(member))
+                {
+                    this.SetCompanionActivity(member, "companion.status.work_area_paused");
+                    this.SetTaskFailure(member, "companion.task_failure.tasks_disabled");
+                }
+            }
+        }
+        else
+        {
+            foreach (SquadMemberState member in this.members.Values.Where(member => member.OwnerId == ownerId))
+            {
+                bool follows = member.Mode == CompanionMode.Following;
+                bool hasDirective = follows && this.HasActiveWorkDirective(member);
+                bool workAreaRecoveryPending = follows
+                    && this.HasActiveWorkArea(member)
+                    && this.HasPendingWorkAreaRecovery(member);
+                if (member.LastFailureReasonKey == "companion.task_failure.tasks_disabled")
+                    this.SetTaskFailure(member, "");
+                this.UpdateTargetPreview(
+                    member,
+                    new TargetPreview(
+                        false,
+                        "",
+                        -1,
+                        -1,
+                        !follows
+                            ? "companion.preview.not_following"
+                            : workAreaRecoveryPending
+                                ? "companion.task_failure.work_area_unavailable"
+                                : hasDirective
+                                    ? "companion.preview.planning"
+                                    : "companion.preview.inactive"));
+                if (follows && this.HasActiveWorkArea(member))
+                {
+                    this.SetCompanionActivity(
+                        member,
+                        workAreaRecoveryPending
+                            ? "companion.status.work_area_paused"
+                            : "companion.status.work_area");
+                    if (workAreaRecoveryPending)
+                        this.SetTaskFailure(member, "companion.task_failure.work_area_unavailable");
+                    this.priorityTaskPlanningMembers.Add(member.NpcName);
+                }
+            }
+
+            int deferredScanTick = Game1.ticks + 1;
+            this.nextTaskScanTick = this.nextTaskScanTick <= Game1.ticks
+                ? deferredScanTick
+                : Math.Min(this.nextTaskScanTick, deferredScanTick);
+        }
 
         this.InvalidateTargetPreviews();
         this.MarkStateDirty();

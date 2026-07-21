@@ -40,6 +40,7 @@ internal sealed class SquadMemberState
     public float WaitingTileY { get; set; }
     public long ParkedAtUtcTicks { get; set; }
     public long LastDialogueUtcTicks { get; set; }
+    public List<string> RecentDialogueKeys { get; set; } = new();
     public int Level { get; set; } = 1;
     public int Xp { get; set; }
     public int UnspentSkillPoints { get; set; }
@@ -51,6 +52,13 @@ internal sealed class SquadMemberState
     public bool ClearArea { get; set; }
     public bool CurrentWorkIsDirect { get; set; }
     public CompanionWorkSpecialty PreferredWorkSpecialty { get; set; } = CompanionWorkSpecialty.ClearArea;
+    public bool WorkAreaActive { get; set; }
+    public string WorkAreaOrderId { get; set; } = "";
+    public string WorkAreaLocationName { get; set; } = "";
+    public int WorkAreaCenterX { get; set; } = -1;
+    public int WorkAreaCenterY { get; set; } = -1;
+    public int WorkAreaRadius { get; set; } = 8;
+    public CompanionWorkSpecialty WorkAreaSpecialty { get; set; } = CompanionWorkSpecialty.ClearArea;
     public string CurrentActivityKey { get; set; } = "companion.status.following";
     public string LastTaskResultKey { get; set; } = "";
     public string LastFailureReasonKey { get; set; } = "";
@@ -152,8 +160,41 @@ internal sealed class NpcCompanionProfile
 
 internal sealed class CompanionDialogueLine
 {
+    public string Id { get; set; } = "";
     public string TextKey { get; set; } = "";
     public string? Condition { get; set; }
+    public bool Overlay { get; set; }
+    public int Weight { get; set; } = 1;
+    public int MinIntervalSeconds { get; set; }
+}
+
+internal enum CompanionDialoguePriority
+{
+    Ambient,
+    Task,
+    Command,
+    Milestone
+}
+
+internal sealed class CompanionDialogueContext
+{
+    public long? OwnerId { get; init; }
+    public CompanionTaskKind? TaskKind { get; init; }
+    public string ItemName { get; init; } = "";
+    public string ItemId { get; init; } = "";
+    public string ResultKey { get; init; } = "";
+    public string FailureKey { get; init; } = "";
+    public int? Level { get; init; }
+    public int Hearts { get; init; }
+    public int TimeOfDay { get; init; }
+    public string Season { get; init; } = "";
+    public string Weather { get; init; } = "";
+    public string DayPeriod { get; init; } = "";
+    public string LocationName { get; init; } = "";
+    public string LocationContext { get; init; } = "";
+    public bool IsSpouse { get; init; }
+    public bool IsOutdoors { get; init; }
+    public bool IsManual { get; init; }
 }
 
 internal sealed class SquadActionMessage
@@ -174,6 +215,31 @@ internal sealed class CompanionCommandFeedbackMessage
 {
     public string Text { get; set; } = "";
     public bool IsError { get; set; }
+    public string Action { get; set; } = "";
+    public string CommandId { get; set; } = "";
+}
+
+internal sealed class CompanionExpressionMessage
+{
+    public string NpcName { get; set; } = "";
+    public string LocationName { get; set; } = "";
+    public string Text { get; set; } = "";
+    public string TextKey { get; set; } = "";
+    public CompanionDialogueContext? Context { get; set; }
+    public int EmoteId { get; set; } = -1;
+    public string SoundCue { get; set; } = "";
+    public float JumpHeight { get; set; }
+    public int ShakeMilliseconds { get; set; }
+}
+
+internal sealed class CompanionWorkVisualMessage
+{
+    public string NpcName { get; set; } = "";
+    public string LocationName { get; set; } = "";
+    public CompanionTaskKind TaskKind { get; set; }
+    public int TargetX { get; set; }
+    public int TargetY { get; set; }
+    public string Outcome { get; set; } = "work";
 }
 
 internal enum CompanionTaskKind
@@ -197,6 +263,9 @@ internal sealed class PendingCompanionTask
     public bool Manual { get; set; }
     public bool UsesWorkDirective { get; set; }
     public bool UsesConfiguredAutonomy { get; set; }
+    public bool UsesFixedWorkArea { get; set; }
+    public string FixedWorkAreaOrderId { get; set; } = "";
+    public Vector2 FixedWorkAreaCenter { get; set; }
     public bool RequiresPlayerTool { get; set; }
     public bool IgnoresTaskMode { get; set; }
     public bool IgnoresTaskToggle { get; set; }
@@ -207,6 +276,9 @@ internal sealed class PendingCompanionTask
     public int ReturnDistance { get; set; }
     public int LastPathTick { get; set; }
     public int LastActionTick { get; set; }
+    public bool AwaitingWorkAnimation { get; set; }
+    public int WorkAnimationReadyTick { get; set; }
+    public Vector2 WorkAnimationTargetTile { get; set; }
     public int StartedTick { get; set; }
     public int LastProcessedTick { get; set; }
     public int InactiveTicks { get; set; }

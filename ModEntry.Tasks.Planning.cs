@@ -17,7 +17,7 @@ public sealed partial class ModEntry
 {
     private bool HasActiveWorkDirective(SquadMemberState member)
     {
-        return member.SearchWood || member.SearchMining || member.ClearArea;
+        return member.SearchWood || member.SearchMining || member.ClearArea || this.HasActiveWorkArea(member);
     }
 
     private bool IsPendingTaskAllowedByDirectives(SquadMemberState member, CompanionTaskKind kind)
@@ -51,28 +51,93 @@ public sealed partial class ModEntry
 
     private bool TryAssignWorkDirectiveTask(SquadMemberState member)
     {
+        bool fixedArea = this.HasActiveWorkArea(member);
         NPC? npc = Game1.getCharacterFromName(member.NpcName, mustBeVillager: false, includeEventActors: false);
         Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
         if (npc is null || owner is null || owner.currentLocation is null)
         {
+            if (fixedArea && npc is null)
+                this.workAreaPositionRecoveryNeeded.Add(member.NpcName);
             this.SetTaskFailure(member, "companion.task_failure.owner_unavailable");
             return false;
         }
 
-        GameLocation location = owner.currentLocation;
-        if (npc.currentLocation != location)
+        GameLocation? fixedAreaLocation = fixedArea
+            ? Game1.getLocationFromName(member.WorkAreaLocationName)
+            : null;
+        if (fixedArea && fixedAreaLocation is null)
         {
-            this.SetCompanionActivity(member, "companion.status.returning");
-            this.SetTaskFailure(member, "companion.task_failure.owner_too_far");
+            this.workAreaPositionRecoveryNeeded.Add(member.NpcName);
+            this.UpdateTargetPreview(
+                member,
+                new TargetPreview(false, "", -1, -1, "companion.task_failure.work_area_unavailable"));
+            this.SetCompanionActivity(member, "companion.status.work_area_paused");
+            this.SetTaskFailure(member, "companion.task_failure.work_area_unavailable");
             return false;
         }
 
-        int radius = this.GetCompanionWorkRadius(member);
-        bool includeWood = (member.SearchWood || member.ClearArea)
+        GameLocation location = fixedAreaLocation ?? owner.currentLocation;
+        if (npc.currentLocation != location)
+        {
+            if (fixedArea)
+            {
+                this.workAreaPositionRecoveryNeeded.Add(member.NpcName);
+                this.UpdateTargetPreview(
+                    member,
+                    new TargetPreview(false, "", -1, -1, "companion.task_failure.work_area_unavailable"));
+            }
+            this.SetCompanionActivity(member, fixedArea
+                ? "companion.status.work_area_paused"
+                : "companion.status.returning");
+            this.SetTaskFailure(member, fixedArea
+                ? "companion.task_failure.work_area_unavailable"
+                : "companion.task_failure.owner_too_far");
+            return false;
+        }
+
+        if (fixedArea && this.workAreaPositionRecoveryNeeded.Contains(member.NpcName))
+        {
+            // A failed center placement blocks navigation, but it shouldn't keep
+            // an already exhausted area alive forever while recovery retries.
+            if (!this.HasMatchingWorkAreaTarget(
+                    location,
+                    this.GetWorkAreaCenter(member),
+                    member.WorkAreaRadius,
+                    member.WorkAreaSpecialty,
+                    includeReserved: true,
+                    respectConfiguredModes: false))
+            {
+                this.CompleteCompanionWorkArea(member, npc);
+                return false;
+            }
+
+            this.UpdateTargetPreview(
+                member,
+                new TargetPreview(false, "", -1, -1, "companion.task_failure.work_area_unavailable"));
+            this.SetCompanionActivity(member, "companion.status.work_area_paused");
+            this.SetTaskFailure(member, "companion.task_failure.work_area_unavailable");
+            return false;
+        }
+
+        int radius = fixedArea ? member.WorkAreaRadius : this.GetCompanionWorkRadius(member);
+        bool includeWood = (fixedArea
+                ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Lumbering)
+                : member.SearchWood || member.ClearArea)
             && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled;
-        bool includeMining = (member.SearchMining || member.ClearArea)
+        bool includeMining = (fixedArea
+                ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Mining)
+                : member.SearchMining || member.ClearArea)
             && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled;
-        WorkTarget? target = this.FindBestWorkTarget(member, npc, owner, location, radius);
+        WorkTarget? target = this.FindBestWorkTarget(
+            member,
+            npc,
+            owner,
+            location,
+            radius,
+            includeWood,
+            includeMining,
+            fixedArea ? this.GetWorkAreaCenter(member) : null,
+            allowStandOutsideRadius: fixedArea);
         this.UpdateTargetPreview(
             member,
             target is WorkTarget plannedTarget
@@ -87,12 +152,46 @@ public sealed partial class ModEntry
                         : "companion.preview.work_modes_disabled"));
         if (target is null)
         {
-            this.SetCompanionActivity(member, "companion.status.following");
+            if (fixedArea)
+            {
+                bool hasAnyRemainingTarget = this.HasMatchingWorkAreaTarget(
+                    location,
+                    this.GetWorkAreaCenter(member),
+                    member.WorkAreaRadius,
+                    member.WorkAreaSpecialty,
+                    includeReserved: true,
+                    respectConfiguredModes: false);
+                bool hasEnabledRemainingTarget = this.HasMatchingWorkAreaTarget(
+                    location,
+                    this.GetWorkAreaCenter(member),
+                    member.WorkAreaRadius,
+                    member.WorkAreaSpecialty,
+                    includeReserved: true,
+                    respectConfiguredModes: true);
+                if (!hasAnyRemainingTarget)
+                {
+                    this.CompleteCompanionWorkArea(member, npc);
+                }
+                else if (!hasEnabledRemainingTarget)
+                {
+                    this.SetCompanionActivity(member, "companion.status.work_area_paused");
+                    this.SetTaskFailure(member, "companion.task_failure.tasks_disabled");
+                }
+                else
+                {
+                    this.SetCompanionActivity(member, "companion.status.work_area_blocked");
+                    this.SetTaskFailure(member, "companion.task_failure.work_area_blocked");
+                }
+            }
+            else
+            {
+                this.SetCompanionActivity(member, "companion.status.following");
+            }
             this.ClearCompanionTarget(member);
             return false;
         }
 
-        return target.Value.Kind switch
+        bool queued = target.Value.Kind switch
         {
             CompanionTaskKind.Lumbering => this.TryQueueDirectiveLumberTask(
                 location,
@@ -110,6 +209,17 @@ public sealed partial class ModEntry
                 preparedStandTile: target.Value.StandTile),
             _ => false
         };
+        if (queued
+            && fixedArea
+            && this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? areaTask))
+        {
+            areaTask.UsesFixedWorkArea = true;
+            areaTask.UsesWorkDirective = false;
+            areaTask.FixedWorkAreaOrderId = member.WorkAreaOrderId;
+            areaTask.FixedWorkAreaCenter = this.GetWorkAreaCenter(member);
+        }
+
+        return queued;
     }
 
     private bool TryAssignConfiguredAutonomousTask(SquadMemberState member)
@@ -164,13 +274,22 @@ public sealed partial class ModEntry
         return this.FindBestWorkTarget(member, npc, owner, location, radius, includeWood, includeMining);
     }
 
-    private WorkTarget? FindBestWorkTarget(SquadMemberState member, NPC npc, Farmer owner, GameLocation location, int radius, bool includeWood, bool includeMining)
+    private WorkTarget? FindBestWorkTarget(
+        SquadMemberState member,
+        NPC npc,
+        Farmer owner,
+        GameLocation location,
+        int radius,
+        bool includeWood,
+        bool includeMining,
+        Vector2? searchCenter = null,
+        bool allowStandOutsideRadius = false)
     {
         if (!includeWood && !includeMining)
             return null;
 
         Vector2 npcTile = NormalizeTile(npc.Tile);
-        Vector2 ownerTile = NormalizeTile(owner.Tile);
+        Vector2 ownerTile = NormalizeTile(searchCenter ?? owner.Tile);
         Dictionary<Vector2, List<WorkTarget>> targetsByStandTile = new();
 
         void TryAddTarget(CompanionTaskKind kind, Vector2 rawTile)
@@ -189,7 +308,8 @@ public sealed partial class ModEntry
                 tile,
                 npc,
                 member,
-                radius))
+                radius + (allowStandOutsideRadius ? 1 : 0),
+                ownerAnchorOverride: ownerTile))
             {
                 if (!targetsByStandTile.TryGetValue(standTile, out List<WorkTarget>? standTargets))
                 {
@@ -234,11 +354,32 @@ public sealed partial class ModEntry
             MaxFollowReachabilitySearchTiles,
             out Vector2 reachedStandTile,
             out _);
-        if (reachability != ReachabilitySearchResult.Reachable
-            || !targetsByStandTile.TryGetValue(reachedStandTile, out List<WorkTarget>? reachedTargets))
+        List<WorkTarget>? reachedTargets;
+        if (reachability == ReachabilitySearchResult.Reachable)
+        {
+            if (!targetsByStandTile.TryGetValue(reachedStandTile, out reachedTargets))
+                return null;
+        }
+        else if (reachability == ReachabilitySearchResult.Uncertain)
+        {
+            // A bounded search can be inconclusive on large custom maps even
+            // when the game's real path controller can reach the area. Queue
+            // the nearest geometric stand and let controller/backoff handling
+            // provide the authoritative answer instead of stranding the order.
+            reachedTargets = targetsByStandTile
+                .OrderBy(pair => Vector2.DistanceSquared(npcTile, pair.Key))
+                .ThenBy(pair => pair.Key.X)
+                .ThenBy(pair => pair.Key.Y)
+                .Select(pair => pair.Value)
+                .FirstOrDefault();
+        }
+        else
         {
             return null;
         }
+
+        if (reachedTargets is null || reachedTargets.Count == 0)
+            return null;
 
         return reachedTargets
             .OrderBy(p => p.NpcDistance)
@@ -265,14 +406,17 @@ public sealed partial class ModEntry
         Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
         NPC? npc = this.GetNpcByName(member.NpcName);
         string locationName = owner?.currentLocation?.NameOrUniqueName ?? "";
+        string npcLocationName = npc?.currentLocation?.NameOrUniqueName ?? "";
         Vector2 ownerTile = owner is null ? new Vector2(-1f, -1f) : NormalizeTile(owner.Tile);
         Vector2 npcTile = npc is null ? new Vector2(-1f, -1f) : NormalizeTile(npc.Tile);
         bool tasksEnabled = this.AreTasksEnabled(member.OwnerId);
         bool blocked = this.IsOwnerSimulationBlocked(member.OwnerId, blockForMenu: false);
+        bool workAreaRecoveryNeeded = this.HasPendingWorkAreaRecovery(member);
         TargetPreviewCacheKey cacheKey = new(
             member.NpcName,
             simulatedDirective,
             locationName,
+            npcLocationName,
             (int)ownerTile.X,
             (int)ownerTile.Y,
             (int)npcTile.X,
@@ -280,8 +424,15 @@ public sealed partial class ModEntry
             member.SearchWood,
             member.SearchMining,
             member.ClearArea,
+            member.WorkAreaActive,
+            member.WorkAreaLocationName,
+            member.WorkAreaCenterX,
+            member.WorkAreaCenterY,
+            member.WorkAreaRadius,
+            member.WorkAreaSpecialty,
             tasksEnabled,
             blocked,
+            workAreaRecoveryNeeded,
             member.Mode);
 
         if (this.targetPreviewCache.Count > 256)
@@ -322,13 +473,27 @@ public sealed partial class ModEntry
         if (npc is null || owner is null || owner.currentLocation is null)
             return new TargetPreview(false, "", -1, -1, "companion.preview.no_owner");
 
-        GameLocation location = owner.currentLocation;
+        bool fixedArea = this.HasActiveWorkArea(member) && !simulatedDirective.HasValue;
+        if (fixedArea && this.HasPendingWorkAreaRecovery(member))
+            return new TargetPreview(false, "", -1, -1, "companion.task_failure.work_area_unavailable");
+
+        GameLocation? fixedAreaLocation = fixedArea
+            ? Game1.getLocationFromName(member.WorkAreaLocationName)
+            : null;
+        if (fixedArea && fixedAreaLocation is null)
+            return new TargetPreview(false, "", -1, -1, "companion.task_failure.work_area_unavailable");
+
+        GameLocation location = fixedAreaLocation ?? owner.currentLocation;
         if (npc.currentLocation != location)
             return new TargetPreview(false, "", -1, -1, "companion.preview.other_location");
 
-        bool searchWood = member.SearchWood;
-        bool searchMining = member.SearchMining;
-        bool clearArea = member.ClearArea;
+        bool searchWood = fixedArea
+            ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Lumbering)
+            : member.SearchWood;
+        bool searchMining = fixedArea
+            ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Mining)
+            : member.SearchMining;
+        bool clearArea = !fixedArea && member.ClearArea;
         if (simulatedDirective.HasValue)
         {
             switch (simulatedDirective.Value)
@@ -360,7 +525,17 @@ public sealed partial class ModEntry
             return new TargetPreview(false, "", -1, -1, reason);
         }
 
-        WorkTarget? target = this.FindBestWorkTarget(member, npc, owner, location, this.GetCompanionWorkRadius(member), includeWood, includeMining);
+        int radius = fixedArea ? member.WorkAreaRadius : this.GetCompanionWorkRadius(member);
+        WorkTarget? target = this.FindBestWorkTarget(
+            member,
+            npc,
+            owner,
+            location,
+            radius,
+            includeWood,
+            includeMining,
+            fixedArea ? this.GetWorkAreaCenter(member) : null,
+            allowStandOutsideRadius: fixedArea);
         if (target is null)
             return new TargetPreview(false, "", -1, -1, "companion.preview.no_target");
 

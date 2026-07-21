@@ -1,10 +1,10 @@
 # Arquitetura do Pelican Companions
 
-Este documento descreve a organização mantida na versão 1.5.3. A regra
-principal é simples: `ModEntry.cs` compõe o mod e registra integrações; cada
-arquivo parcial contém apenas um fluxo funcional. O uso de `partial` mantém o
-contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
-único arquivo.
+Este documento descreve a organização atual do ramo `Unreleased`, posterior à
+versão 1.5.3. A regra principal é simples: `ModEntry.cs` compõe o mod e registra
+integrações; cada arquivo parcial contém apenas um fluxo funcional. O uso de
+`partial` mantém o contrato exigido pelo SMAPI sem voltar a concentrar milhares
+de linhas em um único arquivo.
 
 ## Módulos
 
@@ -21,15 +21,22 @@ contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
 | `ModEntry.Tasks.Execution.cs` | Revalidação, pathing e commit das tarefas pendentes. |
 | `CompanionCareTasks.cs` | Harvest e cuidado de animais. |
 | `ModEntry.ManagementUiBridge.cs` | Queries e comandos consumidos pelo HUD/painel. |
-| `ModEntry.ActionWheel.cs` | Input, hit-test visual de NPC e composição das ações contextuais. |
+| `ModEntry.ActionWheel.cs` | Input por mouse/teclado/controle, paginação e composição das ações contextuais. |
 | `ModEntry.ContextCommands.cs` | Classificação de recursos e atribuição contextual individual/em grupo. |
 | `ModEntry.GroundCommands.cs` | Validação de chão vazio e ordem transitória de deslocar e esperar. |
+| `ModEntry.WorkAreas.cs` | Ordens circulares persistentes de trabalho, preview, especialidade e conclusão. |
+| `ModEntry.WorkAnimations.cs` | Movimento visual de ferramenta/mão e feedback cosmético de sucesso/falha. |
 | `ModEntry.InventoryProgressionHud.cs` | Inventários, XP, loot e avisos. |
-| `ModEntry.DialogueWorld.cs` | Diálogo, condições do mundo e controle de agenda. |
+| `ModEntry.Communication.cs` | Fila priorizada, cooldown coletivo, histórico anti-repetição e expressões de pets. |
+| `ModEntry.DialogueWorld.cs` | Seleção de perfis/condições de diálogo, ambiente e controle de agenda. |
 | `ModEntry.Persistence.cs` | Normalização, migração e serialização do save. |
 | `ModEntry.ConfigMenu.cs` | Integração com Generic Mod Config Menu e tradução. |
 | `Core/CommandReplayGuard.cs` | Janela limitada de idempotência por jogador. |
 | `Core/CompanionActionWheelHitTest.cs` | Hit-test puro de 1–6 setores, limites e separadores da roda. |
+| `Core/CompanionWorkAreaPolicy.cs` | Geometria circular, raio 3–20, especialidades e validação do estado salvo. |
+| `Core/CompanionDialoguePolicy.cs` | Contrato puro que separa fala de NPC e expressão silenciosa de pet. |
+| `Core/CompanionDialogueSelectionPolicy.cs` | Seleção ponderada de falas elegíveis sem repetir o histórico recente. |
+| `Core/CompanionDialogueScheduler.cs` | Fila limitada por owner, deduplicação, prioridade, TTL e cooldown coletivo. |
 | `Core/RecruitmentContextPolicy.cs` | Regra pura de recrutamento no mesmo mapa, sem limite de distância. |
 | `Core/FollowNavigationPolicy.cs` | Política pura de reset de recall, probes tardios e orçamento de rotas. |
 | `Core/TaskNavigationPolicy.cs` | Reuso de stand e orçamento de criação/recuperação de rotas de tarefa. |
@@ -39,23 +46,34 @@ contrato exigido pelo SMAPI sem voltar a concentrar milhares de linhas em um
 | `Core/SavedItemStackIdentity.cs` | Fingerprint determinístico de pilhas serializadas. |
 | `Core/CompanionStateCopy.cs` | Cópias profundas para saves e snapshots imutáveis. |
 | `CompanionQuickHud.cs` | HUD de consulta e atalhos rápidos. |
-| `CompanionActionWheel.cs` | Layout radial variável, hover e desenho das ações contextuais. |
+| `CompanionActionWheel.cs` | Layout radial, páginas, foco espacial, hover e desenho das ações contextuais. |
 | `CompanionPanelMenu*.cs` | Shell/input/layout, conteúdo das abas e helpers de desenho do menu completo. |
 
 ## Estado persistente e estado de runtime
 
 `SavedModState`, `SquadMemberState` e `SavedItemStack` formam o contrato de
-save. Filas de trabalho, controllers, trilhas, caches de reachability, targets
-de recall e notificações são transitórios e nunca devem ser tratados como uma
-fonte persistente de verdade. `PendingNpcRestores` é a exceção intencional: ele
-guarda apenas os dados mínimos necessários para devolver uma agenda vanilla
-depois de um dismiss confirmado durante evento/festival.
+save. A ordem de área fixa e as últimas chaves de diálogo apresentadas fazem
+parte de `SquadMemberState`. Filas de trabalho, fila de comunicação, animações,
+controllers, trilhas, caches de reachability, targets de recall, previews e
+notificações são transitórios e nunca devem ser tratados como uma fonte
+persistente de verdade. `PendingNpcRestores` é a exceção intencional: ele guarda
+apenas os dados mínimos necessários para devolver uma agenda vanilla depois de
+um dismiss confirmado durante evento/festival.
 
 `MovingToWait` também usa a fila transitória: a ordem reserva o tile, desloca o
 NPC e só então grava `Mode = Waiting` e a posição realmente alcançada. Salvar no
 meio do trajeto não serializa uma intenção incompleta; no reload, o companion
 volta ao estado persistente verdadeiro de Following. Depois da chegada, porém,
 o estado Waiting e sua posição são persistidos normalmente entre reloads e dias.
+
+Uma área de trabalho é uma intenção persistente: `orderId`, mapa, centro, raio e
+especialidade sobrevivem a save/reload. A tarefa e a reserva do alvo atual não
+sobrevivem; elas são replanejadas no host dentro do mesmo círculo. Um Wait
+explícito pausa a ordem sem apagá-la, enquanto Follow, Recall, outra ordem direta
+ou conclusão limpa a área pelos fluxos autoritativos correspondentes.
+O fluxo da roda escolhe especialidade, um preset de raio limitado pelo máximo
+replicado do host e um/todos os companions. Um snapshot substitui o estado de
+gameplay do cliente, mas preserva previews e animações cosméticas em andamento.
 
 O baseline diário de posição, chave de agenda, comportamento de pet, atividade
 de pátio e velocidade original é capturado somente depois que
@@ -67,18 +85,18 @@ seguro; tarefas e follow não rodam nesse intervalo.
 Ao carregar um save, o mod:
 
 1. limpa todas as coleções ligadas à sessão anterior;
-2. normaliza níveis, skills e inventários;
+2. normaliza níveis, skills, inventários, áreas fixas e histórico de diálogo;
 3. rejeita entradas ambíguas/duplicadas antes de aceitar estado parcial;
 4. remove activity/target transitórios sem uma fila correspondente;
 5. preserva itens e membros de NPCs customizados temporariamente indisponíveis;
 6. restaura apenas posições explicitamente salvas para `Waiting`/disconnect;
 7. readquire o controle de agenda dos companions disponíveis.
 
-O schema de save da versão 1.5.3 continua `8`. `SavedItemStack` preserva `modData`,
+O schema de save do ramo atual é `9`. `SavedItemStack` preserva `modData`,
 ID qualificado, quantidade, qualidade, cor e parent preservado. Saves com schema
 mais novo ou dados ambíguos não são carregados nem sobrescritos; o mod entra em
 modo inerte nessa sessão para não alterar mundo/itens sem estado confiável. O
-schema de config é `7`.
+schema de config é `8`.
 
 ## Autoridade multiplayer
 
@@ -89,6 +107,11 @@ inventários e mutações do mundo. Farmhands enviam `SquadActionMessage` com um
 em vez de uma inversão dependente de timing. Retiradas unitárias carregam o
 fingerprint completo da pilha. Resultados e rejeições voltam apenas ao jogador
 solicitante.
+
+`SetWorkArea` também é autoritativo: o host revalida owner, mapa, centro seguro,
+raio, especialidade, modos habilitados e membros elegíveis antes de persistir a
+ordem. Fala, emotes e animações de trabalho são mensagens cosméticas do host
+para os clientes; recebê-las nunca cria tarefa, altera o mundo ou muda o save.
 
 Snapshots são preparados fora do estado visível: todas as entradas são
 validadas, clonadas, normalizadas e os itens são materializados antes do commit.
@@ -107,6 +130,16 @@ As regras de simulação do host são replicadas separadamente das preferências
 locais de apresentação. Harvest de crop para owner remoto permanece desativado:
 a API vanilla usa o jogador local implícito e creditaria o farmer errado.
 
+Diálogo resolve primeiro a categoria elegível do perfil exato, depois arquétipo
+e `Generic`. Linhas `Overlay` de perfis inferiores podem acrescentar contexto
+compartilhado (estação, clima e amizade) a uma categoria exata; em empate de
+especificidade, a fala própria do NPC vence. Fora desse tier de overlays, a
+ordem de profiles é estrita antes da especificidade, então `Generic` nunca salta
+um fallback anterior. A fila então remove repetições recentes, aplica
+peso/prioridade/TTL e respeita um cooldown coletivo por owner.
+Pets passam pelo mesmo scheduler, mas `CompanionDialoguePolicy` converte a saída
+em expressão sem permitir texto.
+
 ## Invariantes de comportamento
 
 - Um NPC só pode ter um owner.
@@ -114,6 +147,14 @@ a API vanilla usa o jogador local implícito e creditaria o farmer errado.
 - Todo target e todo tile de trabalho ocupado são reservados por um único companion.
 - Um target contextual pode ser compartilhado apenas pelos membros do mesmo
   cohort explícito; cada membro ainda exige um stand tile exclusivo.
+- Uma área fixa contém apenas targets cuja distância euclidiana ao centro cabe
+  no círculo inclusivo de raio 3–20. O stand adjacente pode usar padding de um
+  tile, mas o recurso nunca pode ficar fora da área.
+- Madeira aceita somente Lumbering, Mineração somente Mining e Limpar área
+  aceita ambos. Alvo bloqueado ou reservado pausa o planejamento; somente a
+  ausência real de recursos compatíveis conclui a ordem e deixa o NPC Waiting.
+- A área permanece ancorada ao mapa/centro mesmo quando o owner troca de mapa;
+  o companion não volta à formação enquanto a ordem estiver ativa.
 - A atribuição contextual prepara target e stands antes do commit; uma falha de
   preparação não cancela a tarefa anterior do companion.
 - Uma ordem de chão vazio prepara e reserva o destino antes de substituir a
@@ -157,6 +198,17 @@ a API vanilla usa o jogador local implícito e creditaria o farmer errado.
   ao tick de navegação.
 - Opções ainda sem implementação continuam legíveis em configs antigas, mas
   não são anunciadas no GMCM como funcionalidades prontas.
+- A roda preserva até três ações globais e pagina os demais slots até expor os
+  12 companions. Mouse/scroll, setas/WASD, D-pad/sticks, shoulders, A/Enter e
+  B/Escape compartilham o mesmo modelo de seleção e cancelamento modal.
+- A comunicação usa uma fila limitada por owner: deduplicação, prioridade e TTL
+  acontecem antes do cooldown coletivo. Falas recentes são evitadas no grupo e
+  por speaker, e as quatro chaves recentes por NPC sobrevivem ao reload.
+- Pets nunca recebem texto acima da cabeça. As mesmas intenções viram
+  emote/som/pulo ou tremor, e o host replica exatamente uma expressão visual aos
+  clientes. Perfis de NPC têm precedência sobre `All_Villager`/`Generic` e suas
+  condições podem combinar amizade, tempo, estação, clima, local, tarefa,
+  resultado, falha e item.
 
 ## Como adicionar uma tarefa
 
@@ -182,7 +234,8 @@ autoritativos.
 
 ## Validação automatizada
 
-`scripts/validate.sh` restaura e compila os projetos, executa os 27 testes do
-runner sem dependências em `tests/PelicanCompanions.Tests`, valida o JSON e exige
+`scripts/validate.sh` restaura e compila os projetos, executa a suíte do runner
+sem dependências em `tests/PelicanCompanions.Tests`, valida o JSON e exige
 paridade de chaves/tokens entre inglês e português. O runner cobre contratos
-puros; comportamento de NPC, mapa e multiplayer ainda exige `MANUAL_QA.md`.
+puros, inclusive roda paginada, agenda de diálogo e política de áreas; animação,
+NPC, mapa e multiplayer ainda exigem `MANUAL_QA.md`.
