@@ -7,7 +7,6 @@ using StardewModdingAPI.Utilities;
 using StardewValley;
 using StardewValley.Characters;
 using StardewValley.TerrainFeatures;
-using StardewValley.Tools;
 using SObject = StardewValley.Object;
 
 namespace PelicanCompanions;
@@ -58,6 +57,50 @@ public sealed partial class ModEntry
         this.stateRevision = Math.Max(0, data.Revision);
         try
         {
+            // Repair raw cargo before legacy migration/normalization. Doing it
+            // here ensures unavailable custom items are normalized exactly once
+            // and can't be duplicated through the overflow recovery path.
+            this.ApplyCargoJournal(data);
+
+            foreach (CompanionProfileState? profile in data.CompanionProfiles ?? Enumerable.Empty<CompanionProfileState>())
+            {
+                if (profile is null || string.IsNullOrWhiteSpace(profile.NpcName))
+                    throw new InvalidDataException("The companion profile list contains an unnamed or null entry.");
+                if (this.companionProfiles.ContainsKey(profile.NpcName))
+                    throw new InvalidDataException($"The companion profile list contains duplicate NPC key '{profile.NpcName}'.");
+
+                this.NormalizeLoadedProfile(profile);
+                this.companionProfiles.Add(profile.NpcName, profile);
+            }
+
+            foreach (CompanionOperationalProfileState? incoming in data.OperationalProfiles
+                         ?? Enumerable.Empty<CompanionOperationalProfileState>())
+            {
+                if (incoming is null)
+                    throw new InvalidDataException("The operational companion profile list contains a null entry.");
+
+                CompanionOperationalProfileState operational = CompanionOperationsStateCopy.CloneOperationalProfile(incoming);
+                this.NormalizeOperationalProfile(operational, rejectUnavailableTools: false);
+                CompanionOperationalProfileKey key = GetOperationalProfileKey(operational.OwnerId, operational.NpcName);
+                if (!this.operationalProfiles.TryAdd(key, operational))
+                {
+                    throw new InvalidDataException(
+                        $"The operational companion profile list contains duplicate owner/NPC key '{operational.OwnerId}/{operational.NpcName}'.");
+                }
+            }
+
+            foreach (CompanionOwnerLogisticsState? incoming in data.OwnerLogistics
+                         ?? Enumerable.Empty<CompanionOwnerLogisticsState>())
+            {
+                if (incoming is null)
+                    throw new InvalidDataException("The owner logistics list contains a null entry.");
+
+                CompanionOwnerLogisticsState logistics = CompanionOperationsStateCopy.CloneOwnerLogistics(incoming);
+                this.NormalizeOwnerLogistics(logistics);
+                if (!this.ownerLogistics.TryAdd(logistics.OwnerId, logistics))
+                    throw new InvalidDataException($"The owner logistics list contains duplicate owner ID '{logistics.OwnerId}'.");
+            }
+
             foreach (SquadMemberState? member in data.Members ?? Enumerable.Empty<SquadMemberState>())
             {
                 if (member is null || string.IsNullOrWhiteSpace(member.NpcName))
@@ -65,6 +108,24 @@ public sealed partial class ModEntry
                 if (this.members.ContainsKey(member.NpcName))
                     throw new InvalidDataException($"The companion list contains duplicate NPC key '{member.NpcName}'.");
 
+                if (!this.companionProfiles.TryGetValue(member.NpcName, out CompanionProfileState? profile))
+                {
+                    if (data.Version >= CompanionProfilesSaveVersion)
+                        throw new InvalidDataException($"Active companion '{member.NpcName}' has no permanent profile.");
+
+                    profile = CompanionProfilePolicy.MigrateLegacyMember(member);
+                    this.NormalizeLoadedProfile(profile);
+                    this.companionProfiles.Add(profile.NpcName, profile);
+                }
+
+                CompanionProfilePolicy.Attach(member, profile);
+                bool hadOperationalProfile = this.TryGetOperationalProfile(member.OwnerId, member.NpcName, out _);
+                CompanionOperationalProfileState operational = this.GetOrCreateOperationalProfile(member.OwnerId, member.NpcName);
+                this.legacyOverflowItems.AddRange(this.MigrateLegacyMemberEquipment(
+                    member,
+                    operational,
+                    migrateIntoSlots: data.Version < OperationalProfilesSaveVersion || !hadOperationalProfile,
+                    logMigration: true));
                 this.legacyOverflowItems.AddRange(this.NormalizeLoadedMember(member));
                 this.members.Add(member.NpcName, member);
             }
@@ -111,6 +172,12 @@ public sealed partial class ModEntry
 
                 this.deferredNpcRestores.Add(restore.NpcName, restore);
             }
+
+            // Farmer modData is saved in the same vanilla transaction as the
+            // toolbar. It is the recovery authority for cross-store equipment
+            // swaps if the separate mod payload failed on the previous save.
+            this.ApplyOwnerEquipmentJournals(
+                missingJournalIsAuthoritativeEmpty: data.Version >= OperationalProfilesSaveVersion);
         }
         catch (Exception ex)
         {
@@ -129,6 +196,7 @@ public sealed partial class ModEntry
             this.ValidateLoadedMembers();
             this.EnforceConfiguredWorkAreaRadius();
             this.ReloadOverflowInventoryIntoSquad();
+            this.RefreshOwnerEquipmentJournals();
             foreach (SquadMemberState member in this.members.Values)
                 this.lastObservedCommunicationFailures[member.NpcName] = member.LastFailureReasonKey ?? "";
         }
@@ -157,6 +225,15 @@ public sealed partial class ModEntry
 
         try
         {
+            this.RefreshCompanionRoutines();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Some companion routines could not be restored and will be retried during normal updates. {ex}", LogLevel.Error);
+        }
+
+        try
+        {
             this.MaintainCompanionScheduleLocks(stopCurrentRoutes: true);
         }
         catch (Exception ex)
@@ -180,6 +257,28 @@ public sealed partial class ModEntry
     {
         if (!Context.IsMainPlayer || this.saveWritesBlocked)
             return;
+
+        try
+        {
+            // Capture cargo before either serializer runs. Even if the separate
+            // mod payload fails below, this snapshot commits alongside vanilla
+            // chest, farmer inventory, and world mutations.
+            this.WriteCargoJournal();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Pelican Companions couldn't checkpoint companion cargo before saving. {ex}", LogLevel.Error);
+            try
+            {
+                InvalidateCargoJournal();
+            }
+            catch (Exception invalidateEx)
+            {
+                this.Monitor.Log(
+                    $"Pelican Companions also couldn't invalidate the stale cargo checkpoint. {invalidateEx}",
+                    LogLevel.Error);
+            }
+        }
 
         try
         {
@@ -244,6 +343,15 @@ public sealed partial class ModEntry
 
         try
         {
+            this.RefreshCompanionRoutines();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Some companion routines could not be refreshed after the new day and will be retried: {ex}", LogLevel.Error);
+        }
+
+        try
+        {
             this.MaintainCompanionScheduleLocks(stopCurrentRoutes: true);
         }
         catch (Exception ex)
@@ -298,6 +406,9 @@ public sealed partial class ModEntry
     private void ResetRuntimeState(bool clearProfiles, bool preserveCosmeticRuntime = false)
     {
         this.members.Clear();
+        this.companionProfiles.Clear();
+        this.operationalProfiles.Clear();
+        this.ownerLogistics.Clear();
         this.npcCosmetics.Clear();
         this.npcHatCache.Clear();
         this.npcHatFrameOffsets.Clear();
@@ -377,6 +488,15 @@ public sealed partial class ModEntry
             return;
 
         if (e.Button == SButton.MouseLeft && this.TryHandleCompanionQuickHudClick(GetUiScreenPixels(e.Cursor)))
+        {
+            this.Helper.Input.Suppress(e.Button);
+            return;
+        }
+
+        if (e.Button is SButton.MouseLeft or SButton.MouseRight
+            && this.TryHandleChestDestinationMenuClick(
+                GetUiScreenPixels(e.Cursor),
+                activateSelection: e.Button == SButton.MouseLeft))
         {
             this.Helper.Input.Suppress(e.Button);
             return;
@@ -515,7 +635,10 @@ public sealed partial class ModEntry
         {
             this.PruneTrackedFallingTrees();
             if (!this.IsBlockedGameState(blockForMenu: false))
+            {
+                this.RefreshCompanionRoutines();
                 this.MaintainCompanionScheduleLocks(stopCurrentRoutes: false);
+            }
             this.UpdateAmbientDialogue();
         }
 
@@ -534,7 +657,10 @@ public sealed partial class ModEntry
             return;
 
         if (!this.IsBlockedGameState(blockForMenu: false))
+        {
+            this.RefreshCompanionRoutines();
             this.MaintainCompanionScheduleLocks(stopCurrentRoutes: false);
+        }
 
         if (this.config.FriendshipPointsPerHour <= 0 || e.NewTime % 100 != 0)
             return;
@@ -559,7 +685,12 @@ public sealed partial class ModEntry
             if (this.saveWritesBlocked)
                 this.SendStateUnavailable(e.Peer.PlayerID);
             else
+            {
+                // An owner-scoped legacy tool may have remained in recovery
+                // while this farmer wasn't available in the save runtime.
+                this.ReloadOverflowInventoryIntoSquad();
                 this.SendStateSnapshot(e.Peer.PlayerID, force: true);
+            }
         }
 
     }
@@ -579,7 +710,7 @@ public sealed partial class ModEntry
             {
                 // Waiting is an explicit persistent order. A disconnect must not
                 // dismiss it or silently turn it into Following on reconnect.
-                if (member.Mode == CompanionMode.Waiting)
+                if (member.Mode is CompanionMode.Waiting or CompanionMode.OriginalRoutine)
                     continue;
 
                 if (this.config.WarpHomeOnDisconnect)
@@ -652,11 +783,15 @@ public sealed partial class ModEntry
             try
             {
                 CompanionCommandFeedbackMessage feedback = e.ReadAs<CompanionCommandFeedbackMessage>();
+                if (feedback is not null && this.TryHandleChestIdentityAcknowledgement(feedback))
+                    return;
+
                 if (feedback is not null
                     && !string.IsNullOrWhiteSpace(feedback.Text)
                     && feedback.Text.Length <= 1024
                     && (feedback.Action?.Length ?? 0) <= 64
-                    && (feedback.CommandId?.Length ?? 0) <= 64)
+                    && (feedback.CommandId?.Length ?? 0) <= 64
+                    && (feedback.StateToken?.Length ?? 0) <= 128)
                 {
                     long localOwnerId = Game1.player.UniqueMultiplayerID;
                     if (feedback.IsError
@@ -804,13 +939,13 @@ public sealed partial class ModEntry
             return;
         }
 
-        if (action is "ManualTask" or "MimicToolUse" or "MimicAction" or "ContextTask" or "MoveToWait" or "SetWorkArea" or "RecruitmentRefusal")
+        if (action is "ManualTask" or "MimicToolUse" or "MimicAction" or "ContextTask" or "MoveToWait" or "SetWorkArea" or "SetChestDestination" or "RecruitmentRefusal")
         {
             Farmer? owner = this.GetOwnerFarmer(playerId);
             if (owner?.currentLocation is null
                 || !string.Equals(owner.currentLocation.NameOrUniqueName, message.LocationName, StringComparison.Ordinal))
             {
-                if (action is "ContextTask" or "MoveToWait" or "SetWorkArea")
+                if (action is "ContextTask" or "MoveToWait" or "SetWorkArea" or "SetChestDestination")
                     this.Warn("multiplayer.command_stale");
                 return;
             }
@@ -877,6 +1012,17 @@ public sealed partial class ModEntry
                     this.SetTasksEnabled(playerId, tasksEnabled);
                 break;
 
+            case "SetRoutine":
+                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? routineMember))
+                {
+                    this.TryApplyCompanionRoutineEdit(
+                        routineMember,
+                        playerId,
+                        message.Argument,
+                        message.ExpectedStateToken);
+                }
+                break;
+
             case "ManualTask":
                 this.TryManualTask(playerId, new Vector2(message.TileX, message.TileY));
                 break;
@@ -913,6 +1059,22 @@ public sealed partial class ModEntry
                         message.LocationName,
                         new Vector2(message.TileX, message.TileY),
                         workSpecialty);
+                }
+                break;
+
+            case "SetChestDestination":
+                if (Enum.TryParse(message.Argument, ignoreCase: false, out ChestDestinationSelection chestSelection)
+                    && Enum.IsDefined(chestSelection))
+                {
+                    this.TrySetChestDestination(
+                        playerId,
+                        chestSelection,
+                        message.NpcName,
+                        message.DesiredEnabled == true,
+                        message.LocationName,
+                        new Vector2(message.TileX, message.TileY),
+                        message.ExpectedStateToken,
+                        showFeedback: true);
                 }
                 break;
 
@@ -959,15 +1121,18 @@ public sealed partial class ModEntry
                 }
                 break;
 
-            case "DepositFishingRod":
-                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? fishingRodMember))
+            case "SetCompanionEquipment":
+                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? equipmentMember)
+                    && Enum.TryParse(message.Argument, ignoreCase: true, out CompanionEquipmentSlot equipmentSlot)
+                    && Enum.IsDefined(equipmentSlot))
                 {
-                    this.DepositCompanionFishingRod(
-                        fishingRodMember,
+                    this.SetCompanionEquipment(
+                        equipmentMember,
+                        equipmentSlot,
                         message.Index,
-                        message.Argument,
                         playerId,
-                        message.ExpectedItemToken);
+                        message.ExpectedItemToken,
+                        message.ExpectedStateToken);
                 }
                 break;
 

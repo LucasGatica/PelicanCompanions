@@ -457,13 +457,32 @@ public sealed partial class ModEntry
             .Count();
     }
 
-    private SquadMemberState? GetAvailableMember(long ownerId)
+    private IEnumerable<SquadMemberState> GetAvailableMembers(long ownerId)
     {
-        return this.members.Values.FirstOrDefault(p => p.OwnerId == ownerId
+        return this.members.Values.Where(p => p.OwnerId == ownerId
             && p.Mode == CompanionMode.Following
             && !this.HasActiveWorkArea(p)
             && !this.pendingTasks.ContainsKey(p.NpcName)
             && !this.activeRecallTargets.ContainsKey(p.NpcName));
+    }
+
+    private SquadMemberState? GetAvailableMember(
+        long ownerId,
+        Func<SquadMemberState, bool>? predicate = null)
+    {
+        IEnumerable<SquadMemberState> available = this.GetAvailableMembers(ownerId);
+        return predicate is null ? available.FirstOrDefault() : available.FirstOrDefault(predicate);
+    }
+
+    private bool IsMemberNearOwnerInLocation(
+        SquadMemberState member,
+        Farmer owner,
+        GameLocation location)
+    {
+        NPC? npc = this.GetNpcByName(member.NpcName);
+        return npc?.currentLocation == location
+            && owner.currentLocation == location
+            && IsWithinCompanionDistance(owner.Tile, npc.Tile);
     }
 
     private Farmer? GetOwnerFarmer(long ownerId)
@@ -536,6 +555,9 @@ public sealed partial class ModEntry
 
         foreach (SquadMemberState member in this.members.Values.ToList())
         {
+            if (member.Mode == CompanionMode.OriginalRoutine)
+                continue;
+
             NPC? npc = this.GetNpcByName(member.NpcName);
             if (npc is null)
                 continue;
@@ -1655,7 +1677,7 @@ public sealed partial class ModEntry
 
         this.pendingTasks.Remove(task.NpcName);
         if (!task.Manual
-            && task.Kind is CompanionTaskKind.Lumbering or CompanionTaskKind.Mining
+            && task.Kind is CompanionTaskKind.Lumbering or CompanionTaskKind.Mining or CompanionTaskKind.Watering
             && (task.UsesWorkDirective || task.UsesConfiguredAutonomy || task.UsesFixedWorkArea)
             && failureKey is "companion.task_failure.task_timeout"
                 or "companion.task_failure.no_safe_tile"
@@ -1701,6 +1723,7 @@ public sealed partial class ModEntry
             {
                 CompanionMode.Waiting => "companion.status.waiting",
                 CompanionMode.ParkedForDisconnect => "companion.status.parked",
+                CompanionMode.OriginalRoutine => "companion.status.original_routine",
                 _ when task.UsesFixedWorkArea && this.HasActiveWorkArea(member) =>
                     failureKey == "companion.task_failure.tasks_disabled"
                         ? "companion.status.work_area_paused"

@@ -229,15 +229,20 @@ public sealed partial class ModEntry
             return false;
         }
 
-        List<SquadMemberState> workers = (target.Kind == CompanionTaskKind.Fishing
+        List<SquadMemberState> nearbyWorkers = (target.Kind == CompanionTaskKind.Fishing
                 ? this.GetFishingContextCommandMembers(target.LocationName, target.Tile)
                 : this.GetContextCommandMembers(target.LocationName, target.Tile))
             .ToList();
+        List<SquadMemberState> workers = nearbyWorkers
+            .Where(worker => this.HasUsableCompanionToolForTask(worker, target.Kind))
+            .ToList();
         if (workers.Count == 0)
         {
-            this.Warn(target.Kind == CompanionTaskKind.Fishing
-                ? "fishing.no_rod"
-                : "commands.no_followers");
+            this.Warn(nearbyWorkers.Count == 0
+                ? target.Kind == CompanionTaskKind.Fishing
+                    ? "fishing.no_rod"
+                    : "commands.no_followers"
+                : this.GetRequiredEquipmentWarningKey(target.Kind, nearbyWorkers));
             return false;
         }
 
@@ -352,6 +357,10 @@ public sealed partial class ModEntry
                 CompanionActionWheelTone.Profile,
                 () => this.OpenWorkAreaMemberWheel(locationName, tile, CompanionWorkSpecialty.Mining, screenPosition)),
             new(
+                this.Tr("companion.directive.watering.short"),
+                CompanionActionWheelTone.Profile,
+                () => this.OpenWorkAreaMemberWheel(locationName, tile, CompanionWorkSpecialty.Watering, screenPosition)),
+            new(
                 this.Tr("companion.directive.clear.short"),
                 CompanionActionWheelTone.Warning,
                 () => this.OpenWorkAreaMemberWheel(locationName, tile, CompanionWorkSpecialty.ClearArea, screenPosition))
@@ -375,11 +384,51 @@ public sealed partial class ModEntry
         if (wheel is null || !this.IsWorkAreaWheelContextValid(locationName, tile))
             return;
 
-        List<SquadMemberState> workers = this.GetGroundCommandMembers(locationName, tile)
+        List<SquadMemberState> nearbyWorkers = this.GetGroundCommandMembers(locationName, tile)
             .Take(12)
             .ToList();
-        if (workers.Count == 0)
+        if (nearbyWorkers.Count == 0)
             return;
+
+        GameLocation? location = Game1.getLocationFromName(locationName);
+        int radius = CompanionWorkAreaPolicy.NormalizeRadius(this.GetConfiguredWorkRadius());
+        if (location is null
+            || !this.HasMatchingWorkAreaTarget(
+                location,
+                tile,
+                radius,
+                specialty,
+                includeReserved: true))
+        {
+            this.Warn("work_area.empty");
+            return;
+        }
+
+        List<SquadMemberState> equippedWorkers = nearbyWorkers
+            .Where(worker => this.HasUsableEquipmentForWorkArea(worker, specialty))
+            .ToList();
+        if (equippedWorkers.Count == 0)
+        {
+            this.Warn(this.GetWorkAreaEquipmentWarningKey(specialty, nearbyWorkers));
+            return;
+        }
+
+        List<SquadMemberState> workers = equippedWorkers
+            .Where(worker => this.HasMatchingWorkAreaTargetForMember(
+                worker,
+                location,
+                tile,
+                radius,
+                specialty,
+                includeReserved: true))
+            .ToList();
+        if (workers.Count == 0)
+        {
+            this.Warn(specialty == CompanionWorkSpecialty.ClearArea
+                ? "work_area.equipment_mismatch"
+                : this.GetWorkAreaEquipmentWarningKey(specialty, nearbyWorkers));
+            return;
+        }
 
         List<CompanionActionWheelOption> options = new()
         {
@@ -413,6 +462,7 @@ public sealed partial class ModEntry
         {
             CompanionWorkSpecialty.Wood => "wood",
             CompanionWorkSpecialty.Mining => "mining",
+            CompanionWorkSpecialty.Watering => "watering",
             _ => "clear"
         };
         wheel.Open(

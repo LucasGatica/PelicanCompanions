@@ -3,6 +3,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using StardewValley;
 using StardewValley.Menus;
+using StardewValley.Tools;
 
 namespace PelicanCompanions;
 
@@ -73,13 +74,15 @@ internal sealed partial class CompanionPanelMenu
 
         int top = area.Y + 24;
         int gap = 6;
-        int buttonHeight = Math.Clamp(area.Height / 4, 28, 38);
-        int buttonWidth = Math.Max(1, (area.Width - gap * 2) / 3);
+        int buttonHeight = Math.Clamp(area.Height / 6, 28, 38);
+        int buttonWidth = Math.Max(1, (area.Width - gap) / 2);
+        int secondRowTop = top + buttonHeight + gap;
         this.DrawDirectiveButton(b, new Rectangle(area.X, top, buttonWidth, buttonHeight), this.translate("companion.directive.wood.short", null), member.SearchWood, CompanionDirective.SearchWood);
-        this.DrawDirectiveButton(b, new Rectangle(area.X + buttonWidth + gap, top, buttonWidth, buttonHeight), this.translate("companion.directive.mining.short", null), member.SearchMining, CompanionDirective.SearchMining);
-        this.DrawDirectiveButton(b, new Rectangle(area.X + (buttonWidth + gap) * 2, top, Math.Max(1, area.Right - (area.X + (buttonWidth + gap) * 2)), buttonHeight), this.translate("companion.directive.clear.short", null), member.ClearArea, CompanionDirective.ClearArea);
+        this.DrawDirectiveButton(b, new Rectangle(area.X + buttonWidth + gap, top, Math.Max(1, area.Right - area.X - buttonWidth - gap), buttonHeight), this.translate("companion.directive.mining.short", null), member.SearchMining, CompanionDirective.SearchMining);
+        this.DrawDirectiveButton(b, new Rectangle(area.X, secondRowTop, buttonWidth, buttonHeight), this.translate("companion.directive.watering.short", null), member.SearchWatering, CompanionDirective.SearchWatering);
+        this.DrawDirectiveButton(b, new Rectangle(area.X + buttonWidth + gap, secondRowTop, Math.Max(1, area.Right - area.X - buttonWidth - gap), buttonHeight), this.translate("companion.directive.clear.short", null), member.ClearArea, CompanionDirective.ClearArea);
 
-        int previewTop = top + buttonHeight + 8;
+        int previewTop = secondRowTop + buttonHeight + 8;
         int previewHeight = Math.Min(50, Math.Max(1, area.Bottom - previewTop));
         if (previewHeight >= 24)
             this.DrawTargetPreview(b, member, new Rectangle(area.X, previewTop, area.Width, previewHeight));
@@ -309,7 +312,14 @@ internal sealed partial class CompanionPanelMenu
 
     private void DrawInventory(SpriteBatch b, SquadMemberState member, Rectangle area)
     {
-        int headerHeight = Math.Min(48, Math.Max(36, area.Height / 5));
+        // At the smallest supported split-screen viewport (426x240), the tab body
+        // is only about 82px tall. Keep the hat/actions in a shallow header and
+        // put all four equipment slots on one row; cargo remains available through
+        // Withdraw All without pushing any equipment hitbox outside the body.
+        bool ultraCompact = area.Height < 140;
+        int headerHeight = ultraCompact
+            ? Math.Min(Math.Max(1, area.Height - 4), Math.Clamp(area.Height / 3, 18, 28))
+            : Math.Clamp(area.Height / 7, 38, 48);
         int hatSize = Math.Min(headerHeight, 48);
         this.hatSlot = new Rectangle(area.X, area.Y, hatSize, hatSize);
         this.DrawFlatPanel(b, this.hatSlot, new Color(235, 220, 193), AccentGold, 2);
@@ -326,21 +336,10 @@ internal sealed partial class CompanionPanelMenu
         }
 
         int buttonHeight = Math.Min(36, headerHeight);
-        int actionStartX = this.hatSlot.Right + 8;
-        int actionWidth = Math.Max(1, area.Right - actionStartX);
-        int actionGap = actionWidth >= 12 ? 6 : 0;
-        int preferredButtonWidth = Math.Min(150, Math.Max(72, area.Width / 4));
-        int buttonWidth = Math.Min(
-            preferredButtonWidth,
-            Math.Max(1, (actionWidth - actionGap) / 2));
+        int buttonWidth = Math.Min(160, Math.Max(76, area.Width / 3));
         this.withdrawAllButton = new Rectangle(area.Right - buttonWidth, area.Y, buttonWidth, buttonHeight);
-        this.depositFishingRodButton = new Rectangle(
-            this.withdrawAllButton.X - actionGap - buttonWidth,
-            area.Y,
-            buttonWidth,
-            buttonHeight);
         int labelX = this.hatSlot.Right + 8;
-        int labelWidth = Math.Max(1, this.depositFishingRodButton.X - labelX - 8);
+        int labelWidth = Math.Max(1, this.withdrawAllButton.X - labelX - 8);
         if (labelWidth >= 28)
         {
             string hatLabel = equippedHat is not null
@@ -355,21 +354,62 @@ internal sealed partial class CompanionPanelMenu
                 new Vector2(labelX, area.Y + Math.Max(3, (headerHeight - Game1.tinyFont.LineSpacing) / 2)),
                 TextColor);
         }
-        this.DrawButton(
-            b,
-            this.depositFishingRodButton,
-            this.translate("companion.inventory.deposit_fishing_rod", null),
-            false,
-            danger: false);
         this.DrawButton(b, this.withdrawAllButton, this.translate("companion.inventory.withdraw_all", null), false, danger: false);
 
+        int equipmentGap = ultraCompact ? 3 : 5;
+        int equipmentTop;
+        if (ultraCompact)
+        {
+            equipmentTop = Math.Min(area.Bottom, area.Y + headerHeight + equipmentGap);
+        }
+        else
+        {
+            int equipmentTitleY = area.Y + headerHeight + 4;
+            Utility.drawTextWithShadow(
+                b,
+                FitText(this.translate("companion.equipment.title", null), Game1.tinyFont, area.Width),
+                Game1.tinyFont,
+                new Vector2(area.X, equipmentTitleY),
+                TextColor);
+            equipmentTop = equipmentTitleY + Game1.tinyFont.LineSpacing + 1;
+        }
+
+        int equipmentColumns = ultraCompact || area.Width >= 560 ? 4 : 2;
+        int equipmentRows = (int)Math.Ceiling(EquipmentSlotOrder.Length / (double)equipmentColumns);
+        int availableCardHeight = ultraCompact
+            ? Math.Max(1, (area.Bottom - equipmentTop - equipmentGap * (equipmentRows - 1)) / equipmentRows)
+            : Math.Max(
+                24,
+                (area.Bottom - 52 - equipmentTop - equipmentGap * (equipmentRows - 1)) / equipmentRows);
+        int equipmentCardHeight = ultraCompact
+            ? availableCardHeight
+            : Math.Min(area.Height >= 340 ? 58 : 46, availableCardHeight);
+        int equipmentCardWidth = Math.Max(1, (area.Width - equipmentGap * (equipmentColumns - 1)) / equipmentColumns);
+        int equipmentBottom = equipmentTop;
+        for (int index = 0; index < EquipmentSlotOrder.Length; index++)
+        {
+            int column = index % equipmentColumns;
+            int row = index / equipmentColumns;
+            int x = area.X + column * (equipmentCardWidth + equipmentGap);
+            Rectangle bounds = new(
+                x,
+                equipmentTop + row * (equipmentCardHeight + equipmentGap),
+                column == equipmentColumns - 1 ? Math.Max(1, area.Right - x) : equipmentCardWidth,
+                equipmentCardHeight);
+            this.DrawEquipmentSlot(b, member, EquipmentSlotOrder[index], bounds);
+            equipmentBottom = Math.Max(equipmentBottom, bounds.Bottom);
+        }
+
+        if (ultraCompact)
+            return;
+
         IReadOnlyList<Item> items = this.GetCachedInventoryItems(member);
-        Rectangle grid = new(area.X, area.Y + headerHeight + 7, area.Width, Math.Max(1, area.Height - headerHeight - 7));
+        Rectangle grid = new(area.X, equipmentBottom + 7, area.Width, Math.Max(1, area.Bottom - equipmentBottom - 7));
         int gap = 6;
         int columns = Math.Clamp(grid.Width / 54, 1, Math.Min(5, this.inventorySlots));
-        int rows = (int)Math.Ceiling(this.inventorySlots / (double)columns);
+        int inventoryRows = (int)Math.Ceiling(this.inventorySlots / (double)columns);
         int slotByWidth = Math.Max(1, (grid.Width - gap * (columns - 1)) / columns);
-        int slotByHeight = Math.Max(1, (grid.Height - gap * (rows - 1)) / Math.Max(1, rows));
+        int slotByHeight = Math.Max(1, (grid.Height - gap * (inventoryRows - 1)) / Math.Max(1, inventoryRows));
         int slotSize = Math.Min(60, Math.Min(slotByWidth, slotByHeight));
 
         for (int i = 0; i < this.inventorySlots; i++)
@@ -407,6 +447,81 @@ internal sealed partial class CompanionPanelMenu
                 FitText(this.translate("companion.inventory.empty", null), Game1.tinyFont, grid.Width - 8),
                 Game1.tinyFont,
                 new Vector2(grid.X + 4, grid.Bottom - 22),
+                MutedTextColor);
+        }
+    }
+
+    private void DrawEquipmentSlot(
+        SpriteBatch b,
+        SquadMemberState member,
+        CompanionEquipmentSlot slot,
+        Rectangle bounds)
+    {
+        Item? item = this.getEquipmentItem(member, slot);
+        bool hasPersistedItem = item is not null || this.hasEquipmentItem(member, slot);
+        this.DrawFlatPanel(
+            b,
+            bounds,
+            hasPersistedItem ? new Color(226, 234, 207) : new Color(235, 220, 193),
+            hasPersistedItem ? AccentGreen : SurfaceBorder,
+            2);
+        this.equipmentSlotsBounds.Add((bounds, slot));
+
+        string label = this.translate(GetEquipmentSlotTranslationKey(slot), null);
+        Utility.drawTextWithShadow(
+            b,
+            FitText(label, Game1.tinyFont, Math.Max(1, bounds.Width - 8)),
+            Game1.tinyFont,
+            new Vector2(bounds.X + 4, bounds.Y + 1),
+            TextColor);
+
+        int contentTop = bounds.Y + Math.Min(Game1.tinyFont.LineSpacing, Math.Max(12, bounds.Height / 3));
+        int contentHeight = Math.Max(1, bounds.Bottom - contentTop - 3);
+        int iconSize = Math.Min(40, contentHeight);
+        Rectangle iconBounds = new(bounds.X + 4, contentTop, iconSize, iconSize);
+        if (item is not null)
+        {
+            float scale = Math.Clamp((iconSize - 3) / 64f, 0.3f, 0.7f);
+            item.drawInMenu(b, new Vector2(iconBounds.X + 1, iconBounds.Y + 1), scale);
+        }
+        else
+        {
+            DrawCenteredPanelText(
+                b,
+                hasPersistedItem ? "?" : "–",
+                Game1.smallFont,
+                iconBounds,
+                MutedTextColor,
+                PanelCompactTextScale,
+                2,
+                2);
+        }
+
+        int detailsX = iconBounds.Right + 3;
+        int detailsWidth = Math.Max(1, bounds.Right - detailsX - 3);
+        string name = item?.DisplayName
+            ?? this.translate(hasPersistedItem ? "companion.equipment.unavailable" : "companion.equipment.empty", null);
+        Utility.drawTextWithShadow(
+            b,
+            FitText(name, Game1.tinyFont, detailsWidth),
+            Game1.tinyFont,
+            new Vector2(detailsX, contentTop),
+            hasPersistedItem ? TextColor : MutedTextColor);
+
+        if (item is Tool tool && contentHeight >= Game1.tinyFont.LineSpacing * 2)
+        {
+            string detail = tool is WateringCan wateringCan
+                ? this.translate("companion.equipment.water", new
+                {
+                    current = wateringCan.WaterLeft,
+                    capacity = CompanionEquipmentPolicy.GetWateringCanCapacity(wateringCan.UpgradeLevel)
+                })
+                : this.translate("companion.equipment.upgrade", new { level = tool.UpgradeLevel });
+            Utility.drawTextWithShadow(
+                b,
+                FitText(detail, Game1.tinyFont, detailsWidth),
+                Game1.tinyFont,
+                new Vector2(detailsX, contentTop + Game1.tinyFont.LineSpacing),
                 MutedTextColor);
         }
     }

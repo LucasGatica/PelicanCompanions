@@ -47,25 +47,7 @@ public sealed partial class ModEntry
 
     private bool TryGetCompanionFishingRod(SquadMemberState member, out FishingRod rod)
     {
-        rod = null!;
-        FishingRod? best = null;
-        foreach (SavedItemStack saved in member.Inventory)
-        {
-            if (!saved.QualifiedItemId.StartsWith("(T)", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            if (this.TryCreateItem(saved) is not FishingRod candidate)
-                continue;
-
-            if (best is null || candidate.UpgradeLevel > best.UpgradeLevel)
-                best = candidate;
-        }
-
-        if (best is null)
-            return false;
-
-        rod = best;
-        return true;
+        return this.TryGetEquippedTool(member, CompanionEquipmentSlot.FishingRod, out rod);
     }
 
     private void TryAssignFishingContextTask(

@@ -3,6 +3,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using StardewValley;
 using StardewValley.Menus;
+using StardewValley.Tools;
 
 namespace PelicanCompanions;
 
@@ -42,6 +43,13 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private static readonly Color ButtonActive = new(199, 228, 198);
     private static readonly Color TextColor = new(69, 45, 29);
     private static readonly Color MutedTextColor = new(101, 76, 55);
+    private static readonly CompanionEquipmentSlot[] EquipmentSlotOrder =
+    {
+        CompanionEquipmentSlot.Axe,
+        CompanionEquipmentSlot.Pickaxe,
+        CompanionEquipmentSlot.WateringCan,
+        CompanionEquipmentSlot.FishingRod
+    };
 
     private readonly Func<IEnumerable<SquadMemberState>> getMembers;
     private readonly Func<string, NPC?> getNpc;
@@ -55,9 +63,13 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private readonly Func<SquadMemberState, Item?> getEquippedHat;
     private readonly Func<SquadMemberState, bool> hasEquippedHat;
     private readonly Func<SquadMemberState, bool> changeHat;
-    private readonly Func<SquadMemberState, bool> depositFishingRod;
+    private readonly Func<SquadMemberState, CompanionEquipmentSlot, Item?> getEquipmentItem;
+    private readonly Func<SquadMemberState, CompanionEquipmentSlot, bool> hasEquipmentItem;
+    private readonly Func<SquadMemberState, CompanionEquipmentSlot, bool> changeEquipment;
     private readonly Func<SquadMemberState, int, bool> withdrawInventoryItem;
     private readonly Func<SquadMemberState, bool> withdrawAllInventoryItems;
+    private readonly Func<SquadMemberState, CompanionRoutineState> getRoutine;
+    private readonly Func<SquadMemberState, CompanionRoutineState, string, bool> saveRoutine;
     private readonly Action<SquadMemberState, CompanionDirective> toggleDirective;
     private readonly Func<SquadMemberState, string, bool> unlockSkill;
     private readonly Func<bool> isProgressionEnabled;
@@ -70,6 +82,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private readonly List<(Rectangle Bounds, PanelTab Tab)> tabButtons = new();
     private readonly List<(Rectangle Bounds, CompanionDirective Directive)> directiveButtons = new();
     private readonly List<(Rectangle Bounds, string SkillId)> skillButtons = new();
+    private readonly List<(Rectangle Bounds, CompanionEquipmentSlot Slot)> equipmentSlotsBounds = new();
     private readonly List<(Rectangle Bounds, int Index)> inventorySlotsBounds = new();
     private readonly List<Rectangle> focusTargets = new();
     private readonly Dictionary<string, PortraitCacheEntry> portraitCache = new(StringComparer.OrdinalIgnoreCase);
@@ -78,7 +91,6 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private Rectangle memberListArea;
     private Rectangle previousMemberButton;
     private Rectangle nextMemberButton;
-    private Rectangle depositFishingRodButton;
     private Rectangle withdrawAllButton;
     private Rectangle hatSlot;
     private Rectangle waitButton;
@@ -111,9 +123,13 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         Func<SquadMemberState, Item?> getEquippedHat,
         Func<SquadMemberState, bool> hasEquippedHat,
         Func<SquadMemberState, bool> changeHat,
-        Func<SquadMemberState, bool> depositFishingRod,
+        Func<SquadMemberState, CompanionEquipmentSlot, Item?> getEquipmentItem,
+        Func<SquadMemberState, CompanionEquipmentSlot, bool> hasEquipmentItem,
+        Func<SquadMemberState, CompanionEquipmentSlot, bool> changeEquipment,
         Func<SquadMemberState, int, bool> withdrawInventoryItem,
         Func<SquadMemberState, bool> withdrawAllInventoryItems,
+        Func<SquadMemberState, CompanionRoutineState> getRoutine,
+        Func<SquadMemberState, CompanionRoutineState, string, bool> saveRoutine,
         Action<SquadMemberState, CompanionDirective> toggleDirective,
         Func<SquadMemberState, string, bool> unlockSkill,
         Func<bool> isProgressionEnabled,
@@ -141,9 +157,13 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.getEquippedHat = getEquippedHat;
         this.hasEquippedHat = hasEquippedHat;
         this.changeHat = changeHat;
-        this.depositFishingRod = depositFishingRod;
+        this.getEquipmentItem = getEquipmentItem;
+        this.hasEquipmentItem = hasEquipmentItem;
+        this.changeEquipment = changeEquipment;
         this.withdrawInventoryItem = withdrawInventoryItem;
         this.withdrawAllInventoryItems = withdrawAllInventoryItems;
+        this.getRoutine = getRoutine;
+        this.saveRoutine = saveRoutine;
         this.toggleDirective = toggleDirective;
         this.unlockSkill = unlockSkill;
         this.isProgressionEnabled = isProgressionEnabled;
@@ -226,9 +246,11 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 return;
             }
 
-            if (this.depositFishingRodButton.Contains(x, y))
+            foreach ((Rectangle bounds, CompanionEquipmentSlot slot) in this.equipmentSlotsBounds)
             {
-                Game1.playSound(this.depositFishingRod(selected) ? "coin" : "cancel");
+                if (!bounds.Contains(x, y))
+                    continue;
+                Game1.playSound(this.changeEquipment(selected, slot) ? "coin" : "cancel");
                 return;
             }
 
@@ -283,6 +305,10 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 Game1.playSound(this.unlockSkill(selected, skillId) ? "newArtifact" : "cancel");
                 return;
             }
+        }
+        else if (this.currentTab == PanelTab.Routine && this.HandleRoutineLeftClick(selected, x, y))
+        {
+            return;
         }
     }
 
@@ -346,6 +372,9 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 return;
             case Keys.D4:
                 this.SetTab(PanelTab.Inventory);
+                return;
+            case Keys.D5:
+                this.SetTab(PanelTab.Routine);
                 return;
             default:
                 base.receiveKeyPress(key);
@@ -444,9 +473,35 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             return;
         }
 
-        if (this.depositFishingRodButton.Contains(x, y))
+        foreach ((Rectangle bounds, CompanionEquipmentSlot slot) in this.equipmentSlotsBounds)
         {
-            this.hoverText = this.translate("companion.inventory.deposit_fishing_rod_hint", null);
+            if (!bounds.Contains(x, y))
+                continue;
+
+            Item? equipment = this.getEquipmentItem(selected, slot);
+            string label = this.translate(GetEquipmentSlotTranslationKey(slot), null);
+            string state;
+            if (equipment is WateringCan wateringCan)
+            {
+                string water = this.translate("companion.equipment.water", new
+                {
+                    current = wateringCan.WaterLeft,
+                    capacity = CompanionEquipmentPolicy.GetWateringCanCapacity(wateringCan.UpgradeLevel)
+                });
+                state = $"{wateringCan.DisplayName} — {water}";
+            }
+            else if (equipment is Tool tool)
+            {
+                string upgrade = this.translate("companion.equipment.upgrade", new { level = tool.UpgradeLevel });
+                state = $"{tool.DisplayName} — {upgrade}";
+            }
+            else if (equipment is not null)
+                state = equipment.DisplayName;
+            else if (this.hasEquipmentItem(selected, slot))
+                state = this.translate("companion.equipment.unavailable", null);
+            else
+                state = this.translate("companion.equipment.empty", null);
+            this.hoverText = $"{label}: {state}{Environment.NewLine}{this.translate("companion.equipment.hint", null)}";
             return;
         }
 
@@ -498,6 +553,9 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             this.hoverText = this.getDirectivePreviewText(selected, directive);
             return;
         }
+
+        if (this.currentTab == PanelTab.Routine)
+            this.HandleRoutineHover(selected, x, y);
     }
 
     public override void gameWindowSizeChanged(Rectangle oldBounds, Rectangle newBounds)
@@ -673,6 +731,18 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         return fingerprint.ToHashCode();
     }
 
+    private static string GetEquipmentSlotTranslationKey(CompanionEquipmentSlot slot)
+    {
+        return slot switch
+        {
+            CompanionEquipmentSlot.Axe => "companion.equipment.slot.axe",
+            CompanionEquipmentSlot.Pickaxe => "companion.equipment.slot.pickaxe",
+            CompanionEquipmentSlot.WateringCan => "companion.equipment.slot.watering_can",
+            CompanionEquipmentSlot.FishingRod => "companion.equipment.slot.fishing_rod",
+            _ => "companion.equipment.slot.unknown"
+        };
+    }
+
     private void Reflow()
     {
         int availableWidth = Math.Max(1, Game1.uiViewport.Width - WindowMargin * 2);
@@ -694,12 +764,12 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.tabButtons.Clear();
         this.directiveButtons.Clear();
         this.skillButtons.Clear();
+        this.equipmentSlotsBounds.Clear();
         this.inventorySlotsBounds.Clear();
         this.focusTargets.Clear();
         this.memberListArea = new Rectangle();
         this.previousMemberButton = new Rectangle();
         this.nextMemberButton = new Rectangle();
-        this.depositFishingRodButton = new Rectangle();
         this.withdrawAllButton = new Rectangle();
         this.hatSlot = new Rectangle();
         this.waitButton = new Rectangle();
@@ -707,6 +777,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.dismissButton = new Rectangle();
         this.skillDetailsArea = new Rectangle();
         this.skillDetailsEmbedded = false;
+        this.ResetRoutineGeometry();
         this.closeButton = new Rectangle(
             this.xPositionOnScreen + Math.Max(0, this.width - 46),
             this.yPositionOnScreen + 9,
@@ -888,8 +959,8 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         }
 
         int tabGap = area.Width >= 420 ? 5 : 2;
-        int tabWidth = Math.Max(1, (usableWidth - tabGap * 3) / 4);
-        PanelTab[] tabs = { PanelTab.Overview, PanelTab.Work, PanelTab.Skills, PanelTab.Inventory };
+        PanelTab[] tabs = { PanelTab.Overview, PanelTab.Work, PanelTab.Skills, PanelTab.Inventory, PanelTab.Routine };
+        int tabWidth = Math.Max(1, (usableWidth - tabGap * (tabs.Length - 1)) / tabs.Length);
         for (int i = 0; i < tabs.Length; i++)
         {
             int x = area.X + inset + i * (tabWidth + tabGap);
@@ -927,6 +998,9 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 break;
             case PanelTab.Inventory:
                 this.DrawInventory(b, member, body);
+                break;
+            case PanelTab.Routine:
+                this.DrawRoutine(b, member, body);
                 break;
         }
     }

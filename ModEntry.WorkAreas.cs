@@ -30,6 +30,39 @@ public sealed partial class ModEntry
             member.WorkAreaSpecialty);
     }
 
+    private bool HasUsableEquipmentForWorkArea(
+        SquadMemberState member,
+        CompanionWorkSpecialty specialty)
+    {
+        return CompanionEquipmentPolicy.CanWorkSpecialty(
+            specialty,
+            lumberingEnabled: this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled,
+            miningEnabled: this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled,
+            wateringEnabled: this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled,
+            hasUsableAxe: this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering),
+            hasUsablePickaxe: this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Mining),
+            hasUsableWateringCan: this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Watering));
+    }
+
+    private string GetWorkAreaEquipmentWarningKey(
+        CompanionWorkSpecialty specialty,
+        IEnumerable<SquadMemberState>? candidates = null)
+    {
+        if (specialty == CompanionWorkSpecialty.Watering
+            && candidates?.Any(this.HasEmptyCompanionWateringCan) == true)
+        {
+            return "tasks.watering_can_empty";
+        }
+
+        return specialty switch
+        {
+            CompanionWorkSpecialty.Wood => "tasks.need_axe",
+            CompanionWorkSpecialty.Mining => "tasks.need_pickaxe",
+            CompanionWorkSpecialty.Watering => "tasks.need_watering_can",
+            _ => "wheel.no_worker_available"
+        };
+    }
+
     private Vector2 GetWorkAreaCenter(SquadMemberState member)
     {
         return NormalizeTile(new Vector2(member.WorkAreaCenterX, member.WorkAreaCenterY));
@@ -147,13 +180,15 @@ public sealed partial class ModEntry
             && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled;
         bool allowsMining = CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Mining)
             && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled;
-        if (!allowsWood && !allowsMining)
+        bool allowsWatering = CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Watering)
+            && this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled;
+        if (!allowsWood && !allowsMining && !allowsWatering)
         {
             this.WarnForPlayer(ownerId, "work_area.modes_disabled");
             return;
         }
 
-        List<SquadMemberState> candidates = this.members.Values
+        List<SquadMemberState> nearbyCandidates = this.members.Values
             .Where(member => member.OwnerId == ownerId && member.Mode != CompanionMode.ParkedForDisconnect)
             .Where(member => string.IsNullOrWhiteSpace(requestedNpcName)
                 || string.Equals(member.NpcName, requestedNpcName, StringComparison.OrdinalIgnoreCase))
@@ -163,7 +198,7 @@ public sealed partial class ModEntry
             .ThenBy(candidate => candidate.Member.NpcName, StringComparer.OrdinalIgnoreCase)
             .Select(candidate => candidate.Member)
             .ToList();
-        if (candidates.Count == 0)
+        if (nearbyCandidates.Count == 0)
         {
             this.WarnForPlayer(ownerId, "commands.no_followers");
             return;
@@ -172,6 +207,32 @@ public sealed partial class ModEntry
         if (!this.HasMatchingWorkAreaTarget(location, center, radius, specialty, includeReserved: true))
         {
             this.WarnForPlayer(ownerId, "work_area.empty");
+            return;
+        }
+
+        List<SquadMemberState> equippedCandidates = nearbyCandidates
+            .Where(member => this.HasUsableEquipmentForWorkArea(member, specialty))
+            .ToList();
+        if (equippedCandidates.Count == 0)
+        {
+            this.WarnForPlayer(ownerId, this.GetWorkAreaEquipmentWarningKey(specialty, nearbyCandidates));
+            return;
+        }
+
+        List<SquadMemberState> candidates = equippedCandidates
+            .Where(member => this.HasMatchingWorkAreaTargetForMember(
+                member,
+                location,
+                center,
+                radius,
+                specialty,
+                includeReserved: true))
+            .ToList();
+        if (candidates.Count == 0)
+        {
+            this.WarnForPlayer(ownerId, specialty == CompanionWorkSpecialty.ClearArea
+                ? "work_area.equipment_mismatch"
+                : this.GetWorkAreaEquipmentWarningKey(specialty, nearbyCandidates));
             return;
         }
 
@@ -192,6 +253,7 @@ public sealed partial class ModEntry
             member.WaitingLocationName = null;
             member.SearchWood = false;
             member.SearchMining = false;
+            member.SearchWatering = false;
             member.ClearArea = false;
             member.WorkAreaActive = true;
             member.WorkAreaOrderId = orderId;
@@ -201,6 +263,7 @@ public sealed partial class ModEntry
             member.WorkAreaRadius = radius;
             member.WorkAreaSpecialty = specialty;
             member.PreferredWorkSpecialty = specialty;
+            this.RememberRoutineAreaPreset(member);
             this.workAreaPositionRecoveryNeeded.Remove(member.NpcName);
             this.SetTaskFailure(member, "");
             this.ClearCompanionTarget(member);
@@ -253,10 +316,117 @@ public sealed partial class ModEntry
         bool allowsMining = CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Mining)
             && (!respectConfiguredModes
                 || this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled);
-        return allowsMining && location.Objects.Keys.Any(tile =>
+        if (allowsMining && location.Objects.Keys.Any(tile =>
+                CompanionWorkAreaPolicy.Contains((int)center.X, (int)center.Y, radius, (int)tile.X, (int)tile.Y)
+                && this.IsValidMiningTarget(location, tile)
+                && (includeReserved || !this.IsTargetReserved(location, tile))))
+        {
+            return true;
+        }
+
+        bool allowsWatering = CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Watering)
+            && (!respectConfiguredModes
+                || this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled);
+        return allowsWatering && this.GetWateringTargetTiles(location).Any(tile =>
             CompanionWorkAreaPolicy.Contains((int)center.X, (int)center.Y, radius, (int)tile.X, (int)tile.Y)
-            && this.IsValidMiningTarget(location, tile)
             && (includeReserved || !this.IsTargetReserved(location, tile)));
+    }
+
+    private bool HasMatchingWorkAreaTargetForMember(
+        SquadMemberState member,
+        GameLocation location,
+        Vector2 center,
+        int radius,
+        CompanionWorkSpecialty specialty,
+        bool includeReserved,
+        bool respectConfiguredModes = true)
+    {
+        if (CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Lumbering)
+            && this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering)
+            && this.HasMatchingWorkAreaTarget(
+                location,
+                center,
+                radius,
+                CompanionWorkSpecialty.Wood,
+                includeReserved,
+                respectConfiguredModes))
+        {
+            return true;
+        }
+
+        if (CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Mining)
+            && this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Mining)
+            && this.HasMatchingWorkAreaTarget(
+                location,
+                center,
+                radius,
+                CompanionWorkSpecialty.Mining,
+                includeReserved,
+                respectConfiguredModes))
+        {
+            return true;
+        }
+
+        return CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Watering)
+            && this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Watering)
+            && this.HasMatchingWorkAreaTarget(
+                location,
+                center,
+                radius,
+                CompanionWorkSpecialty.Watering,
+                includeReserved,
+                respectConfiguredModes);
+    }
+
+    private string GetMissingWorkAreaEquipmentFailureKey(
+        SquadMemberState member,
+        GameLocation location,
+        Vector2 center,
+        int radius,
+        CompanionWorkSpecialty specialty)
+    {
+        if (CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Lumbering)
+            && !this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering)
+            && this.HasMatchingWorkAreaTarget(
+                location,
+                center,
+                radius,
+                CompanionWorkSpecialty.Wood,
+                includeReserved: true,
+                respectConfiguredModes: true))
+        {
+            return "companion.task_failure.need_axe";
+        }
+
+        if (CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Mining)
+            && !this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Mining)
+            && this.HasMatchingWorkAreaTarget(
+                location,
+                center,
+                radius,
+                CompanionWorkSpecialty.Mining,
+                includeReserved: true,
+                respectConfiguredModes: true))
+        {
+            return "companion.task_failure.need_pickaxe";
+        }
+
+        if (CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Watering)
+            && !this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Watering)
+            && this.HasMatchingWorkAreaTarget(
+                location,
+                center,
+                radius,
+                CompanionWorkSpecialty.Watering,
+                includeReserved: true,
+                respectConfiguredModes: true))
+        {
+            return this.HasEmptyCompanionWateringCan(member)
+                ? "companion.task_failure.watering_can_empty"
+                : "companion.task_failure.need_watering_can";
+        }
+
+        return "companion.task_failure.work_area_blocked";
     }
 
     private bool IsTaskInsideWorkArea(SquadMemberState member, CompanionTaskKind kind, string locationName, Vector2 tile)
@@ -298,21 +468,31 @@ public sealed partial class ModEntry
         if (!this.HasActiveWorkArea(member))
             return;
 
+        CompanionWorkSpecialty completedSpecialty = member.WorkAreaSpecialty;
         this.ClearCompanionWorkArea(member, cancelPendingAreaTask: true);
         this.ClearCompanionTarget(member);
-        this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.not_following"));
-        member.Mode = CompanionMode.Waiting;
         member.SearchWood = false;
         member.SearchMining = false;
+        member.SearchWatering = false;
         member.ClearArea = false;
-        this.StoreWaitingPosition(member, npc);
         this.SetTaskResult(member, "companion.task_result.work_area_complete");
-        this.SetCompanionActivity(member, "companion.status.waiting");
-        this.StopCompanionMovement(npc);
-        this.ClearFollowState(member.NpcName);
         this.ShowCompanionWorkSignal(npc, npc.currentLocation, npc.Tile, "success");
         npc.doEmote(32);
         this.Say(npc, "WorkAreaComplete", force: false);
+
+        // A manual area of the currently scheduled specialty may have been
+        // used as an explicit override while that block waited for its preset.
+        // Completing it satisfies the same claimed routine block exactly once.
+        if (!this.TryHandleRoutineWorkAreaCompletion(member, completedSpecialty))
+        {
+            this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.not_following"));
+            member.Mode = CompanionMode.Waiting;
+            this.StoreWaitingPosition(member, npc);
+            this.SetCompanionActivity(member, "companion.status.waiting");
+            this.StopCompanionMovement(npc);
+            this.ClearFollowState(member.NpcName);
+        }
+
         this.MarkStateDirty();
         this.InfoForPlayer(member.OwnerId, "work_area.complete", new { npc = member.DisplayName });
     }
@@ -375,6 +555,7 @@ public sealed partial class ModEntry
         {
             CompanionWorkSpecialty.Wood => new Color(108, 166, 91),
             CompanionWorkSpecialty.Mining => new Color(126, 139, 175),
+            CompanionWorkSpecialty.Watering => new Color(82, 158, 224),
             _ => new Color(220, 166, 74)
         };
         accent *= Math.Clamp(alpha, 0f, 1f);

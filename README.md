@@ -40,34 +40,47 @@ All bindings can be changed in `config.json` or through GMCM.
   Dismiss, wait, resume, and recall remain available for recruited companions.
 - Natural follower pathing at a conservative fixed NPC speed, location-change placement, visible recovery, and Adaptive/Behind/Compact formations.
 - Mouse/controller contextual wheel with pagination for groups of up to 12 companions. Owned companions expose Profile, Work, Stop, Dismiss, and Follow; unrecruited NPCs expose Recruit; mature trees, breakable stones, mature grab-crops, and water expose compatible group or named-companion commands. Safe empty ground can move a companion there, dismiss the group, or open the fixed-area work flow. Mouse wheel/Page Up/Page Down and controller shoulder buttons change pages; keyboard, D-pad, and either analog stick move focus.
-- Directed companion fishing: use the Inventory tab to give an NPC an
+- Directed companion fishing: use the Inventory tab to equip an NPC with an
   unenchanted fishing rod with no bait or tackle, then press `X` over fishable
   water to send one or all local
   rod holders. They walk to the closest reachable safe shore of that connected
   body of water and fish until 26:00/day end or another command. Each regular
-  catch grants 8 companion XP and enters the NPC inventory first; configured
-  overflow destinations and finally a safe world drop prevent item loss.
-- Persistent fixed work areas: mark safe ground, select Wood, Mining, or Clear Area, then choose one companion or the whole local group. Every new order automatically uses the host-configured maximum radius. Workers stay inside the marked circle across saves until the area is complete, paused, or explicitly replaced by another order.
+  catch grants 8 companion XP and follows the configured route: assigned chest,
+  NPC cargo, shared/player inventory, then a safe world drop.
+- Persistent fixed work areas: mark safe ground, select Wood, Mining, Water, or Clear Area, then choose one companion or the whole local group. Every new order automatically uses the host-configured maximum radius. Workers stay inside the marked circle across saves until the area is complete, paused, or explicitly replaced by another order.
+- Per-companion hourly routines in the fifth panel tab: paint twenty cells from
+  06:00 through 01:59 with Follow, Wait, Original routine, Water, Wood, Mine,
+  Clear, or Deposit. Routines can repeat daily or run once, remember a manual
+  area per work specialty, and include a one-click 06–18 work shift. Painting
+  activates the schedule; missing work-area presets wait and retry instead of
+  silently discarding the current block.
 - Visible work feedback for every implemented task: companions face the target, swing an axe/pickaxe/watering can or use a hand gesture, then celebrate success or visibly react to failure. Cosmetic work state is synchronized to farmhands.
-- Per-companion XP, ten levels, skill points, a responsive four-branch skill tree with useful Lumbering/Mining/Utility/Fishing effects, and saved recent-loot history.
+- Permanent per-NPC XP profiles with ten levels, skill points, a responsive
+  four-branch Lumbering/Mining/Utility/Fishing skill tree, and recent-loot
+  history. Dismissal does not reset progression; recruiting the NPC again
+  restores the same level and unlocked skills.
 - Per-member inventory receives safe forage, caught fish, and normal lumbering/mining drops;
-  overflow follows the configured shared-squad/player fallback and finally drops
-  safely into the world.
+  an assigned normal world chest is tried first, then overflow follows the
+  configured shared-squad/player fallback and finally drops safely into the
+  world. Open a placed chest to choose None, All companions, or individual
+  companion destinations from its side panel; moved assigned chests retain a
+  GUID identity.
 - The Inventory tab has a dedicated cosmetic hat slot. Select a hat in the
   toolbar to equip or replace it; select an empty toolbar slot to take it back.
   Equipped hats stay on NPCs after they leave the squad and across save/reload.
-- The same tab has an explicit fishing-rod deposit action. It accepts only one
-  selected, unenchanted rod with no bait or tackle and stores it in the NPC's ordinary
-  persistent inventory; general player-to-companion deposits remain closed.
+- The same tab has four owner-scoped tool slots: Axe, Pickaxe, Watering Can,
+  and Fishing Rod. Select a matching toolbar tool to equip/swap it, or an empty
+  toolbar cell to remove it. Tools stay outside ordinary cargo and chest routes;
+  watering consumes the equipped can's persisted water.
 - Manual/mimic/autonomous support where applicable for watering, safe forage pickup, mature grab-crop harvesting, mature untapped tree chopping, breakable-stone mining, and animal petting.
-- Beehouse flower protection and bounded per-member Wood/Mining/Clear Area directives.
+- Beehouse flower protection and bounded per-member Wood/Mining/Water/Clear Area directives.
 - Owner-scoped communication scheduling with a shared group cooldown, bounded priority queue, deduplication, and recent-line memory. Important task, loot, level, failure, and command reactions take precedence over ambient chatter.
 - Personality-specific dialogue profiles for the 34 social vanilla NPCs, with contextual selection for friendship, weather, season, time, location, task, result, failure, and found items. English and Brazilian Portuguese text and optional GMCM registration are included.
 - Pets remain silent: they respond through hearts/question marks, jumps, shakes, and their configured bark/meow/content sounds instead of speech bubbles.
 - Namespaced save data with migration for older Pelican Companions states, including fixed-area orders and recent dialogue memory.
 - Host-authoritative multiplayer simulation: farmhands send idempotent commands, the host alone controls NPCs/tasks/world/inventories, and versioned snapshots keep remote HUDs, panels, directives, skills, and withdrawals synchronized.
 
-Combat, shearing, milking, sitting, riding, custom idle sprite playback, and general companion inventory deposits are not implemented. Player-to-companion transfers are limited to the dedicated cosmetic hat slot and explicit deposit of a single unenchanted fishing rod without bait or tackle. Inert options and the unfinished Combat skill branch are intentionally hidden instead of being presented as working features. Multiplayer remains experimental until the manual co-op checklist is completed; crop harvesting by a farmhand's companion is conservatively disabled because Stardew Valley's crop API credits `Game1.player` instead of an explicit owner.
+Combat, shearing, milking, sitting, riding, custom idle sprite playback, and arbitrary player-to-companion cargo transfers are not implemented. Companions can deposit their existing cargo through assigned chests and the hourly Deposit routine; direct player transfers are limited to the cosmetic hat slot and the four dedicated tool slots. The chest-assignment side panel is currently mouse-only. Tool enchantments and fishing-rod bait/tackle are rejected because their state isn't yet persisted safely. Inert options and the unfinished Combat skill branch are intentionally hidden instead of being presented as working features. Multiplayer remains experimental until the manual co-op checklist is completed; crop harvesting by a farmhand's companion is conservatively disabled because Stardew Valley's crop API credits `Game1.player` instead of an explicit owner.
 
 ## Build
 
@@ -83,7 +96,7 @@ Expected release zip after the release build:
 ## Verification status
 
 Run `scripts/validate.sh` to restore/build the mod, execute the package-free
-55-test regression harness, validate all JSON files, and verify English/PT-BR
+regression harness, validate all JSON files, and verify English/PT-BR
 key and interpolation-token parity. The current in-game checklist still needs
 to be run before release; multiplayer remains explicitly experimental until
 that pass is complete.

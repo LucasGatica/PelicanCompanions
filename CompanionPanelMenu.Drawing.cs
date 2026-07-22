@@ -224,11 +224,11 @@ internal sealed partial class CompanionPanelMenu
         this.focusTargets.AddRange(this.skillButtons.Select(p => p.Bounds));
         if (this.hatSlot.Width > 0)
             this.focusTargets.Add(this.hatSlot);
-        if (this.depositFishingRodButton.Width > 0)
-            this.focusTargets.Add(this.depositFishingRodButton);
+        this.focusTargets.AddRange(this.equipmentSlotsBounds.Select(p => p.Bounds));
         if (this.withdrawAllButton.Width > 0)
             this.focusTargets.Add(this.withdrawAllButton);
         this.focusTargets.AddRange(this.inventorySlotsBounds.Select(p => p.Bounds));
+        this.AddRoutineFocusTargets(this.focusTargets);
 
         if (this.focusSkillOnNextRebuild && this.skillButtons.Count > 0)
         {
@@ -347,7 +347,7 @@ internal sealed partial class CompanionPanelMenu
 
     private void CycleTab(int delta)
     {
-        PanelTab[] tabs = { PanelTab.Overview, PanelTab.Work, PanelTab.Skills, PanelTab.Inventory };
+        PanelTab[] tabs = { PanelTab.Overview, PanelTab.Work, PanelTab.Skills, PanelTab.Inventory, PanelTab.Routine };
         int index = Array.IndexOf(tabs, this.currentTab);
         this.SetTab(tabs[(index + delta + tabs.Length) % tabs.Length]);
     }
@@ -373,10 +373,12 @@ internal sealed partial class CompanionPanelMenu
             PanelTab.Work when compact => "companion.panel.tab_work_short",
             PanelTab.Skills when compact => "companion.panel.tab_skills_short",
             PanelTab.Inventory when compact => "companion.panel.tab_inventory_short",
+            PanelTab.Routine when compact => "companion.panel.tab_routine_short",
             PanelTab.Overview => "companion.panel.tab_overview",
             PanelTab.Work => "companion.panel.tab_work",
             PanelTab.Skills => "companion.panel.tab_skills",
             PanelTab.Inventory => "companion.panel.tab_inventory",
+            PanelTab.Routine => "companion.panel.tab_routine",
             _ => "companion.panel.tab_overview"
         }, null);
     }
@@ -684,6 +686,7 @@ internal sealed partial class CompanionPanelMenu
         Overview,
         Work,
         Skills,
-        Inventory
+        Inventory,
+        Routine
     }
 }

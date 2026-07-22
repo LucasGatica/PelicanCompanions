@@ -17,7 +17,11 @@ public sealed partial class ModEntry
 {
     private bool HasActiveWorkDirective(SquadMemberState member)
     {
-        return member.SearchWood || member.SearchMining || member.ClearArea || this.HasActiveWorkArea(member);
+        return member.SearchWood
+            || member.SearchMining
+            || member.SearchWatering
+            || member.ClearArea
+            || this.HasActiveWorkArea(member);
     }
 
     private bool IsPendingTaskAllowedByDirectives(SquadMemberState member, CompanionTaskKind kind)
@@ -26,6 +30,7 @@ public sealed partial class ModEntry
         {
             CompanionTaskKind.Lumbering => member.SearchWood || member.ClearArea,
             CompanionTaskKind.Mining => member.SearchMining || member.ClearArea,
+            CompanionTaskKind.Watering => member.SearchWatering,
             _ => true
         };
     }
@@ -45,6 +50,7 @@ public sealed partial class ModEntry
     {
         member.SearchWood = member.PreferredWorkSpecialty == CompanionWorkSpecialty.Wood;
         member.SearchMining = member.PreferredWorkSpecialty == CompanionWorkSpecialty.Mining;
+        member.SearchWatering = member.PreferredWorkSpecialty == CompanionWorkSpecialty.Watering;
         member.ClearArea = member.PreferredWorkSpecialty == CompanionWorkSpecialty.ClearArea;
         this.InvalidateTargetPreviews();
     }
@@ -120,14 +126,24 @@ public sealed partial class ModEntry
         }
 
         int radius = fixedArea ? member.WorkAreaRadius : this.GetCompanionWorkRadius(member);
-        bool includeWood = (fixedArea
+        bool requestedWood = (fixedArea
                 ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Lumbering)
                 : member.SearchWood || member.ClearArea)
             && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled;
-        bool includeMining = (fixedArea
+        bool requestedMining = (fixedArea
                 ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Mining)
                 : member.SearchMining || member.ClearArea)
             && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled;
+        bool includeWatering = (fixedArea
+                ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Watering)
+                : member.SearchWatering)
+            && this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled;
+        bool hasAxe = this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering);
+        bool hasPickaxe = this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Mining);
+        bool hasWateringCan = this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Watering);
+        bool includeWood = requestedWood && hasAxe;
+        bool includeMining = requestedMining && hasPickaxe;
+        bool includeUsableWatering = includeWatering && hasWateringCan;
         WorkTarget? target = this.FindBestWorkTarget(
             member,
             npc,
@@ -136,8 +152,25 @@ public sealed partial class ModEntry
             radius,
             includeWood,
             includeMining,
+            includeUsableWatering,
             fixedArea ? this.GetWorkAreaCenter(member) : null,
             allowStandOutsideRadius: fixedArea);
+        WorkTarget? missingEquipmentTarget = target is null
+            ? this.FindBestWorkTarget(
+                member,
+                npc,
+                owner,
+                location,
+                radius,
+                requestedWood && !hasAxe,
+                requestedMining && !hasPickaxe,
+                includeWatering && !hasWateringCan,
+                searchCenter: fixedArea ? this.GetWorkAreaCenter(member) : null,
+                allowStandOutsideRadius: fixedArea)
+            : null;
+        string? missingEquipmentFailure = missingEquipmentTarget is WorkTarget missingTarget
+            ? this.GetRequiredEquipmentFailureKey(member, missingTarget.Kind)
+            : null;
         this.UpdateTargetPreview(
             member,
             target is WorkTarget plannedTarget
@@ -147,9 +180,10 @@ public sealed partial class ModEntry
                     "",
                     -1,
                     -1,
-                    includeWood || includeMining
+                    missingEquipmentFailure
+                        ?? (includeWood || includeMining || includeUsableWatering
                         ? "companion.preview.no_target"
-                        : "companion.preview.work_modes_disabled"));
+                        : "companion.preview.work_modes_disabled")));
         if (target is null)
         {
             if (fixedArea)
@@ -168,6 +202,22 @@ public sealed partial class ModEntry
                     member.WorkAreaSpecialty,
                     includeReserved: true,
                     respectConfiguredModes: true);
+                bool hasCompatibleRemainingTarget = this.HasMatchingWorkAreaTargetForMember(
+                    member,
+                    location,
+                    this.GetWorkAreaCenter(member),
+                    member.WorkAreaRadius,
+                    member.WorkAreaSpecialty,
+                    includeReserved: true,
+                    respectConfiguredModes: false);
+                bool hasEnabledCompatibleRemainingTarget = this.HasMatchingWorkAreaTargetForMember(
+                    member,
+                    location,
+                    this.GetWorkAreaCenter(member),
+                    member.WorkAreaRadius,
+                    member.WorkAreaSpecialty,
+                    includeReserved: true,
+                    respectConfiguredModes: true);
                 if (!hasAnyRemainingTarget)
                 {
                     this.CompleteCompanionWorkArea(member, npc);
@@ -177,15 +227,37 @@ public sealed partial class ModEntry
                     this.SetCompanionActivity(member, "companion.status.work_area_paused");
                     this.SetTaskFailure(member, "companion.task_failure.tasks_disabled");
                 }
+                else if (!hasCompatibleRemainingTarget)
+                {
+                    this.SetCompanionActivity(member, "companion.status.work_area_blocked");
+                    this.SetTaskFailure(
+                        member,
+                        missingEquipmentFailure
+                            ?? this.GetMissingWorkAreaEquipmentFailureKey(
+                                member,
+                                location,
+                                this.GetWorkAreaCenter(member),
+                                member.WorkAreaRadius,
+                                member.WorkAreaSpecialty));
+                }
+                else if (!hasEnabledCompatibleRemainingTarget)
+                {
+                    this.SetCompanionActivity(member, "companion.status.work_area_paused");
+                    this.SetTaskFailure(member, "companion.task_failure.tasks_disabled");
+                }
                 else
                 {
                     this.SetCompanionActivity(member, "companion.status.work_area_blocked");
-                    this.SetTaskFailure(member, "companion.task_failure.work_area_blocked");
+                    this.SetTaskFailure(
+                        member,
+                        missingEquipmentFailure ?? "companion.task_failure.work_area_blocked");
                 }
             }
             else
             {
                 this.SetCompanionActivity(member, "companion.status.following");
+                if (missingEquipmentFailure is not null)
+                    this.SetTaskFailure(member, missingEquipmentFailure);
             }
             this.ClearCompanionTarget(member);
             return false;
@@ -201,6 +273,13 @@ public sealed partial class ModEntry
                 radius,
                 preparedStandTile: target.Value.StandTile),
             CompanionTaskKind.Mining => this.TryQueueDirectiveMiningTask(
+                location,
+                target.Value.Tile,
+                member,
+                npc,
+                radius,
+                preparedStandTile: target.Value.StandTile),
+            CompanionTaskKind.Watering => this.TryQueueDirectiveWateringTask(
                 location,
                 target.Value.Tile,
                 member,
@@ -224,8 +303,10 @@ public sealed partial class ModEntry
 
     private bool TryAssignConfiguredAutonomousTask(SquadMemberState member)
     {
-        bool includeWood = this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) == TaskMode.Autonomous;
-        bool includeMining = this.GetConfiguredTaskMode(CompanionTaskKind.Mining) == TaskMode.Autonomous;
+        bool includeWood = this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) == TaskMode.Autonomous
+            && this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering);
+        bool includeMining = this.GetConfiguredTaskMode(CompanionTaskKind.Mining) == TaskMode.Autonomous
+            && this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Mining);
         if (!includeWood && !includeMining)
             return false;
 
@@ -235,7 +316,15 @@ public sealed partial class ModEntry
             return false;
 
         int radius = this.GetCompanionWorkRadius(member);
-        WorkTarget? target = this.FindBestWorkTarget(member, npc, owner, owner.currentLocation, radius, includeWood, includeMining);
+        WorkTarget? target = this.FindBestWorkTarget(
+            member,
+            npc,
+            owner,
+            owner.currentLocation,
+            radius,
+            includeWood,
+            includeMining,
+            includeWatering: false);
         if (target is null)
             return false;
 
@@ -271,7 +360,8 @@ public sealed partial class ModEntry
     {
         bool includeWood = (member.SearchWood || member.ClearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled;
         bool includeMining = (member.SearchMining || member.ClearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled;
-        return this.FindBestWorkTarget(member, npc, owner, location, radius, includeWood, includeMining);
+        bool includeWatering = member.SearchWatering && this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled;
+        return this.FindBestWorkTarget(member, npc, owner, location, radius, includeWood, includeMining, includeWatering);
     }
 
     private WorkTarget? FindBestWorkTarget(
@@ -282,10 +372,11 @@ public sealed partial class ModEntry
         int radius,
         bool includeWood,
         bool includeMining,
+        bool includeWatering,
         Vector2? searchCenter = null,
         bool allowStandOutsideRadius = false)
     {
-        if (!includeWood && !includeMining)
+        if (!includeWood && !includeMining && !includeWatering)
             return null;
 
         Vector2 npcTile = NormalizeTile(npc.Tile);
@@ -342,6 +433,12 @@ public sealed partial class ModEntry
             }
         }
 
+        if (includeWatering)
+        {
+            foreach (Vector2 tile in this.GetWateringTargetTiles(location))
+                TryAddTarget(CompanionTaskKind.Watering, tile);
+        }
+
         if (targetsByStandTile.Count == 0)
             return null;
 
@@ -396,6 +493,7 @@ public sealed partial class ModEntry
         {
             CompanionTaskKind.Lumbering => "companion.target.wood",
             CompanionTaskKind.Mining => "companion.target.mining",
+            CompanionTaskKind.Watering => "companion.target.watering",
             _ => ""
         };
         return new TargetPreview(true, targetKey, (int)target.Tile.X, (int)target.Tile.Y, "");
@@ -423,6 +521,7 @@ public sealed partial class ModEntry
             (int)npcTile.Y,
             member.SearchWood,
             member.SearchMining,
+            member.SearchWatering,
             member.ClearArea,
             member.WorkAreaActive,
             member.WorkAreaLocationName,
@@ -493,6 +592,9 @@ public sealed partial class ModEntry
         bool searchMining = fixedArea
             ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Mining)
             : member.SearchMining;
+        bool searchWatering = fixedArea
+            ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Watering)
+            : member.SearchWatering;
         bool clearArea = !fixedArea && member.ClearArea;
         if (simulatedDirective.HasValue)
         {
@@ -506,17 +608,30 @@ public sealed partial class ModEntry
                     searchMining = !searchMining;
                     break;
 
+                case CompanionDirective.SearchWatering:
+                    searchWatering = !searchWatering;
+                    break;
+
                 case CompanionDirective.ClearArea:
                     clearArea = !clearArea;
                     break;
             }
         }
 
-        bool includeWood = (searchWood || clearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled;
-        bool includeMining = (searchMining || clearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled;
-        if (!includeWood && !includeMining)
+        bool requestedWood = (searchWood || clearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled;
+        bool requestedMining = (searchMining || clearArea) && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled;
+        bool hasAxe = this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering);
+        bool hasPickaxe = this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Mining);
+        bool hasWateringCan = this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Watering);
+        bool requestedWatering = searchWatering
+            && this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled;
+        bool includeWood = requestedWood && hasAxe;
+        bool includeMining = requestedMining && hasPickaxe;
+        bool includeWatering = requestedWatering && hasWateringCan;
+        bool anyModeEnabled = requestedWood || requestedMining || requestedWatering;
+        if (!anyModeEnabled)
         {
-            bool requestedWork = searchWood || searchMining || clearArea;
+            bool requestedWork = searchWood || searchMining || searchWatering || clearArea;
             string reason = requestedWork
                 ? "companion.preview.work_modes_disabled"
                 : simulatedDirective.HasValue
@@ -534,10 +649,27 @@ public sealed partial class ModEntry
             radius,
             includeWood,
             includeMining,
+            includeWatering,
             fixedArea ? this.GetWorkAreaCenter(member) : null,
             allowStandOutsideRadius: fixedArea);
         if (target is null)
-            return new TargetPreview(false, "", -1, -1, "companion.preview.no_target");
+        {
+            WorkTarget? missingEquipmentTarget = this.FindBestWorkTarget(
+                member,
+                npc,
+                owner,
+                location,
+                radius,
+                requestedWood && !hasAxe,
+                requestedMining && !hasPickaxe,
+                requestedWatering && !hasWateringCan,
+                searchCenter: fixedArea ? this.GetWorkAreaCenter(member) : null,
+                allowStandOutsideRadius: fixedArea);
+            string reason = missingEquipmentTarget is WorkTarget missingTarget
+                ? this.GetRequiredEquipmentFailureKey(member, missingTarget.Kind)
+                : "companion.preview.no_target";
+            return new TargetPreview(false, "", -1, -1, reason);
+        }
 
         return CreateWorkTargetPreview(target.Value);
     }
@@ -559,6 +691,7 @@ public sealed partial class ModEntry
     {
         bool searchWood = member.SearchWood;
         bool searchMining = member.SearchMining;
+        bool searchWatering = member.SearchWatering;
         bool clearArea = member.ClearArea;
         switch (directive)
         {
@@ -568,12 +701,15 @@ public sealed partial class ModEntry
             case CompanionDirective.SearchMining:
                 searchMining = !searchMining;
                 break;
+            case CompanionDirective.SearchWatering:
+                searchWatering = !searchWatering;
+                break;
             case CompanionDirective.ClearArea:
                 clearArea = !clearArea;
                 break;
         }
 
-        string reasonKey = searchWood || searchMining || clearArea
+        string reasonKey = searchWood || searchMining || searchWatering || clearArea
             ? "companion.preview.planning"
             : "companion.preview.disabled_after_click";
         return this.Tr("companion.preview.reason", new { reason = this.Tr(reasonKey) });
@@ -612,6 +748,26 @@ public sealed partial class ModEntry
             && this.IsSafeMineableObject(obj);
     }
 
+    private bool IsValidWateringTarget(GameLocation location, Vector2 tile)
+    {
+        return IsValidWateringDirt(location.GetHoeDirtAtTile(NormalizeTile(tile)));
+    }
+
+    private static bool IsValidWateringDirt(HoeDirt? dirt)
+    {
+        return dirt is not null
+            && WateringTargetPolicy.IsValid(dirt.needsWatering(), dirt.isWatered());
+    }
+
+    private IEnumerable<Vector2> GetWateringTargetTiles(GameLocation location)
+    {
+        return location.terrainFeatures.Keys
+            .Concat(location.Objects.Keys)
+            .Select(NormalizeTile)
+            .Distinct()
+            .Where(tile => this.IsValidWateringTarget(location, tile));
+    }
+
     private bool IsSafeMineableObject(SObject obj)
     {
         return obj.IsBreakableStone();
@@ -640,6 +796,14 @@ public sealed partial class ModEntry
 
         if (!ignoreTaskMode && this.config.LumberingMode == TaskMode.Disabled)
             return false;
+
+        if (!this.TryGetEquippedTool<Axe>(member, CompanionEquipmentSlot.Axe, out _))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.need_axe");
+            if (manual)
+                this.WarnForPlayer(member.OwnerId, "tasks.need_axe");
+            return false;
+        }
 
         if (!location.terrainFeatures.TryGetValue(targetTile, out TerrainFeature? feature)
             || feature is not Tree
@@ -728,6 +892,14 @@ public sealed partial class ModEntry
         if (!ignoreTaskMode && this.config.MiningMode == TaskMode.Disabled)
             return false;
 
+        if (!this.TryGetEquippedTool<Pickaxe>(member, CompanionEquipmentSlot.Pickaxe, out _))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.need_pickaxe");
+            if (manual)
+                this.WarnForPlayer(member.OwnerId, "tasks.need_pickaxe");
+            return false;
+        }
+
         if (!location.Objects.TryGetValue(targetTile, out SObject? obj) || !this.IsSafeMineableObject(obj))
         {
             this.SetTaskFailure(member, "companion.task_failure.target_lost");
@@ -785,6 +957,89 @@ public sealed partial class ModEntry
         this.SetCompanionTarget(member, CompanionTaskKind.Mining, targetTile);
         this.ShowCompanionWorkSignal(npc, location, targetTile, "target");
         this.Say(npc, "Mining", force: false);
+
+        return true;
+    }
+
+    private bool TryQueueDirectiveWateringTask(
+        GameLocation location,
+        Vector2 rawTargetTile,
+        SquadMemberState member,
+        NPC npc,
+        int radius,
+        Vector2? preparedStandTile = null)
+    {
+        if (this.pendingTasks.ContainsKey(member.NpcName)
+            || this.activeRecallTargets.ContainsKey(member.NpcName)
+            || member.Mode != CompanionMode.Following)
+        {
+            return false;
+        }
+
+        if (this.GetConfiguredTaskMode(CompanionTaskKind.Watering) == TaskMode.Disabled)
+            return false;
+
+        if (!this.TryGetEquippedTool(member, CompanionEquipmentSlot.WateringCan, out WateringCan wateringCan))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.need_watering_can");
+            return false;
+        }
+
+        if (wateringCan.WaterLeft <= 0)
+        {
+            this.SetTaskFailure(member, "companion.task_failure.watering_can_empty");
+            return false;
+        }
+
+        Vector2 targetTile = NormalizeTile(rawTargetTile);
+        if (!this.IsValidWateringTarget(location, targetTile))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.target_lost");
+            return false;
+        }
+
+        Vector2 standTile;
+        if (preparedStandTile is Vector2 prepared)
+            standTile = NormalizeTile(prepared);
+        else if (!this.TryFindSafeAdjacentTile(location, targetTile, npc, member, radius, out standTile))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
+            return false;
+        }
+
+        if (!this.TryReserveWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.target_reserved");
+            return false;
+        }
+
+        if (!this.TryReserveStandTile(member.NpcName, location.NameOrUniqueName, standTile))
+        {
+            this.ReleaseWorkTarget(member.NpcName, location.NameOrUniqueName, targetTile);
+            this.SetTaskFailure(member, "companion.task_failure.no_safe_tile");
+            return false;
+        }
+
+        PendingCompanionTask task = new()
+        {
+            Kind = CompanionTaskKind.Watering,
+            NpcName = member.NpcName,
+            LocationName = location.NameOrUniqueName,
+            TargetTile = targetTile,
+            UsesWorkDirective = true,
+            RequiresPlayerTool = false,
+            WorkRadius = radius,
+            ReturnDistance = this.GetCompanionReturnDistance(member),
+            StartedTick = Game1.ticks,
+            LastProcessedTick = Game1.ticks,
+            StandTile = standTile
+        };
+
+        this.pendingTasks[member.NpcName] = task;
+        this.SetCompanionActivity(member, "companion.status.working");
+        this.SetCompanionTarget(member, CompanionTaskKind.Watering, targetTile);
+        this.ShowCompanionWorkSignal(npc, location, targetTile, "target");
+        this.Say(npc, "Watering", force: false);
 
         return true;
     }

@@ -4,20 +4,122 @@ All notable Pelican Companions changes are documented here.
 
 ## Unreleased
 
+### Permanent NPC progression profiles
+
+- XP, level, unspent points, unlocked skills, and recent-loot history now live
+  in a permanent profile keyed by the NPC, independently of active squad
+  membership. Dismiss and dismiss-all remove control and cargo without erasing
+  progression; recruiting that NPC again reattaches the same profile.
+- Schema 11 migrates progression from legacy active-member records into the
+  permanent profile without carrying ownership, inventory, movement, or work
+  orders. These profiles remain in schema 13 saves and multiplayer snapshots
+  even while their NPC is outside the squad.
+
+### Owner-scoped companion equipment
+
+- The Inventory tab now exposes dedicated Axe, Pickaxe, Watering Can, and
+  Fishing Rod slots. A matching selected toolbar tool equips or swaps directly;
+  an empty selected toolbar cell removes it. Tools never enter companion cargo
+  or chest routing.
+- Equipment is stored per owner/NPC pair and survives dismissal and
+  re-recruitment without transferring to another farmer. Axe/pickaxe upgrades,
+  watering-can water, and safe tool `modData` round-trip through schema 13;
+  legacy rods are migrated out of ordinary cargo.
+- Every equipment swap and watering charge also refreshes an owner-scoped
+  checkpoint in `Farmer.modData`. Because it shares the vanilla inventory save
+  transaction, a failure writing the separate mod payload can no longer lose or
+  duplicate a tool. Temporarily unavailable legacy tools remain recovery-bound
+  to their original owner instead of becoming shared loot.
+- Lumbering, mining, watering, and fishing now require their corresponding
+  equipped tool. Watering consumes the equipped can's persisted water and stops
+  with a readable empty-can state until the player removes, refills, and
+  re-equips it.
+
+### Hourly companion routines
+
+- Painting an hourly cell or using the 06–18 shortcut now activates the draft,
+  so a newly filled grid can no longer save successfully while remaining
+  silently inert. An active routine also owns the companion before generic
+  configured autonomy, keeping Follow blocks and Follow completion in control.
+- A scheduled work block without a remembered area now waits and retries after
+  the player marks that specialty instead of being permanently completed for
+  the current block. If an older save had already completed that block for the
+  missing preset, marking its area resets the stale completion once.
+- Temporary manual tasks and areas now return to the already-applied Follow,
+  Wait, original-routine, or completion state when they end. Remembered work
+  areas also respect a later radius reduction, and disabled task modes report
+  that pause instead of incorrectly claiming that a tool is missing.
+- Added a fifth Routine tab with twenty hourly cells from 06:00 through 01:59.
+  Each cell can Follow, Wait, use the NPC's original routine, Water, cut Wood,
+  Mine, Clear, or Deposit; a 06–18 shortcut fills a full work shift and applies
+  the selected Follow/Wait/original completion behavior afterward.
+- Routines can repeat daily or run only on the saved day. The host persists the
+  applied day/block/revision key, so a contiguous work block applies once and a
+  completed area does not restart every ten minutes or after reloading.
+- Manually marking an area remembers one owner/NPC-scoped preset per work
+  specialty. Scheduled work can return to that map and circle independently of
+  the owner's current map. Missing presets and disabled task modes remain
+  paused for retry, while exhausted areas use the configured completion behavior.
+- Routine edits are one host-authoritative compare-and-swap payload. Concurrent
+  multiplayer edits are rejected instead of overwriting a newer grid, while
+  host-owned area presets and execution state are never accepted from clients.
+- Added `OriginalRoutine` as a real companion mode. It releases the mod's
+  schedule locks and behavior patches while active, then safely reacquires
+  control when a later block switches back to Follow, Wait, or scheduled work.
+
+### Companion deposit chests
+
+- Opening a normal player chest placed in the world now shows a side panel for
+  assigning it to no companion, all companions, or individual companions. The
+  host revalidates the owner, map, tile, chest type, and idempotent multiplayer
+  command; global/special/fridge/gift chests are excluded.
+- Assigned chests carry a stable GUID in `modData`, so a moved chest can be
+  rediscovered across known locations and building interiors. Missing or
+  duplicated GUIDs fail closed and retain the established inventory/world
+  fallback route.
+- Task loot tries the effective individual/owner-default chest before the
+  existing companion, squad/player, and world endpoints. Partial stacks and
+  exceptional custom items reconcile only their uncommitted remainder, and the
+  routine deposit action leaves any cargo that cannot fit in the chest on the
+  companion.
+- A complete item-ownership checkpoint (per-companion cargo, shared squad
+  inventory, and raw recovery overflow) is written into the host farmer's
+  vanilla `modData` immediately before every save. It is restored before cargo
+  normalization, so a valid checkpoint reconciles either side of the
+  mod-payload/vanilla-save boundary without duplicating a deposited/withdrawn
+  stack or losing its source state.
+- A farmhand's first click on a chest without a GUID now performs an identity-
+  only handshake. Assignment is sent only after the host ACK and the same GUID
+  replicate onto the same still-open chest object; replacement and stale-token
+  races fail without changing logistics.
+
+### Watering work areas
+
+- Fixed companions repeatedly watering the same tile. Target validation now
+  distinguishes crops which require irrigation from soil which has already
+  been watered, so the companion advances to the next dry tile.
+- Added Water as a fourth persistent work-area specialty and a per-companion
+  work directive. Companions reserve reachable dry soil inside the marked
+  circle, water it with their equipped watering can, and keep working
+  when their owner changes maps.
+- Watering areas use the same host-authoritative save, multiplayer snapshot,
+  target/stand reservations, blocked-area recovery, previews, and completion
+  flow as Wood and Mining. This originally advanced the schema to 12; the
+  combined operational-profile schema below is now 13.
+
 ### Directed companion fishing
 
-- Added an explicit Inventory-tab transfer for a selected fishing rod. Only a
-  single unenchanted rod with no bait or tackle is accepted; the host revalidates its slot
-  and fingerprint before storing it in the companion's persistent inventory,
-  without opening general player-to-companion deposits.
+- Fishing rods now use the dedicated owner-scoped equipment slot. Only a single
+  unenchanted rod with no bait or tackle is accepted; the host revalidates the
+  toolbar cell, previous slot fingerprint, and faithful serialized tool state.
 - `X` on water now offers Send all fishing and named choices for local
-  companions carrying rods. The host discovers the exact cardinally connected
+  companions with equipped rods. The host discovers the exact cardinally connected
   water body, then assigns each worker the closest reachable safe shore with a
   distinct reservation, replan support, and no teleporting to another pond.
 - A directed session continues through repeated catches until 26:00/day end or
-  another command. Regular non-legendary fish enter the companion inventory
-  first, use the configured overflow/world-drop route when full, and grant 8 XP
-  per fish through the existing progression system.
+  another command. Regular non-legendary fish use the assigned chest first,
+  then companion/overflow/world routing, and grant 8 XP per fish through the
+  existing progression system.
 - Fishing commands reject non-fishable/`NoFishing` water. Catches use Stardew's
   data-driven fish selector directly, bypassing virtual location overrides that
   can consume one-time quest or team rewards before returning a non-fish item.
@@ -33,7 +135,8 @@ All notable Pelican Companions changes are documented here.
   slot removes the equipped hat back to the player.
 - Hat ownership is stored separately from recruitment and ordinary carried
   items, so dismiss, dismiss-all, schedule restoration, day changes, and
-  save/reload leave the NPC wearing it. Save schema is now 10.
+  save/reload leave the NPC wearing it. This originally advanced the schema to
+  10; the current combined schema is 13.
 - Hat changes are host-authoritative in multiplayer; requests fingerprint both
   the selected toolbar hat and the cosmetic state shown by the client, while
   snapshots replicate the result. Missing custom hats remain preserved until
@@ -93,7 +196,7 @@ All notable Pelican Companions changes are documented here.
 - A truly exhausted area ends in Waiting with clear success feedback. The area
   intent survives save/reload while target, path, reservation, preview, and
   animation remain transient; this feature originally advanced the save schema
-  to 9 (the current schema is 10). Reloading with tasks disabled
+  to 9 (the current schema is 13). Reloading with tasks disabled
   preserves the paused state, and exhaustion still completes during placement
   recovery instead of retrying forever.
 
@@ -292,9 +395,9 @@ All notable Pelican Companions changes are documented here.
   kind, token validation, and runtime instance identity so stale clicks and
   resources replaced during pathing fail closed.
 - Added explicit direct work which can replace a selected companion's current
-  task and uses a safe basic axe/pickaxe without requiring the farmer to equip
-  one. The one-shot order bypasses disabled task modes without changing the
-  owner's global task toggle.
+  task. The one-shot order bypasses disabled task modes without changing the
+  owner's global task toggle; the current equipment system uses only the
+  selected companion's own axe or pickaxe slot.
 - Added a read-only prepare phase for target/stand reservations, so an invalid
   direct order doesn't erase the companion's previous task.
 - Added shared target cohorts: several companions can reserve unique adjacent

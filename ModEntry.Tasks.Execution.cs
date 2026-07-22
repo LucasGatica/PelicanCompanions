@@ -215,8 +215,24 @@ public sealed partial class ModEntry
         switch (task.Kind)
         {
             case CompanionTaskKind.Watering:
+                if (!this.TryGetEquippedTool(member, CompanionEquipmentSlot.WateringCan, out WateringCan activeCan))
+                {
+                    this.RemovePendingTask(task, "companion.task_failure.need_watering_can", returning: true);
+                    if (task.Manual)
+                        this.WarnForPlayer(member.OwnerId, "tasks.need_watering_can");
+                    return;
+                }
+
+                if (activeCan.WaterLeft <= 0)
+                {
+                    this.RemovePendingTask(task, "companion.task_failure.watering_can_empty", returning: true);
+                    if (task.Manual)
+                        this.WarnForPlayer(member.OwnerId, "tasks.watering_can_empty");
+                    return;
+                }
+
                 dirt = location.GetHoeDirtAtTile(targetTile);
-                if (dirt?.needsWatering() != true)
+                if (!IsValidWateringDirt(dirt))
                 {
                     this.RemovePendingTask(task, "companion.task_failure.target_lost");
                     return;
@@ -317,7 +333,18 @@ public sealed partial class ModEntry
         switch (task.Kind)
         {
             case CompanionTaskKind.Watering:
-                dirt!.state.Value = HoeDirt.watered;
+                if (!this.TryApplyCompanionWatering(member, dirt!, out string wateringFailureKey))
+                {
+                    this.RemovePendingTask(task, wateringFailureKey, returning: true);
+                    if (task.Manual)
+                    {
+                        this.WarnForPlayer(member.OwnerId,
+                            wateringFailureKey == "companion.task_failure.watering_can_empty"
+                                ? "tasks.watering_can_empty"
+                                : "tasks.need_watering_can");
+                    }
+                    return;
+                }
                 this.ShowCompanionWorkSignal(npc, location, targetTile, "water");
                 this.AddCompanionXp(member, 1);
                 this.SetTaskResult(member, "companion.task_result.watered");
@@ -430,6 +457,54 @@ public sealed partial class ModEntry
         this.RemovePendingTask(task);
     }
 
+    private bool TryApplyCompanionWatering(
+        SquadMemberState member,
+        HoeDirt dirt,
+        out string failureKey)
+    {
+        failureKey = "companion.task_failure.need_watering_can";
+        CompanionOperationalProfileState profile = this.GetOrCreateOperationalProfile(member.OwnerId, member.NpcName);
+        SavedItemStack? current = GetEquipmentSlot(profile.Equipment, CompanionEquipmentSlot.WateringCan);
+        if (current is null || this.TryCreateItem(current) is not WateringCan wateringCan)
+            return false;
+
+        if (!CompanionEquipmentPolicy.IsValidWateringCanState(wateringCan.UpgradeLevel, wateringCan.WaterLeft))
+            throw new InvalidDataException($"Companion '{member.NpcName}' has incoherent watering-can state.");
+        if (wateringCan.WaterLeft <= 0)
+        {
+            failureKey = "companion.task_failure.watering_can_empty";
+            return false;
+        }
+
+        SavedItemStack previous = CompanionStateCopy.CloneItem(current);
+        int previousDirtState = dirt.state.Value;
+        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
+        if (owner is null)
+            return false;
+        EquipmentJournalSnapshot journalBefore = CaptureEquipmentJournal(owner);
+        wateringCan.WaterLeft--;
+        SavedItemStack updated = this.ToSavedItem(wateringCan)
+            ?? throw new InvalidOperationException("The equipped watering can couldn't be serialized after use.");
+
+        try
+        {
+            SetEquipmentSlot(profile.Equipment, CompanionEquipmentSlot.WateringCan, updated);
+            dirt.state.Value = HoeDirt.watered;
+            this.WriteOwnerEquipmentJournal(owner);
+        }
+        catch
+        {
+            SetEquipmentSlot(profile.Equipment, CompanionEquipmentSlot.WateringCan, previous);
+            dirt.state.Value = previousDirtState;
+            RestoreEquipmentJournal(owner, journalBefore);
+            throw;
+        }
+
+        this.MarkStateDirty();
+        failureKey = "";
+        return true;
+    }
+
     private void ProcessPendingLumberTask(PendingCompanionTask task)
     {
         if (!this.members.TryGetValue(task.NpcName, out SquadMemberState? member) || member.Mode != CompanionMode.Following)
@@ -498,8 +573,7 @@ public sealed partial class ModEntry
         if (tree.falling.Value)
             return;
 
-        Axe? axe = owner.CurrentTool as Axe;
-        if (task.RequiresPlayerTool && axe is null)
+        if (!this.TryGetEquippedTool<Axe>(member, CompanionEquipmentSlot.Axe, out Axe axe))
         {
             if (task.Manual)
                 this.WarnForPlayer(member.OwnerId, "tasks.need_axe");
@@ -612,9 +686,10 @@ public sealed partial class ModEntry
             return;
         }
 
-        Pickaxe? pickaxe = owner.CurrentTool as Pickaxe;
-        if (task.RequiresPlayerTool && pickaxe is null)
+        if (!this.TryGetEquippedTool<Pickaxe>(member, CompanionEquipmentSlot.Pickaxe, out Pickaxe pickaxe))
         {
+            if (task.Manual)
+                this.WarnForPlayer(member.OwnerId, "tasks.need_pickaxe");
             this.RemovePendingTask(task, "companion.task_failure.need_pickaxe");
             return;
         }
@@ -968,7 +1043,7 @@ public sealed partial class ModEntry
         }
     }
 
-    private bool PerformLumberHit(GameLocation location, Tree tree, Vector2 tile, SquadMemberState member, NPC npc, Axe? axe, bool manual)
+    private bool PerformLumberHit(GameLocation location, Tree tree, Vector2 tile, SquadMemberState member, NPC npc, Axe axe, bool manual)
     {
         this.StopCompanionMovement(npc);
         this.FaceTile(npc, tile);
@@ -978,7 +1053,7 @@ public sealed partial class ModEntry
         if (owner is null)
             return false;
 
-        Axe effectiveAxe = axe?.getOne() as Axe ?? new Axe();
+        Axe effectiveAxe = (Axe)axe.getOne();
         if (this.HasSkill(member, "SKILL-LUMBER-001"))
         {
             effectiveAxe.UpgradeLevel = Math.Min(Tool.iridium, effectiveAxe.UpgradeLevel + 1);
@@ -1032,7 +1107,7 @@ public sealed partial class ModEntry
         return false;
     }
 
-    private bool PerformMiningHit(GameLocation location, SObject obj, Vector2 tile, SquadMemberState member, NPC npc, PendingCompanionTask task, Pickaxe? pickaxe)
+    private bool PerformMiningHit(GameLocation location, SObject obj, Vector2 tile, SquadMemberState member, NPC npc, PendingCompanionTask task, Pickaxe pickaxe)
     {
         this.StopCompanionMovement(npc);
         this.FaceTile(npc, tile);
@@ -1041,7 +1116,7 @@ public sealed partial class ModEntry
         if (owner is null)
             return false;
 
-        Pickaxe effectivePickaxe = pickaxe?.getOne() as Pickaxe ?? new Pickaxe();
+        Pickaxe effectivePickaxe = (Pickaxe)pickaxe.getOne();
         if (this.HasSkill(member, "SKILL-MINING-001"))
         {
             effectivePickaxe.UpgradeLevel = Math.Min(Tool.iridium, effectivePickaxe.UpgradeLevel + 1);

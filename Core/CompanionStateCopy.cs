@@ -31,14 +31,11 @@ internal static class CompanionStateCopy
             ParkedAtUtcTicks = source.ParkedAtUtcTicks,
             LastDialogueUtcTicks = source.LastDialogueUtcTicks,
             RecentDialogueKeys = (source.RecentDialogueKeys ?? new List<string>()).ToList(),
-            Level = source.Level,
-            Xp = source.Xp,
-            UnspentSkillPoints = source.UnspentSkillPoints,
-            BonusLevelTenPointGranted = source.BonusLevelTenPointGranted,
-            UnlockedSkillIds = (source.UnlockedSkillIds ?? new List<string>()).ToList(),
+            Profile = CloneProfile(source.Profile),
             Inventory = (source.Inventory ?? new List<SavedItemStack>()).Select(CloneItem).ToList(),
             SearchWood = source.SearchWood,
             SearchMining = source.SearchMining,
+            SearchWatering = source.SearchWatering,
             ClearArea = source.ClearArea,
             CurrentWorkIsDirect = source.CurrentWorkIsDirect,
             PreferredWorkSpecialty = source.PreferredWorkSpecialty,
@@ -58,7 +55,22 @@ internal static class CompanionStateCopy
             PreviewTargetKey = source.PreviewTargetKey,
             PreviewReasonKey = source.PreviewReasonKey,
             PreviewTargetX = source.PreviewTargetX,
-            PreviewTargetY = source.PreviewTargetY,
+            PreviewTargetY = source.PreviewTargetY
+        };
+    }
+
+    public static CompanionProfileState CloneProfile(CompanionProfileState source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return new CompanionProfileState
+        {
+            NpcName = source.NpcName,
+            Level = source.Level,
+            Xp = source.Xp,
+            UnspentSkillPoints = source.UnspentSkillPoints,
+            BonusLevelTenPointGranted = source.BonusLevelTenPointGranted,
+            UnlockedSkillIds = (source.UnlockedSkillIds ?? new List<string>()).ToList(),
             RecentLoot = (source.RecentLoot ?? new List<RecentCompanionLoot>()).Select(CloneLoot).ToList()
         };
     }
@@ -80,7 +92,10 @@ internal static class CompanionStateCopy
             ColorR = source.ColorR,
             ColorG = source.ColorG,
             ColorB = source.ColorB,
-            ColorA = source.ColorA
+            ColorA = source.ColorA,
+            HasToolData = source.HasToolData,
+            ToolUpgradeLevel = source.ToolUpgradeLevel,
+            WateringCanWaterLeft = source.WateringCanWaterLeft
         };
     }
 

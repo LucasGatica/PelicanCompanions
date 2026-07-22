@@ -26,6 +26,9 @@ internal static class SavedItemStackIdentity
         Append(canonical, item.ColorG.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Append(canonical, item.ColorB.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Append(canonical, item.ColorA.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Append(canonical, item.HasToolData ? "1" : "0");
+        Append(canonical, item.ToolUpgradeLevel.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Append(canonical, item.WateringCanWaterLeft.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         foreach ((string key, string value) in (item.ModData ?? new Dictionary<string, string>())
             .OrderBy(entry => entry.Key, StringComparer.Ordinal))

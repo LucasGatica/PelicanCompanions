@@ -34,13 +34,6 @@ public sealed partial class ModEntry
         if (!this.AreTaskActionsSafe(ownerId))
             return;
 
-        SquadMemberState? member = this.GetAvailableMember(ownerId);
-        if (member is null)
-        {
-            this.Warn("commands.no_followers");
-            return;
-        }
-
         if (!this.AreTasksEnabled(ownerId))
         {
             this.Warn("tasks.disabled");
@@ -52,6 +45,15 @@ public sealed partial class ModEntry
         if (location is null)
             return;
 
+        SquadMemberState? member = this.GetAvailableMember(
+            ownerId,
+            candidate => this.IsMemberNearOwnerInLocation(candidate, owner!, location));
+        if (member is null)
+        {
+            this.Warn("commands.no_followers");
+            return;
+        }
+
         tile = NormalizeTile(tile);
         if (this.TryHarvestTile(location, tile, member, manual: true))
             return;
@@ -59,17 +61,64 @@ public sealed partial class ModEntry
         if (this.TryPetAnimalAtTile(location, tile, member, manual: true))
             return;
 
-        if (this.TryWaterTile(location, tile, member, manual: true))
+        SquadMemberState? wateringMember = this.GetAvailableMember(
+            ownerId,
+            candidate => this.IsMemberNearOwnerInLocation(candidate, owner!, location)
+                && this.HasUsableCompanionToolForTask(candidate, CompanionTaskKind.Watering));
+        if (wateringMember is not null && this.TryWaterTile(location, tile, wateringMember, manual: true))
             return;
+        if (this.IsValidWateringTarget(location, tile)
+            && this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled
+            && wateringMember is null)
+        {
+            bool hasEmptyCan = this.GetAvailableMembers(ownerId).Any(candidate =>
+                this.IsMemberNearOwnerInLocation(candidate, owner!, location)
+                && this.TryGetEquippedTool(
+                    candidate,
+                    CompanionEquipmentSlot.WateringCan,
+                    out WateringCan wateringCan)
+                && wateringCan.WaterLeft <= 0);
+            string failureKey = hasEmptyCan
+                ? "companion.task_failure.watering_can_empty"
+                : "companion.task_failure.need_watering_can";
+            this.SetTaskFailure(member, failureKey);
+            this.WarnForPlayer(ownerId, hasEmptyCan ? "tasks.watering_can_empty" : "tasks.need_watering_can");
+            return;
+        }
 
         if (this.TryGatherTile(location, tile, member, manual: true))
             return;
 
-        if (this.TryLumberTile(location, tile, member, manual: true))
+        SquadMemberState? lumberMember = this.GetAvailableMember(
+            ownerId,
+            candidate => this.IsMemberNearOwnerInLocation(candidate, owner!, location)
+                && this.HasUsableCompanionToolForTask(candidate, CompanionTaskKind.Lumbering));
+        if (lumberMember is not null && this.TryLumberTile(location, tile, lumberMember, manual: true))
             return;
+        if (this.IsValidWoodTarget(location, tile)
+            && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled
+            && lumberMember is null)
+        {
+            this.SetTaskFailure(member, "companion.task_failure.need_axe");
+            this.WarnForPlayer(ownerId, "tasks.need_axe");
+            return;
+        }
 
-        if (this.TryMiningTile(location, tile, member, manual: true))
+        SquadMemberState? miningMember = this.GetAvailableMember(
+            ownerId,
+            candidate => this.IsMemberNearOwnerInLocation(candidate, owner!, location)
+                && this.HasUsableCompanionToolForTask(candidate, CompanionTaskKind.Mining));
+        if (miningMember is not null && this.TryMiningTile(location, tile, miningMember, manual: true))
             return;
+        if (location.Objects.TryGetValue(tile, out SObject? mineable)
+            && this.IsSafeMineableObject(mineable)
+            && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled
+            && miningMember is null)
+        {
+            this.SetTaskFailure(member, "companion.task_failure.need_pickaxe");
+            this.WarnForPlayer(ownerId, "tasks.need_pickaxe");
+            return;
+        }
 
         this.SetTaskFailure(member, "companion.task_failure.no_valid_target");
         this.Warn("tasks.no_valid_target");
@@ -206,14 +255,20 @@ public sealed partial class ModEntry
         if (!this.AreTasksEnabled(ownerId) || !this.AreTaskActionsSafe(ownerId))
             return;
 
-        SquadMemberState? member = this.GetAvailableMember(ownerId);
         Farmer? owner = this.GetOwnerFarmer(ownerId);
         GameLocation? location = owner?.currentLocation;
-        if (member is null || owner is null || location is null)
+        if (owner is null || location is null)
             return;
 
         if (owner.CurrentTool is Axe && this.config.LumberingMode == TaskMode.Mimicking)
         {
+            SquadMemberState? member = this.GetAvailableMember(
+                ownerId,
+                candidate => this.IsMemberNearOwnerInLocation(candidate, owner, location)
+                    && this.HasUsableCompanionToolForTask(candidate, CompanionTaskKind.Lumbering));
+            if (member is null)
+                return;
+
             Vector2 aimedTile = NormalizeTile(cursorTile);
             if (!this.IsValidWoodTarget(location, aimedTile))
                 aimedTile = NormalizeTile(this.GetFacingTile(owner));
@@ -236,6 +291,13 @@ public sealed partial class ModEntry
 
         if (owner.CurrentTool is Pickaxe && this.config.MiningMode == TaskMode.Mimicking)
         {
+            SquadMemberState? member = this.GetAvailableMember(
+                ownerId,
+                candidate => this.IsMemberNearOwnerInLocation(candidate, owner, location)
+                    && this.HasUsableCompanionToolForTask(candidate, CompanionTaskKind.Mining));
+            if (member is null)
+                return;
+
             Vector2 aimedTile = NormalizeTile(cursorTile);
             if (!this.IsValidMiningTarget(location, aimedTile))
                 aimedTile = NormalizeTile(this.GetFacingTile(owner));
@@ -258,6 +320,13 @@ public sealed partial class ModEntry
 
         if (owner.CurrentTool is WateringCan && this.config.WateringMode == TaskMode.Mimicking)
         {
+            SquadMemberState? member = this.GetAvailableMember(
+                ownerId,
+                candidate => this.IsMemberNearOwnerInLocation(candidate, owner, location)
+                    && this.HasUsableCompanionToolForTask(candidate, CompanionTaskKind.Watering));
+            if (member is null)
+                return;
+
             Vector2 aimedTile = NormalizeTile(cursorTile);
             HoeDirt? aimedDirt = location.GetHoeDirtAtTile(aimedTile);
             if (aimedDirt?.needsWatering() != true)
@@ -289,7 +358,8 @@ public sealed partial class ModEntry
             .Where(p => p.Mode == CompanionMode.Following
                 && !this.pendingTasks.ContainsKey(p.NpcName)
                 && !this.activeRecallTargets.ContainsKey(p.NpcName)
-                && p.CurrentActivityKey != "companion.status.returning")
+                && p.CurrentActivityKey != "companion.status.returning"
+                && this.GetRoutinePlanningLane(p) != CompanionRoutinePlanningLane.None)
             .Where(member =>
             {
                 Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
@@ -323,11 +393,18 @@ public sealed partial class ModEntry
                     continue;
 
                 this.priorityTaskPlanningMembers.Remove(member.NpcName);
-                if (this.HasActiveWorkDirective(member))
+                CompanionRoutinePlanningLane planningLane = this.GetRoutinePlanningLane(member);
+                if (planningLane == CompanionRoutinePlanningLane.ExplicitDirective)
                 {
                     this.TryAssignWorkDirectiveTask(member);
                     continue;
                 }
+
+                // An active hourly schedule is authoritative. In particular,
+                // Follow must not silently become generic autonomous work after
+                // the routine block has been marked as applied/completed.
+                if (planningLane == CompanionRoutinePlanningLane.None)
+                    continue;
 
                 if (this.TryAssignConfiguredAutonomousTask(member))
                     continue;
@@ -391,9 +468,24 @@ public sealed partial class ModEntry
         if (!this.IsTileWithinOwnerRange(member, location, tile))
             return false;
 
-        HoeDirt? dirt = location.GetHoeDirtAtTile(tile);
-        if (dirt is null || !dirt.needsWatering())
+        if (!this.IsValidWateringTarget(location, tile))
             return false;
+
+        if (!this.TryGetEquippedTool(member, CompanionEquipmentSlot.WateringCan, out WateringCan wateringCan))
+        {
+            this.SetTaskFailure(member, "companion.task_failure.need_watering_can");
+            if (manual)
+                this.WarnForPlayer(member.OwnerId, "tasks.need_watering_can");
+            return false;
+        }
+
+        if (wateringCan.WaterLeft <= 0)
+        {
+            this.SetTaskFailure(member, "companion.task_failure.watering_can_empty");
+            if (manual)
+                this.WarnForPlayer(member.OwnerId, "tasks.watering_can_empty");
+            return false;
+        }
 
         return this.TryQueueInstantTask(CompanionTaskKind.Watering, location, tile, member, manual);
     }
@@ -447,11 +539,11 @@ public sealed partial class ModEntry
             return false;
         }
 
-        if (owner.CurrentTool is not Axe)
+        if (!this.TryGetEquippedTool<Axe>(member, CompanionEquipmentSlot.Axe, out _))
         {
             this.SetTaskFailure(member, "companion.task_failure.need_axe");
             if (manual)
-                this.Warn("tasks.need_axe");
+                this.WarnForPlayer(member.OwnerId, "tasks.need_axe");
 
             return false;
         }
@@ -510,7 +602,7 @@ public sealed partial class ModEntry
             LocationName = location.NameOrUniqueName,
             TargetTile = targetTile,
             Manual = manual,
-            RequiresPlayerTool = true,
+            RequiresPlayerTool = false,
             WorkRadius = MaxCompanionDistanceTiles,
             ReturnDistance = MaxCompanionDistanceTiles,
             StartedTick = Game1.ticks,
@@ -548,11 +640,11 @@ public sealed partial class ModEntry
         if (npc is null || owner is null || npc.currentLocation != location || owner.currentLocation != location)
             return false;
 
-        if (owner.CurrentTool is not Pickaxe)
+        if (!this.TryGetEquippedTool<Pickaxe>(member, CompanionEquipmentSlot.Pickaxe, out _))
         {
             this.SetTaskFailure(member, "companion.task_failure.need_pickaxe");
             if (manual)
-                this.Warn("tasks.need_pickaxe");
+                this.WarnForPlayer(member.OwnerId, "tasks.need_pickaxe");
 
             return false;
         }
@@ -570,7 +662,7 @@ public sealed partial class ModEntry
 
         task.Manual = manual;
         task.UsesWorkDirective = false;
-        task.RequiresPlayerTool = true;
+        task.RequiresPlayerTool = false;
         task.WorkRadius = MaxCompanionDistanceTiles;
         task.ReturnDistance = MaxCompanionDistanceTiles;
         return true;

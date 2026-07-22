@@ -238,41 +238,19 @@ public sealed partial class ModEntry
 
         if (!member.ClearArea)
         {
-            if (member.SearchWood && !member.SearchMining)
+            if (member.SearchWood && !member.SearchMining && !member.SearchWatering)
                 member.PreferredWorkSpecialty = CompanionWorkSpecialty.Wood;
-            else if (member.SearchMining && !member.SearchWood)
+            else if (member.SearchMining && !member.SearchWood && !member.SearchWatering)
                 member.PreferredWorkSpecialty = CompanionWorkSpecialty.Mining;
+            else if (member.SearchWatering && !member.SearchWood && !member.SearchMining)
+                member.PreferredWorkSpecialty = CompanionWorkSpecialty.Watering;
         }
 
-        member.Level = Math.Clamp(member.Level <= 0 ? CompanionProgression.GetLevelForXp(member.Xp) : member.Level, 1, CompanionProgression.MaxLevel);
-        member.Xp = Math.Max(0, member.Xp);
-        int actualLevel = CompanionProgression.GetLevelForXp(member.Xp);
-        if (actualLevel > member.Level)
-        {
-            member.UnspentSkillPoints += actualLevel - member.Level;
-            member.Level = actualLevel;
-        }
-
-        if (member.Level >= CompanionProgression.MaxLevel && !member.BonusLevelTenPointGranted)
-        {
-            member.UnspentSkillPoints++;
-            member.BonusLevelTenPointGranted = true;
-        }
-
-        member.UnlockedSkillIds ??= new List<string>();
-        member.UnlockedSkillIds = member.UnlockedSkillIds
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .ToList();
+        this.NormalizeLoadedProfile(member.Profile);
         member.RecentDialogueKeys = (member.RecentDialogueKeys ?? new List<string>())
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .TakeLast(4)
-            .ToList();
-        member.UnspentSkillPoints += CompanionProgression.GetLegacySkillPointRefund(member.UnlockedSkillIds);
-        member.UnspentSkillPoints = Math.Max(0, member.UnspentSkillPoints);
-        member.UnlockedSkillIds = member.UnlockedSkillIds
-            .Where(p => CompanionProgression.Skills.Any(skill => string.Equals(skill.Id, p, StringComparison.OrdinalIgnoreCase)))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         List<SavedItemStack> validInventory = new();
@@ -300,6 +278,7 @@ public sealed partial class ModEntry
         {
             CompanionMode.Waiting => "companion.status.waiting",
             CompanionMode.ParkedForDisconnect => "companion.status.parked",
+            CompanionMode.OriginalRoutine => "companion.status.original_routine",
             _ when member.WorkAreaActive => "companion.status.work_area",
             _ => "companion.status.following"
         };
@@ -313,13 +292,57 @@ public sealed partial class ModEntry
         member.PreviewTargetY = -1;
         member.PreviewReasonKey = "";
         member.CurrentWorkIsDirect = false;
-        member.RecentLoot = (member.RecentLoot ?? new List<RecentCompanionLoot>())
-            .Where(p => p is not null && !string.IsNullOrWhiteSpace(p.QualifiedItemId) && p.Stack > 0)
-            .OrderByDescending(p => p.AddedAtUtcTicks)
+        return overflow;
+    }
+
+    private void NormalizeLoadedProfile(CompanionProfileState profile)
+    {
+        if (string.IsNullOrWhiteSpace(profile.NpcName))
+            throw new InvalidDataException("The companion profile list contains an unnamed entry.");
+
+        profile.Level = Math.Clamp(
+            profile.Level <= 0 ? CompanionProgression.GetLevelForXp(profile.Xp) : profile.Level,
+            1,
+            CompanionProgression.MaxLevel);
+        profile.Xp = Math.Max(0, profile.Xp);
+        int actualLevel = CompanionProgression.GetLevelForXp(profile.Xp);
+        if (actualLevel > profile.Level)
+        {
+            profile.UnspentSkillPoints += actualLevel - profile.Level;
+            profile.Level = actualLevel;
+        }
+
+        if (profile.Level >= CompanionProgression.MaxLevel && !profile.BonusLevelTenPointGranted)
+        {
+            profile.UnspentSkillPoints++;
+            profile.BonusLevelTenPointGranted = true;
+        }
+
+        profile.UnlockedSkillIds ??= new List<string>();
+        profile.UnlockedSkillIds = profile.UnlockedSkillIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToList();
+        profile.UnspentSkillPoints += CompanionProgression.GetLegacySkillPointRefund(profile.UnlockedSkillIds);
+        profile.UnspentSkillPoints = Math.Max(0, profile.UnspentSkillPoints);
+        profile.UnlockedSkillIds = profile.UnlockedSkillIds
+            .Where(id => CompanionProgression.Skills.Any(skill => string.Equals(skill.Id, id, StringComparison.OrdinalIgnoreCase)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        profile.RecentLoot = (profile.RecentLoot ?? new List<RecentCompanionLoot>())
+            .Where(loot => loot is not null && !string.IsNullOrWhiteSpace(loot.QualifiedItemId) && loot.Stack > 0)
+            .OrderByDescending(loot => loot.AddedAtUtcTicks)
             .Take(RecentLootLimit)
             .ToList();
+    }
 
-        return overflow;
+    private CompanionProfileState GetOrCreateCompanionProfile(string npcName)
+    {
+        if (this.companionProfiles.TryGetValue(npcName, out CompanionProfileState? profile))
+            return profile;
+
+        profile = CompanionProfilePolicy.Create(npcName);
+        this.companionProfiles.Add(npcName, profile);
+        return profile;
     }
 
     private void ReloadOverflowInventoryIntoSquad()
@@ -331,12 +354,83 @@ public sealed partial class ModEntry
         while (index < this.legacyOverflowItems.Count)
         {
             SavedItemStack saved = this.legacyOverflowItems[index];
-            Item? item = this.TryCreateItem(saved);
+            SavedItemStack materialized = CompanionStateCopy.CloneItem(saved);
+            bool ownerScoped = TryTakeLegacyEquipmentRecoveryOwner(
+                materialized,
+                out long recoveryOwnerId,
+                out string recoveryNpcName);
+            Item? item = this.TryCreateItem(materialized);
             if (item is null)
             {
                 // The providing content mod may be temporarily missing. Keep the
                 // raw stack in save data so reinstalling that content can restore it.
                 index++;
+                continue;
+            }
+
+            if (ownerScoped)
+            {
+                Farmer? recoveryOwner = Game1.getAllFarmers()
+                    .FirstOrDefault(farmer => farmer.UniqueMultiplayerID == recoveryOwnerId);
+                if (recoveryOwner is null)
+                {
+                    index++;
+                    continue;
+                }
+
+                int recoveryOriginalStack = saved.Stack;
+                int inventoryBefore = CountInventoryStack(recoveryOwner, materialized.QualifiedItemId);
+                Item? ownerRemainder;
+                try
+                {
+                    ownerRemainder = recoveryOwner.addItemToInventory(item);
+                }
+                catch (Exception ex)
+                {
+                    int transferred = Math.Clamp(
+                        CountInventoryStack(recoveryOwner, materialized.QualifiedItemId) - inventoryBefore,
+                        0,
+                        recoveryOriginalStack);
+                    if (transferred >= recoveryOriginalStack)
+                        this.legacyOverflowItems.RemoveAt(index);
+                    else if (transferred > 0)
+                    {
+                        saved.Stack = recoveryOriginalStack - transferred;
+                        index++;
+                    }
+                    else
+                    {
+                        index++;
+                    }
+
+                    if (transferred > 0)
+                        this.MarkStateDirty();
+                    this.Monitor.Log(
+                        $"Owner-scoped equipment recovery failed for '{recoveryNpcName}/{saved.QualifiedItemId}' and was isolated: {ex}",
+                        LogLevel.Error);
+                    continue;
+                }
+
+                int recoveryRemainingStack = Math.Clamp(
+                    ownerRemainder?.Stack ?? 0,
+                    0,
+                    recoveryOriginalStack);
+                int recoveryMoved = recoveryOriginalStack - recoveryRemainingStack;
+                if (recoveryMoved <= 0)
+                {
+                    index++;
+                    continue;
+                }
+
+                if (recoveryRemainingStack == 0)
+                    this.legacyOverflowItems.RemoveAt(index);
+                else
+                {
+                    saved.Stack = recoveryRemainingStack;
+                    index++;
+                }
+
+                this.MarkStateDirty();
                 continue;
             }
 
@@ -438,6 +532,13 @@ public sealed partial class ModEntry
             Version = CurrentSaveVersion,
             Revision = this.stateRevision,
             Members = detachedMembers,
+            CompanionProfiles = this.companionProfiles.Values.Select(CompanionStateCopy.CloneProfile).ToList(),
+            OperationalProfiles = this.operationalProfiles.Values
+                .Select(CompanionOperationsStateCopy.CloneOperationalProfile)
+                .ToList(),
+            OwnerLogistics = this.ownerLogistics.Values
+                .Select(CompanionOperationsStateCopy.CloneOwnerLogistics)
+                .ToList(),
             NpcCosmetics = this.npcCosmetics.Values.Select(CompanionStateCopy.CloneCosmetic).ToList(),
             TaskTogglesByPlayer = this.taskToggles.ToDictionary(p => p.Key.ToString(), p => p.Value),
             SquadInventory = this.squadInventory.Select(this.ToSavedItem).Where(p => p is not null).Cast<SavedItemStack>().ToList(),
@@ -496,6 +597,14 @@ public sealed partial class ModEntry
             saved.ColorA = color.A;
         }
 
+        if (item is Tool tool)
+        {
+            saved.HasToolData = true;
+            saved.ToolUpgradeLevel = tool.UpgradeLevel;
+            if (tool is WateringCan wateringCan)
+                saved.WateringCanWaterLeft = wateringCan.WaterLeft;
+        }
+
         return saved;
     }
 
@@ -522,6 +631,31 @@ public sealed partial class ModEntry
 
             item.Stack = saved.Stack;
             item.Quality = saved.Quality;
+
+            if (saved.HasToolData)
+            {
+                if (item is not Tool tool)
+                    return null;
+                if (!CompanionEquipmentPolicy.IsValidUpgradeLevel(saved.ToolUpgradeLevel))
+                    return null;
+                if (item is WateringCan)
+                {
+                    if (!CompanionEquipmentPolicy.IsValidWateringCanState(
+                            saved.ToolUpgradeLevel,
+                            saved.WateringCanWaterLeft))
+                    {
+                        return null;
+                    }
+                }
+                else if (saved.WateringCanWaterLeft != 0)
+                {
+                    return null;
+                }
+
+                tool.UpgradeLevel = saved.ToolUpgradeLevel;
+                if (tool is WateringCan wateringCan)
+                    wateringCan.WaterLeft = saved.WateringCanWaterLeft;
+            }
 
             if (item is SObject obj && !string.IsNullOrWhiteSpace(saved.PreservedParentItemId))
                 obj.preservedParentSheetIndex.Value = saved.PreservedParentItemId;
@@ -628,6 +762,12 @@ public sealed partial class ModEntry
         // materialized. A malformed custom item or member can no longer clear a
         // client's last known-good snapshot or consume its revision.
         this.ResetRuntimeState(clearProfiles: false, preserveCosmeticRuntime: true);
+        foreach ((string npcName, CompanionProfileState profile) in prepared.CompanionProfiles)
+            this.companionProfiles.Add(npcName, profile);
+        foreach ((CompanionOperationalProfileKey key, CompanionOperationalProfileState profile) in prepared.OperationalProfiles)
+            this.operationalProfiles.Add(key, profile);
+        foreach ((long ownerId, CompanionOwnerLogisticsState logistics) in prepared.OwnerLogistics)
+            this.ownerLogistics.Add(ownerId, logistics);
         foreach ((string npcName, SquadMemberState member) in prepared.Members)
             this.members.Add(npcName, member);
         foreach ((string npcName, NpcCosmeticState cosmetic) in prepared.NpcCosmetics)
@@ -654,11 +794,66 @@ public sealed partial class ModEntry
         if (data.Revision < 0)
             throw new InvalidDataException("The multiplayer snapshot has a negative revision.");
 
+        List<CompanionProfileState> incomingProfiles = data.CompanionProfiles ?? new List<CompanionProfileState>();
+        if (incomingProfiles.Count > 256)
+            throw new InvalidDataException("The multiplayer snapshot contains too many companion profiles.");
+
+        Dictionary<string, CompanionProfileState> preparedProfiles = new(StringComparer.OrdinalIgnoreCase);
+        foreach (CompanionProfileState? incomingProfile in incomingProfiles)
+        {
+            if (incomingProfile is null || string.IsNullOrWhiteSpace(incomingProfile.NpcName))
+                throw new InvalidDataException("The multiplayer snapshot contains an invalid companion profile.");
+
+            CompanionProfileState profile = CompanionStateCopy.CloneProfile(incomingProfile);
+            NormalizeReplicatedProfile(profile);
+            if (!preparedProfiles.TryAdd(profile.NpcName, profile))
+                throw new InvalidDataException($"The multiplayer snapshot contains duplicate profile key '{profile.NpcName}'.");
+        }
+
+        List<CompanionOperationalProfileState> incomingOperationalProfiles = data.OperationalProfiles
+            ?? new List<CompanionOperationalProfileState>();
+        if (incomingOperationalProfiles.Count > 1024)
+            throw new InvalidDataException("The multiplayer snapshot contains too many operational companion profiles.");
+
+        Dictionary<CompanionOperationalProfileKey, CompanionOperationalProfileState> preparedOperationalProfiles = new();
+        foreach (CompanionOperationalProfileState? incoming in incomingOperationalProfiles)
+        {
+            if (incoming is null)
+                throw new InvalidDataException("The multiplayer snapshot contains a null operational companion profile.");
+
+            CompanionOperationalProfileState operational = CompanionOperationsStateCopy.CloneOperationalProfile(incoming);
+            this.NormalizeOperationalProfile(operational, rejectUnavailableTools: true);
+            CompanionOperationalProfileKey key = GetOperationalProfileKey(operational.OwnerId, operational.NpcName);
+            if (!preparedOperationalProfiles.TryAdd(key, operational))
+            {
+                throw new InvalidDataException(
+                    $"The multiplayer snapshot contains duplicate operational owner/NPC key '{operational.OwnerId}/{operational.NpcName}'.");
+            }
+        }
+
+        List<CompanionOwnerLogisticsState> incomingOwnerLogistics = data.OwnerLogistics
+            ?? new List<CompanionOwnerLogisticsState>();
+        if (incomingOwnerLogistics.Count > 256)
+            throw new InvalidDataException("The multiplayer snapshot contains too many owner logistics records.");
+
+        Dictionary<long, CompanionOwnerLogisticsState> preparedOwnerLogistics = new();
+        foreach (CompanionOwnerLogisticsState? incoming in incomingOwnerLogistics)
+        {
+            if (incoming is null)
+                throw new InvalidDataException("The multiplayer snapshot contains a null owner logistics record.");
+
+            CompanionOwnerLogisticsState logistics = CompanionOperationsStateCopy.CloneOwnerLogistics(incoming);
+            this.NormalizeOwnerLogistics(logistics, rejectUntrustedText: true);
+            if (!preparedOwnerLogistics.TryAdd(logistics.OwnerId, logistics))
+                throw new InvalidDataException($"The multiplayer snapshot contains duplicate owner logistics ID '{logistics.OwnerId}'.");
+        }
+
         List<SquadMemberState> incomingMembers = data.Members ?? new List<SquadMemberState>();
         if (incomingMembers.Count > 256)
             throw new InvalidDataException("The multiplayer snapshot contains too many companions.");
 
         Dictionary<string, SquadMemberState> preparedMembers = new(StringComparer.OrdinalIgnoreCase);
+        List<SavedItemStack> preparedOverflow = new();
         foreach (SquadMemberState? incomingMember in incomingMembers)
         {
             if (incomingMember is null || string.IsNullOrWhiteSpace(incomingMember.NpcName))
@@ -666,6 +861,54 @@ public sealed partial class ModEntry
 
             SquadMemberState member = CompanionStateCopy.CloneMember(incomingMember);
             NormalizeReplicatedMember(member);
+            if (!preparedProfiles.TryGetValue(member.NpcName, out CompanionProfileState? profile))
+            {
+                if (data.Version >= CompanionProfilesSaveVersion)
+                    throw new InvalidDataException($"Active companion '{member.NpcName}' has no permanent profile.");
+
+                profile = CompanionProfilePolicy.MigrateLegacyMember(member);
+                NormalizeReplicatedProfile(profile);
+                preparedProfiles.Add(profile.NpcName, profile);
+            }
+
+            CompanionProfilePolicy.Attach(member, profile);
+            if (data.Version >= OperationalProfilesSaveVersion
+                && member.Inventory.Any(saved => saved is not null
+                    && (saved.HasToolData
+                        || saved.QualifiedItemId.StartsWith("(T)", StringComparison.OrdinalIgnoreCase))))
+            {
+                throw new InvalidDataException($"Companion '{member.NpcName}' has a tool mixed into cargo in a schema-13 snapshot.");
+            }
+
+            CompanionOperationalProfileKey operationalKey = GetOperationalProfileKey(member.OwnerId, member.NpcName);
+            if (!preparedOperationalProfiles.TryGetValue(operationalKey, out CompanionOperationalProfileState? operational))
+            {
+                if (data.Version >= OperationalProfilesSaveVersion)
+                {
+                    throw new InvalidDataException(
+                        $"Active companion '{member.OwnerId}/{member.NpcName}' has no operational profile.");
+                }
+
+                operational = new CompanionOperationalProfileState
+                {
+                    OwnerId = member.OwnerId,
+                    NpcName = member.NpcName,
+                    Equipment = new CompanionEquipmentState(),
+                    Routine = new CompanionRoutineState()
+                };
+                preparedOperationalProfiles.Add(operationalKey, operational);
+            }
+
+            List<SavedItemStack> displacedTools = this.MigrateLegacyMemberEquipment(
+                member,
+                operational,
+                migrateIntoSlots: data.Version < OperationalProfilesSaveVersion,
+                logMigration: false);
+            if (data.Version >= OperationalProfilesSaveVersion && displacedTools.Count > 0)
+                throw new InvalidDataException($"Companion '{member.NpcName}' has a tool mixed into cargo in a schema-13 snapshot.");
+            preparedOverflow.AddRange(displacedTools);
+            this.NormalizeOperationalProfile(operational, rejectUnavailableTools: true);
+
             if (!preparedMembers.TryAdd(member.NpcName, member))
                 throw new InvalidDataException($"The multiplayer snapshot contains duplicate NPC key '{member.NpcName}'.");
         }
@@ -695,7 +938,6 @@ public sealed partial class ModEntry
             throw new InvalidDataException("The multiplayer snapshot contains an unreasonable number of item stacks.");
 
         List<Item> preparedInventory = new();
-        List<SavedItemStack> preparedOverflow = new();
         foreach (SavedItemStack? incoming in incomingSquadInventory)
         {
             SavedItemStack saved = ValidateSnapshotItem(incoming);
@@ -714,6 +956,9 @@ public sealed partial class ModEntry
             : NormalizeHostRules(data.HostRules);
         return new PreparedStateSnapshot(
             data.Revision,
+            preparedProfiles,
+            preparedOperationalProfiles,
+            preparedOwnerLogistics,
             preparedMembers,
             preparedCosmetics,
             preparedToggles,
@@ -726,12 +971,30 @@ public sealed partial class ModEntry
     {
         if (incoming is null || string.IsNullOrWhiteSpace(incoming.QualifiedItemId) || incoming.Stack <= 0)
             throw new InvalidDataException("The multiplayer snapshot contains an invalid item stack.");
+        if (incoming.HasToolData
+            && (incoming.Stack != 1
+                || !incoming.QualifiedItemId.StartsWith("(T)", StringComparison.OrdinalIgnoreCase)
+                || !CompanionEquipmentPolicy.IsValidUpgradeLevel(incoming.ToolUpgradeLevel)
+                || !CompanionEquipmentPolicy.IsValidWateringCanState(
+                    incoming.ToolUpgradeLevel,
+                    incoming.WateringCanWaterLeft)))
+        {
+            throw new InvalidDataException("The multiplayer snapshot contains invalid persisted tool state.");
+        }
+        if (!incoming.HasToolData
+            && (incoming.ToolUpgradeLevel != 0 || incoming.WateringCanWaterLeft != 0))
+        {
+            throw new InvalidDataException("The multiplayer snapshot contains tool fields without tool state.");
+        }
 
         return CompanionStateCopy.CloneItem(incoming);
     }
 
     private sealed record PreparedStateSnapshot(
         long Revision,
+        Dictionary<string, CompanionProfileState> CompanionProfiles,
+        Dictionary<CompanionOperationalProfileKey, CompanionOperationalProfileState> OperationalProfiles,
+        Dictionary<long, CompanionOwnerLogisticsState> OwnerLogistics,
         Dictionary<string, SquadMemberState> Members,
         Dictionary<string, NpcCosmeticState> NpcCosmetics,
         Dictionary<long, bool> TaskToggles,
@@ -788,13 +1051,6 @@ public sealed partial class ModEntry
         }
 
         member.DisplayName ??= member.NpcName;
-        member.Level = Math.Clamp(member.Level, 1, CompanionProgression.MaxLevel);
-        member.Xp = Math.Max(0, member.Xp);
-        member.UnspentSkillPoints = Math.Max(0, member.UnspentSkillPoints);
-        member.UnlockedSkillIds = (member.UnlockedSkillIds ?? new List<string>())
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
         member.RecentDialogueKeys = (member.RecentDialogueKeys ?? new List<string>())
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -804,18 +1060,32 @@ public sealed partial class ModEntry
             .Where(saved => saved is not null && !string.IsNullOrWhiteSpace(saved.QualifiedItemId) && saved.Stack > 0)
             .Select(CompanionStateCopy.CloneItem)
             .ToList();
-        member.RecentLoot = (member.RecentLoot ?? new List<RecentCompanionLoot>())
-            .Where(loot => loot is not null && !string.IsNullOrWhiteSpace(loot.QualifiedItemId) && loot.Stack > 0)
-            .OrderByDescending(loot => loot.AddedAtUtcTicks)
-            .Take(RecentLootLimit)
-            .Select(CompanionStateCopy.CloneLoot)
-            .ToList();
         member.CurrentActivityKey ??= "companion.status.following";
         member.LastTaskResultKey ??= "";
         member.LastFailureReasonKey ??= "";
         member.CurrentTargetKey ??= "";
         member.PreviewTargetKey ??= "";
         member.PreviewReasonKey ??= "";
+    }
+
+    private static void NormalizeReplicatedProfile(CompanionProfileState profile)
+    {
+        if (string.IsNullOrWhiteSpace(profile.NpcName))
+            throw new InvalidDataException("The multiplayer snapshot contains an unnamed companion profile.");
+
+        profile.Level = Math.Clamp(profile.Level, 1, CompanionProgression.MaxLevel);
+        profile.Xp = Math.Max(0, profile.Xp);
+        profile.UnspentSkillPoints = Math.Max(0, profile.UnspentSkillPoints);
+        profile.UnlockedSkillIds = (profile.UnlockedSkillIds ?? new List<string>())
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        profile.RecentLoot = (profile.RecentLoot ?? new List<RecentCompanionLoot>())
+            .Where(loot => loot is not null && !string.IsNullOrWhiteSpace(loot.QualifiedItemId) && loot.Stack > 0)
+            .OrderByDescending(loot => loot.AddedAtUtcTicks)
+            .Take(RecentLootLimit)
+            .Select(CompanionStateCopy.CloneLoot)
+            .ToList();
     }
 
     private static void ClearPersistedWorkArea(SquadMemberState member)

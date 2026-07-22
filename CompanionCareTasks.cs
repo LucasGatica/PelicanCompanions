@@ -173,10 +173,15 @@ public sealed partial class ModEntry
         if (!this.AreTaskActionsSafe(ownerId) || !this.AreTasksEnabled(ownerId))
             return;
 
-        SquadMemberState? member = this.GetAvailableMember(ownerId);
         Farmer? owner = this.GetOwnerFarmer(ownerId);
         GameLocation? location = owner?.currentLocation;
-        if (member is null || owner is null || location is null)
+        if (owner is null || location is null)
+            return;
+
+        SquadMemberState? member = this.GetAvailableMember(
+            ownerId,
+            candidate => this.IsMemberNearOwnerInLocation(candidate, owner, location));
+        if (member is null)
             return;
 
         actionTile = NormalizeTile(actionTile);

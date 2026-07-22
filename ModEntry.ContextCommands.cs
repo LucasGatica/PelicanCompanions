@@ -360,7 +360,7 @@ public sealed partial class ModEntry
             return;
         }
 
-        List<SquadMemberState> candidates = this.members.Values
+        List<SquadMemberState> nearbyCandidates = this.members.Values
             .Where(member => member.OwnerId == ownerId && member.Mode != CompanionMode.ParkedForDisconnect)
             .Select(member => new { Member = member, Npc = this.GetNpcByName(member.NpcName) })
             .Where(candidate => candidate.Npc?.currentLocation == location
@@ -371,9 +371,22 @@ public sealed partial class ModEntry
             .ThenBy(candidate => candidate.Member.NpcName, StringComparer.OrdinalIgnoreCase)
             .Select(candidate => candidate.Member)
             .ToList();
-        if (candidates.Count == 0)
+        if (nearbyCandidates.Count == 0)
         {
             this.Warn("commands.no_followers");
+            return;
+        }
+
+        // Tool validation belongs to the read-only preparation phase. An
+        // ineligible named worker must not lose its current order, and an
+        // ineligible group member must not consume a stand which a properly
+        // equipped companion could use.
+        List<SquadMemberState> candidates = nearbyCandidates
+            .Where(member => this.HasUsableCompanionToolForTask(member, kind))
+            .ToList();
+        if (candidates.Count == 0)
+        {
+            this.WarnForPlayer(ownerId, this.GetRequiredEquipmentWarningKey(kind, nearbyCandidates));
             return;
         }
 

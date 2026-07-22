@@ -19,7 +19,7 @@ de linhas em um único arquivo.
 | `ModEntry.Tasks.cs` | Comandos, short-task queue e ações locais. |
 | `ModEntry.Tasks.Planning.cs` | Seleção, previews, diretivas e reservas de trabalho. |
 | `ModEntry.Tasks.Execution.cs` | Revalidação, pathing e commit das tarefas pendentes. |
-| `ModEntry.Fishing.cs` | Depósito/uso de vara, contexto de água, planejamento de margem, sessão, captura e visual de pesca. |
+| `ModEntry.Fishing.cs` | Uso da vara equipada, contexto de água, planejamento de margem, sessão, captura e visual de pesca. |
 | `ModEntry.TaskDrops.cs` | Vínculo transitório entre árvore em queda, companion e lote de drops. |
 | `CompanionTaskDropPatches.cs` | Prefix/postfix estreito no tick final da árvore rastreada. |
 | `CompanionCareTasks.cs` | Harvest e cuidado de animais. |
@@ -28,8 +28,11 @@ de linhas em um único arquivo.
 | `ModEntry.ContextCommands.cs` | Classificação de recursos e atribuição contextual individual/em grupo. |
 | `ModEntry.GroundCommands.cs` | Validação de chão vazio e ordem transitória de deslocar e esperar. |
 | `ModEntry.WorkAreas.cs` | Ordens circulares persistentes de trabalho, preview, especialidade e conclusão. |
+| `ModEntry.Routines.cs` | Edição CAS, executor horário, presets de área, conclusão e modo de agenda original. |
 | `ModEntry.WorkAnimations.cs` | Movimento visual de ferramenta/mão e feedback cosmético de sucesso/falha. |
 | `ModEntry.InventoryProgressionHud.cs` | Inventários, XP, loot e avisos. |
+| `ModEntry.Equipment.cs` | Quatro slots owner/NPC, migração de ferramentas e troca CAS/atômica pela toolbar. |
+| `ModEntry.ChestLogistics.cs` | UI de baú-destino, GUID, resolução entre mapas/interiores e depósito transacional. |
 | `ModEntry.Hats.cs` | Troca, persistência materializada e desenho dos chapéus cosméticos. |
 | `ModEntry.Communication.cs` | Fila priorizada, cooldown coletivo, histórico anti-repetição e expressões de pets. |
 | `ModEntry.DialogueWorld.cs` | Seleção de perfis/condições de diálogo, ambiente e controle de agenda. |
@@ -38,6 +41,9 @@ de linhas em um único arquivo.
 | `Core/CommandReplayGuard.cs` | Janela limitada de idempotência por jogador. |
 | `Core/CompanionActionWheelHitTest.cs` | Hit-test puro de 1–6 setores, limites e separadores da roda. |
 | `Core/CompanionWorkAreaPolicy.cs` | Geometria circular, raio 3–20, especialidades e validação do estado salvo. |
+| `Core/CompanionProfilePolicy.cs` | Criação, migração e vínculo do perfil permanente de progressão por NPC. |
+| `Core/CompanionEquipmentPolicy.cs` | Chave normalizada owner/NPC e limites de upgrade/água do regador. |
+| `Core/CompanionRoutinePolicy.cs` | Grade 06–25, codec CAS, blocos contíguos, idempotência e presets normalizados. |
 | `Core/CompanionDialoguePolicy.cs` | Contrato puro que separa fala de NPC e expressão silenciosa de pet. |
 | `Core/CompanionDialogueSelectionPolicy.cs` | Seleção ponderada de falas elegíveis sem repetir o histórico recente. |
 | `Core/CompanionDialogueScheduler.cs` | Fila limitada por owner, deduplicação, prioridade, TTL e cooldown coletivo. |
@@ -51,28 +57,63 @@ de linhas em um único arquivo.
 | `Core/GroundCommandPolicy.cs` | Regras puras de contexto e membros para comandos de chão vazio. |
 | `Core/CompanionSkillTreePolicy.cs` | Estado puro compartilhado entre a árvore de habilidades e a validação autoritativa. |
 | `Core/CompanionItemRoutingPolicy.cs` | Ordem pura dos destinos de item: companion, fallback configurado e mundo. |
+| `Core/CompanionChestRoutingPolicy.cs` | Precedência individual/default, validade de GUID e rejeição de identidade ambígua. |
 | `Core/SavedItemStackIdentity.cs` | Fingerprint determinístico de pilhas serializadas. |
 | `Core/CompanionStateCopy.cs` | Cópias profundas para saves e snapshots imutáveis. |
+| `CompanionOperationsModels.cs` | Perfis operacionais owner/NPC para ferramentas, rotina e logística individual. |
 | `CompanionQuickHud.cs` | HUD de consulta e atalhos rápidos. |
 | `CompanionActionWheel.cs` | Layout radial, páginas, foco espacial, hover e desenho das ações contextuais. |
 | `CompanionPanelMenu*.cs` | Shell/input/layout, conteúdo das abas e helpers de desenho do menu completo. |
 
 ## Estado persistente e estado de runtime
 
-`SavedModState`, `SquadMemberState`, `NpcCosmeticState` e `SavedItemStack` formam o contrato de
-save. A ordem de área fixa e as últimas chaves de diálogo apresentadas fazem
-parte de `SquadMemberState`. Filas de trabalho, fila de comunicação, animações,
+`SavedModState`, `SquadMemberState`, `CompanionProfileState`,
+`CompanionOperationalProfileState`, `NpcCosmeticState` e `SavedItemStack`
+formam o contrato de save. O estado tem três escopos deliberadamente distintos:
+
+- `CompanionProfileState`, indexado somente pelo nome interno do NPC, guarda XP,
+  nível, pontos, skills e loot recente mesmo fora da equipe;
+- `SquadMemberState` guarda apenas a associação ativa: owner, cargo, modo,
+  posição/diretiva e área de trabalho;
+- `CompanionOperationalProfileState`, indexado por owner + NPC, guarda as quatro
+  ferramentas, a rotina e o override individual de baú.
+
+Dispensar remove somente `SquadMemberState`: o perfil permanente continua e é
+reatribuído ao próximo recrutamento, enquanto cargo/ownership nunca são
+recriados a partir dele. A ordem de área fixa e as últimas chaves de diálogo
+apresentadas fazem parte de `SquadMemberState`. Filas de trabalho, fila de
+comunicação, animações,
 controllers, trilhas, caches de reachability, targets de recall, previews e
 notificações são transitórios e nunca devem ser tratados como uma fonte
 persistente de verdade. `PendingNpcRestores` é a exceção intencional: ele guarda
 apenas os dados mínimos necessários para devolver uma agenda vanilla depois de
 um dismiss confirmado durante evento/festival.
 
-A vara entregue fica como `SavedItemStack` comum em
-`SquadMemberState.Inventory` e, portanto, persiste com o restante dos itens do
-companion. A ordem de pesca, a margem/boia escolhidas, a reserva, o controller e
-o horário da próxima captura pertencem apenas a `PendingCompanionTask`: salvar
-ou recarregar nunca serializa uma sessão de pesca pela metade.
+As quatro ferramentas ficam em slots de `CompanionEquipmentState`, fora de
+`SquadMemberState.Inventory`. Machado, picareta, regador e vara nunca passam por
+cargo, retirar tudo ou roteamento de baú. A ordem de pesca, a margem/boia
+escolhidas, a reserva, o controller e o horário da próxima captura pertencem
+apenas a `PendingCompanionTask`: salvar ou recarregar nunca serializa uma sessão
+de pesca pela metade.
+
+Cada troca de slot e cada consumo de água também grava um checkpoint completo
+dos equipamentos daquele owner em `Farmer.modData`. Esse checkpoint participa
+do mesmo save vanilla que a toolbar e prevalece no próximo load quando o payload
+separado do mod ficou para trás, mantendo os dois lados da transferência no
+mesmo commit lógico. Ferramentas de schema antigo cujo provider está ausente
+recebem uma marca interna owner/NPC no recovery; quando voltam a materializar,
+são devolvidas somente ao inventário daquele owner e a marca não chega ao item.
+Como o checkpoint é completo, um payload schema 13 sem key correspondente usa
+um loadout vazio para aquele farmer; saves schema 12 ou anteriores ainda passam
+primeiro pela migração de ferramentas legadas.
+
+Separadamente, `CargoJournal` captura o cargo de todos os membros ativos, o
+inventário compartilhado e o overflow bruto no `modData` do host imediatamente
+antes de cada save. Essa cópia é a autoridade de ownership do commit vanilla e
+é aplicada ao DTO bruto antes de migração e normalização. Entradas cujo member
+ainda não existe no payload anterior são desviadas para recovery. Assim, a
+mutação de um baú/farmer/mundo e a remoção ou remainder das lojas do mod não
+divergem quando existe um checkpoint válido do mesmo commit vanilla.
 
 `NpcCosmeticState` fica no nível superior do save, indexado pelo nome interno
 do NPC. O slot de chapéu aparece na aba de inventário, mas não integra
@@ -87,6 +128,38 @@ textura e converte esse delta para o zoom/escala do mundo. Pixels isolados de
 cabelo não mascaram o movimento do restante da cabeça. O cache por
 textura/frame acompanha o bob real de villagers, crianças e NPCs customizados
 sem inventar movimento para sprites estáticos.
+
+Ferramentas, rotina e override individual de baú ficam em
+`CompanionOperationalProfileState`, indexado por owner e nome interno do NPC;
+o perfil continua existindo após dismiss, inclusive órfão, e nunca é herdado
+por outro farmer que recrute o mesmo NPC. O default de baú fica em
+`CompanionOwnerLogisticsState`. A referência persistida
+guarda mapa/tile apenas como pista rápida e um GUID como identidade. O resolver
+exige uma única ocorrência desse GUID entre locations e interiores; ausência ou
+duplicidade mantém o item no fluxo de fallback.
+
+A rotina normaliza exatamente vinte células, de 06:00 a 25:00. O executor usa
+o início do bloco contíguo, o dia e a revisão como chave persistida: Follow,
+Wait e agenda original são aplicados uma vez; trabalho concluído também grava a
+conclusão, impedindo reativação no mesmo bloco após tick ou reload. Uma edição
+da grade ativa o draft; o commit zera a execução, incrementa a revisão e
+preserva os presets que pertencem ao host. Enquanto estiver ativa, a rotina
+precede a autonomia configurada, embora uma diretiva manual explícita em
+andamento ainda possa assumir o membro até terminar ou o próximo bloco começar.
+Rotina sem repetição guarda o dia de ativação e é
+desabilitada no próximo `DayStarted`.
+
+Cada ordem manual de área atualiza somente o preset da sua especialidade. Ao
+ativar um bloco de trabalho, o host revalida location, alvo, modo/toggle e tile
+seguro antes de criar uma ordem `routine-*`; o raio materializado nunca supera
+o máximo configurado no host, mesmo se o preset for mais antigo. Preset ausente mantém o bloco em
+retry. A primeira tentativa reivindica dia/bloco/revisão, permitindo que um
+override explícito termine sem ser apagado pelo refresh; área exaurida aplica
+Follow, Wait ou agenda original. Quando o override acaba, o refresh compara o
+modo durável e restaura o estado passivo/conclusão somente se ele divergir.
+`OriginalRoutine` mantém o member recrutado e os dados
+owner-scoped, mas o exclui de `CompanionBehaviorPatches` e dos locks periódicos
+até outro bloco readquirir o controle.
 
 `MovingToWait` também usa a fila transitória: a ordem reserva o tile, desloca o
 NPC e só então grava `Mode = Waiting` e a posição realmente alcançada. Salvar no
@@ -123,8 +196,9 @@ Ao carregar um save, o mod:
 6. restaura apenas posições explicitamente salvas para `Waiting`/disconnect;
 7. readquire o controle de agenda dos companions disponíveis.
 
-O schema de save do ramo atual é `10`. `SavedItemStack` preserva `modData`,
-ID qualificado, quantidade, qualidade, cor e parent preservado. Saves com schema
+O schema de save do ramo atual é `13`. `SavedItemStack` preserva `modData`,
+ID qualificado, quantidade, qualidade, cor, parent preservado e, quando é
+ferramenta, upgrade e água restante do regador. Saves com schema
 mais novo ou dados ambíguos não são carregados nem sobrescritos; o mod entra em
 modo inerte nessa sessão para não alterar mundo/itens sem estado confiável. O
 schema de config é `8`.
@@ -146,18 +220,24 @@ chapéu anterior; uma troca substitui diretamente esse slot pelo chapéu antigo.
 Assim, até inventário cheio mantém a operação atômica, sem duplicação ou perda,
 e pedidos atrasados não alteram um cosmético mais novo.
 
-Entregar vara também é um comando autoritativo separado. O host revalida owner,
-índice, fingerprint, tipo `FishingRod`, pilha unitária, inventário disponível e
-ausência de qualquer attachment ou dado de encantamento antes de remover o item
-do farmer e acrescentar seu
-clone serializado ao companion. Nenhum outro item ganha uma rota genérica de
-depósito por esse fluxo.
+`SetCompanionEquipment` também é autoritativo. O host revalida owner, índice,
+fingerprint da célula selecionada, fingerprint do slot anterior, tipo exato,
+pilha unitária e estado serializável sem attachment/encantamento. A ferramenta
+anterior substitui diretamente a célula selecionada e a nova vai ao perfil
+operacional; célula vazia faz o caminho inverso. Nenhuma delas passa por cargo
+ou ganha uma rota genérica de depósito.
 
 `SetWorkArea` também é autoritativo: o host deriva o raio máximo da própria
 configuração e revalida owner, mapa, centro seguro, especialidade, modos
 habilitados e membros elegíveis antes de persistir a ordem. Fala, emotes e
 animações de trabalho são mensagens cosméticas do host para os clientes;
 recebê-las nunca cria tarefa, altera o mundo ou muda o save.
+
+`SetRoutine` envia a configuração inteira e o SHA-256 do estado/revisão que o
+cliente leu. O host compara antes do commit, decodifica apenas grade/toggles/
+conclusão, preserva presets e execução operacionais, e rejeita uma edição stale.
+Assim duas telas nunca intercalam células nem sobrescrevem silenciosamente uma
+rotina mais nova.
 
 Snapshots são preparados fora do estado visível: todas as entradas são
 validadas, clonadas, normalizadas e os itens são materializados antes do commit.
@@ -176,8 +256,9 @@ As regras de simulação do host são replicadas separadamente das preferências
 locais de apresentação. Harvest de crop para owner remoto permanece desativado:
 a API vanilla usa o jogador local implícito e creditaria o farmer errado.
 
-Itens materializados pelo mod usam uma única rota autoritativa: inventário do
-companion, inventário compartilhado quando habilitado (ou owner quando não), e
+Itens materializados pelo mod usam uma única rota autoritativa: baú-destino
+efetivo, inventário do companion, inventário compartilhado quando habilitado
+(ou owner quando não), e
 por fim drop no mundo. Lumber e Mining continuam delegando a mutação à API
 vanilla. Mining fotografa as referências de `Debris` antes da chamada síncrona;
 uma árvore que entra em queda fica rastreada por identidade até o `tickUpdate`
@@ -216,8 +297,8 @@ em expressão sem permitir texto.
 - Uma área fixa contém apenas targets cuja distância euclidiana ao centro cabe
   no círculo inclusivo de raio 3–20. O stand adjacente pode usar padding de um
   tile, mas o recurso nunca pode ficar fora da área.
-- Madeira aceita somente Lumbering, Mineração somente Mining e Limpar área
-  aceita ambos. Alvo bloqueado ou reservado pausa o planejamento; somente a
+- Madeira aceita somente Lumbering, Mineração somente Mining, Regar somente
+  Watering e Limpar área aceita madeira e mineração. Alvo bloqueado ou reservado pausa o planejamento; somente a
   ausência real de recursos compatíveis conclui a ordem e deixa o NPC Waiting.
 - A área permanece ancorada ao mapa/centro mesmo quando o owner troca de mapa;
   o companion não volta à formação enquanto a ordem estiver ativa.
@@ -267,11 +348,11 @@ em expressão sem permitir texto.
   para um tile do componente alcançável do owner só é permitido por Recall
   explícito ou na transferência necessária entre mapas.
 - Itens nunca são apagados só porque o content pack que os criou está ausente.
-- Um resultado de tarefa materializado tenta primeiro o inventário do companion;
-  qualquer fallback recebe somente o remainder ainda não commitado.
-- A única entrada de ferramenta no inventário do companion é o depósito
-  explícito de uma vara unitária sem attachment ou encantamento; itens genéricos continuam
-  sem depósito player -> companion.
+- Um resultado de tarefa materializado tenta baú-destino, cargo, squad/owner e
+  mundo nessa ordem; cada destino recebe somente o remainder ainda não commitado.
+- Ferramentas entram apenas nos quatro slots operacionais por troca direta com
+  a célula selecionada da toolbar; nenhuma ferramenta ou item genérico pode ser
+  depositado no cargo do companion.
 - Transferências de inventário são commitadas por pilha; se conteúdo customizado
   lançar após mutação parcial, a fonte é decrementada antes de qualquer fallback.
 - Um NPC nunca pode existir simultaneamente como member ativo e restore de agenda

@@ -32,6 +32,20 @@ este roteiro antes de publicar uma nova versão.
   não podem reaparecer como runtime antigo.
 - Atualizar um save schema 9 para 10 e confirmar que a lista cosmética nasce
   vazia sem alterar companions, áreas, itens ou histórico já persistidos.
+- Em um save schema 10, subir XP, comprar skills e registrar loot recente;
+  atualizar para schema 13, dispensar, salvar/recarregar e recrutar o mesmo NPC.
+  Nível, XP, pontos, skills e histórico devem voltar, mas owner, cargo, modo e
+  área antiga não podem ser herdados pelo novo membro.
+- Dispensar um NPC, recrutá-lo com outro farmer e depois voltar ao primeiro.
+  A progressão permanente deve ser a mesma para o NPC, enquanto ferramentas,
+  rotina e baú continuam isolados por owner/NPC.
+- Atualizar um save schema 12 para 13 e confirmar que perfis operacionais e
+  logística nascem sem alterar perfil permanente, cargo, áreas ou owner. Uma
+  vara antiga no cargo deve migrar para o slot Fishing Rod; duplicatas devem ir
+  para recovery/overflow, nunca permanecer misturadas ao loot.
+- Repetir a migração com o content pack de uma ferramenta legado ausente e
+  restaurá-lo depois: a ferramenta deve permanecer em recovery e voltar apenas
+  ao inventário do owner original, nunca ao squad ou a outro farmer.
 - Salvar no meio de uma área ativa, recarregar e confirmar que o NPC volta ao
   mapa/centro salvo e replaneja apenas recursos ainda existentes. Um payload de
   área inválido deve ser limpo sem apagar o companion ou seu inventário.
@@ -89,8 +103,9 @@ este roteiro antes de publicar uma nova versão.
 - Alternar Wood/Mining/Clear Area no painel e no HUD enquanto o NPC trabalha.
   Preview, cancelamento, Follow/Wait e troca de mapa não podem ressuscitar uma
   tarefa antiga ou criar path no frame do clique.
-- Com inventário individual vazio, coletar forage e destruir árvore/pedra com um
-  companion. Os itens coletáveis devem aparecer no inventário daquele NPC; debris
+- Sem baú atribuído e com inventário individual vazio, coletar forage e destruir
+  árvore/pedra com um companion. Os itens coletáveis devem aparecer no cargo
+  daquele NPC; debris
   antigo e fragmentos cosméticos devem continuar no chão. Conferir separadamente
   os drops do tronco ao terminar a animação de queda e os drops do toco; repetir
   com mogno, mushroom/mystic tree e `ChopItems` customizados. Com o inventário
@@ -99,17 +114,136 @@ este roteiro antes de publicar uma nova versão.
   também estiver cheio, sem duplicação ou perda. Arqueologia e itens essenciais
   devem conservar a coleta/side effects vanilla.
 
+## Rotina por horário
+
+- Abrir `F9 > Rotina` em viewport normal/baixa, UI scale 100%/150% e controle.
+  Confirmar cinco abas, vinte células 06h–01h, oito atividades, toggles de
+  ativação/repetição, conclusão, atalho 06–18 e salvamento alcançáveis.
+- Partindo de `Rotina inativa`, pintar uma célula e repetir com `Turno 06–18`.
+  Cada edição deve mudar o draft para `Rotina ativa`; salvar e fechar o painel
+  deve aplicar imediatamente o bloco da hora atual.
+- Marcar manualmente uma área de Water, Wood, Mining e Clear para o mesmo NPC;
+  cada especialidade deve manter seu próprio preset. Trocar de mapa e chegar ao
+  bloco correspondente deve levar o NPC ao círculo salvo sem mover o owner.
+- Agendar trabalho sem preset, com área vazia, task toggle desligado e modo da
+  especialidade Disabled. Sem preset deve aguardar; marcar a área ainda no mesmo
+  bloco deve iniciá-lo. Área sem targets aplica a conclusão uma vez; toggle/modo
+  desligado deve pausar e identificar `tasks disabled`, não ferramenta ausente,
+  e retomar quando reativado, sem loop de warp.
+- Salvar um preset com raio 20, reduzir `CompanionWorkRadius` para 3 e deixar o
+  próximo bloco/reload recriá-lo. A área ativa deve usar raio 3; aumentar a
+  configuração não deve fazer uma área já ativa crescer sozinha.
+- Enquanto um bloco sem preset aguarda, iniciar quick work, tarefa contextual e
+  uma área manual de outra especialidade. O refresh horário não pode apagá-los;
+  ao terminar o override, a rotina deve voltar ao retry, ou assumir no próximo
+  bloco. Uma área manual da mesma especialidade deve satisfazer o bloco uma vez.
+- Criar um bloco contínuo de trabalho por várias horas, concluí-lo cedo, salvar
+  e recarregar ainda dentro do bloco. A área não pode ser recriada a cada dez
+  minutos nem no reload; o próximo bloco distinto deve executar normalmente.
+- Testar conclusão Follow, Wait e Rotina original. No último caso, confirmar
+  agenda/rota/comportamento vanilla e ausência de disputa com o controller do
+  mod; no bloco seguinte, Follow/Wait/trabalho deve readquirir controle limpo.
+- Durante um bloco Follow e após conclusão Follow, deixar alvos disponíveis para
+  todos os modos autônomos configurados. O NPC deve continuar seguindo; uma
+  diretiva manual explícita ainda pode substituí-lo até terminar ou a próxima
+  troca de bloco começar.
+- Desativar uma rotina ativa enquanto ela trabalha ou está em Rotina original:
+  a área/agenda anterior deve terminar pelo comportamento de conclusão, sem NPC
+  preso. Com Repetir diariamente desligado, dormir e confirmar que a rotina é
+  desabilitada no próximo dia.
+- No host e farmhand, abrir o mesmo NPC, editar grades divergentes e salvar em
+  ordem invertida. Só o primeiro token CAS deve ser aceito; o segundo recebe
+  conflito e não pode apagar presets, revisão ou conclusão do host.
+- Agendar Depositar com baú vazio, parcial, cheio, bloqueado e ausente. O bloco
+  deve repetir enquanto houver cargo depositável e concluir sem drop quando
+  tudo couber. Slots de ferramenta são ignorados; ferramenta legada deve ter
+  sido migrada para equipamento/recovery antes e não pode prender o bloco.
+
+## Baús de destino
+
+- Abrir um baú normal colocado no mundo e confirmar o painel lateral com
+  Nenhum, Todos e cada companion do jogador. Quando não houver 236 px livres à
+  esquerda ou à direita do `ItemGrabMenu` (incluindo viewport 426x240), confirmar
+  o overlay compacto com no máximo dois companions por página e Ant./Próx.
+  limitados corretamente na primeira/última página. Testar 1/3/12 companions,
+  viewport baixa e UI scale 150%: painel e botões devem ficar dentro da viewport;
+  cliques em botões, navegação, indicador ou área vazia do overlay nunca podem
+  fechar/interagir com os slots vanilla abaixo. O painel é mouse-only nesta
+  versão e não deve roubar D-pad/A do menu vanilla.
+- Marcar Todos depois que alguns companions apontam para outros baús: os
+  overrides antigos devem ser limpos e todos devem usar o novo default. Depois,
+  marcar um companion em outro baú e confirmar que somente esse override novo
+  precede o default; Nenhum deve remover todas as referências ao baú aberto.
+- Confirmar que geladeira, presente, Junimo/global, special chest e baú que não
+  esteja colocado em `location.Objects` não exibem nem aceitam a atribuição.
+- Atribuir um baú, movê-lo para outro tile e depois para um interior de celeiro/
+  galpão. Loot e depósito da rotina devem reencontrá-lo pelo GUID e atualizar a
+  localização conhecida. Remover o `modData`, apagar o baú ou duplicar o mesmo
+  GUID em dois baús deve falhar fechado e continuar pelo fallback atual, sem
+  escolher arbitrariamente um deles.
+- Repetir como farmhand e atrasar/reordenar o comando após trocar de mapa,
+  mover/substituir o baú ou trocar ownership do companion. O host deve rejeitar
+  owner/mapa/tile/GUID obsoleto sem modificar a logística de outro jogador.
+- Em um baú remoto ainda sem GUID, substituir o objeto entre a primeira fase e
+  o ACK. A fase 1 só pode criar/confirmar identidade; a atribuição deve esperar
+  o GUID aparecer no mesmo objeto ainda aberto. ACK inválido/erro deve cancelar
+  a pendência sem gerar um segundo timeout ou vincular o substituto.
+- Gerar loot com o baú vazio, quase cheio, cheio e bloqueado por outro menu.
+  O baú deve ser tentado antes do inventário do NPC; qualquer remainder deve
+  seguir companion, squad/player e mundo exatamente uma vez. Forçar exceção de
+  item customizado após merge parcial e confirmar que a quantidade total antes/
+  depois é idêntica, sem duplicação nem perda.
+- Encher o cargo do companion e executar o bloco de rotina Depositar. Itens que
+  couberem devem sair do cargo; remainder, item customizado indisponível e
+  qualquer item sem destino devem permanecer para novo retry. Nenhum dos quatro
+  slots de ferramenta pode entrar no baú, no cargo ou em Retirar tudo.
+- Depois de um depósito parcial e completo, forçar falha de `WriteSaveData` e
+  recarregar. O CargoJournal salvo com o baú vanilla deve manter exatamente o
+  remainder no companion, sem ressuscitar no cargo o que já entrou no baú.
+- Repetir o corte de save dispensando um companion com cargo (destino squad),
+  retirando um item do squad para o farmer e recrutando/coletando com um NPC que
+  não existe no payload anterior. Cargo, squad e recovery devem somar a mesma
+  quantidade; entrada sem member deve ir a recovery em vez de desaparecer.
+
+## Equipamento operacional
+
+- Em `F9 > Inventário`, confirmar os quatro slots rotulados: Machado, Picareta,
+  Regador e Vara de pesca. Com a ferramenta correspondente selecionada na barra,
+  clicar equipa; outra correspondente troca diretamente e devolve a anterior à
+  mesma célula; uma célula vazia retira. Tipo incompatível, encantamento e vara
+  com isca/apetrecho devem falhar sem mover nenhum item.
+- Equipar upgrades diferentes de machado/picareta e confirmar que o efeito
+  base usa exatamente o nível equipado, não a ferramenta atual do farmer; o
+  bônus explícito de skill do companion é aplicado depois desse nível base.
+  Sem o slot correto, tarefa manual, diretiva, autonomia e rotina devem parar
+  com motivo legível e sem criar ferramenta virtual.
+- Equipar um regador parcialmente cheio, regar até zero e confirmar a redução
+  persistente a cada tile. Vazio deve interromper novas tarefas; retirar para
+  uma célula vazia, encher em água e reequipar deve retomar com o valor correto.
+- Dispensar/recrutar com o mesmo owner e confirmar os quatro slots preservados.
+  Recrutar o mesmo NPC com outro farmer deve mostrar slots independentes; voltar
+  ao primeiro owner deve restaurar somente o perfil dele.
+- Repetir equipar/trocar/retirar como farmhand e atrasar dois pedidos. O host
+  deve validar owner, índice, fingerprint da célula e fingerprint do slot
+  anterior, recusando estado obsoleto sem perda ou duplicação.
+- Depois de uma troca e depois de consumir água, forçar falha em `WriteSaveData`
+  sem impedir o save vanilla. Ao recarregar, toolbar e quatro slots devem ser
+  reconciliados pelo checkpoint de `Farmer.modData`, sem perda ou duplicação.
+- Simular também o primeiro commit schema 13 sem key de EquipmentJournal: a
+  toolbar vanilla é a autoridade e todos os slots daquele owner devem carregar
+  vazios, em vez de duplicar uma ferramenta presente só no payload adiantado.
+
 ## Pesca dirigida
 
 - Selecionar uma vara de pesca sem encantamento, isca nem apetrecho na barra, abrir
-  `F9 > Inventário` no perfil de um NPC e usar Entregar vara selecionada. A vara
-  deve sair do slot exato do player e ocupar um slot persistente do inventário
-  desse companion. Item que não seja vara, vara encantada, vara com qualquer
+  `F9 > Inventário` no perfil de um NPC e clicar no slot Vara de pesca. A vara
+  deve sair da célula exata do player e ocupar o slot operacional persistente
+  desse owner/NPC. Item que não seja vara, vara encantada, vara com qualquer
   acessório — inclusive o segundo apetrecho da Advanced Iridium Rod — ou
-  inventário do NPC cheio deve ser recusado sem consumir, duplicar ou alterar o
-  item; o depósito não pode virar uma porta para itens genéricos.
+  estado customizado não serializável deve ser recusado sem consumir, duplicar
+  ou alterar o item; o slot não pode virar uma porta para itens genéricos.
 - Com companions locais com e sem vara, pressionar `X` sobre água. A roda deve
-  oferecer Mandar todos pescar e os nomes somente dos companions que carregam uma
+  oferecer Mandar todos pescar e os nomes somente dos companions que equiparam uma
   vara; sem nenhum elegível, deve avisar que falta vara, sem transformar água em
   destino de espera. Confirmar também paginação e seleção por controle.
 - Repetir em tiles com `NoFishing`, camada Buildings sobre água e em uma location
@@ -126,8 +260,9 @@ este roteiro antes de publicar uma nova versão.
   Se houver menos margens seguras do que trabalhadores, o envio deve ser parcial
   e nenhuma reserva pode vazar após falha ou cancelamento.
 - Deixar a sessão rodar e conferir que somente peixes regulares não lendários
-  entram primeiro no inventário do NPC, cada peixe concede 8 XP pela progressão
-  comum e a pesca continua entre capturas. Com os destinos de overflow cheios,
+  entram primeiro no baú atribuído ou, sem ele, no cargo do NPC; cada peixe
+  concede 8 XP pela progressão comum e a pesca continua entre capturas. Com os
+  destinos de overflow cheios,
   o peixe deve cair de forma segura no mundo, sem perda ou duplicação.
 - Manter o NPC pescando até 26:00/fim do dia e confirmar encerramento e liberação
   de rota/reserva. Repetir enviando outro comando, como Parar, Seguir, Trabalhar
@@ -135,7 +270,9 @@ este roteiro antes de publicar uma nova versão.
   imediatamente e o novo comando prevalecer. Retirar a vara durante a sessão
   também deve cancelar com aviso seguro.
 - Salvar/recarregar durante a pesca e avançar o dia. A vara e os peixes já
-  guardados devem persistir no inventário, mas caminho, margem reservada, boia,
+  guardados devem persistir respectivamente no slot e no destino em que foram
+  roteados, mas caminho,
+  margem reservada, boia,
   relógio da próxima captura e sessão incompleta não podem reaparecer como
   runtime antigo.
 - Na quarta linha da árvore, aprender em sequência Pescador paciente, Arremesso
@@ -173,11 +310,21 @@ este roteiro antes de publicar uma nova versão.
 
 ## Áreas de trabalho e animações
 
-- Em chão vazio seguro, abrir `X > Trabalhar`, escolher Madeira, Mineração e
-  Limpar área e, em cada caso, testar Mandar todos e um NPC específico. Não deve
+- Em chão vazio seguro, abrir `X > Trabalhar`, escolher Madeira, Mineração, Regar
+  e Limpar área e, em cada caso, testar Mandar todos e um NPC específico. Não deve
   existir uma etapa para escolher o raio. Madeira não pode escolher pedras,
-  Mineração não pode escolher árvores e Limpar deve processar ambos; modo
+  Mineração não pode escolher árvores, Regar deve escolher apenas terra seca e
+  Limpar deve processar madeira e mineração; modo
   correspondente desativado deve produzir feedback sem gravar uma ordem impossível.
+- Para Regar, preparar terra seca/molhada dentro e fora da borda, deixar um
+  sprinkler molhar o alvo durante o caminho e confirmar replanejamento seguro.
+  Deixar também três tiles secos alcançáveis e confirmar que o NPC visita três
+  coordenadas distintas, sem voltar ao tile que acabou de regar; depois do
+  terceiro, a área deve concluir sem novos movimentos de rega.
+  Trocar o owner de mapa não pode interromper a área nem consumir stamina ou o
+  regador do farmer; cada tile concluído deve consumir uma unidade somente do
+  regador equipado no perfil do companion. Repetir como farmhand e confirmar a
+  mutação pelo host.
 - Ajustar `CompanionWorkRadius` primeiro para 3 e depois para 20. A roda deve
   pular direto da especialidade para a escolha dos companions e usar exatamente
   esse máximo do host. A marca deve mostrar centro e borda circular, incluir o
@@ -277,8 +424,10 @@ este roteiro antes de publicar uma nova versão.
 - Na borda do alcance, deixar o recurso a quatro tiles do farmer e manter livre
   somente o stand cardinal a três tiles: `X` deve abrir e a ordem deve concluir.
   A cinco tiles, sem stand adjacente dentro do raio, o recurso deve ser rejeitado.
-- Mandar um companion ocupado/esperando e confirmar substituição da ordem,
-  retomada do follow e uso de ferramenta básica sem exigir Axe/Pickaxe equipada.
+- Mandar um companion ocupado/esperando e confirmar substituição da ordem e
+  retomada do follow. Madeira/mineração devem usar apenas o machado/picareta do
+  slot correspondente; sem a ferramenta, falhar com motivo legível e sem criar
+  uma ferramenta virtual.
 - Desligar tarefas globais, usar Mandar NPC/Mandar todos e confirmar que somente
   a ordem pontual executa; o toggle deve continuar desligado e nenhuma diretiva
   automática deve retomar depois.
@@ -363,11 +512,11 @@ este roteiro antes de publicar uma nova versão.
   com raízes/tier 2/tier 3 aprendidos para distinguir Aprendida, Disponível,
   Bloqueada e Pontos insuficientes.
 - Conferir especificamente a captura de 1180x780 em inglês e PT-BR: título,
-  roster em duas linhas, nome/status do membro, quatro abas, nomes dos ramos,
+  roster em duas linhas, nome/status do membro, cinco abas, nomes dos ramos,
   badge de estado e todas as linhas do inspetor devem permanecer dentro de seus
   retângulos. Sombras não podem produzir texto duplicado ou sangrar nas bordas.
 - Em 512x288 e 426x240, as abas devem trocar para seus rótulos localizados
-  curtos (`Geral`, `Tarefas`, `Hab.`, `Itens` em PT-BR), sem colidir com badges
+  curtos (`Geral`, `Tarefas`, `Hab.`, `Itens`, `Plano` em PT-BR), sem colidir com badges
   ou com o sublinhado da aba ativa.
 - Desativar progressão e confirmar que skills já aprendidas continuam legíveis,
   as restantes ficam Desativadas e nenhum clique gasta ponto. Reativar e aprender
@@ -403,7 +552,7 @@ este roteiro antes de publicar uma nova versão.
   no payload, e revalidar owner, mapa, centro seguro, especialidade, modos e
   membros; replay, mapa stale ou companion de outro owner não pode criar área
   nem cancelar o trabalho anterior.
-- Como farmhand, depositar uma vara sem encantamentos ou acessórios e mandar um/todos pescar.
+- Como farmhand, equipar uma vara sem encantamentos ou acessórios no slot Fishing Rod e mandar um/todos pescar.
   O host deve revalidar owner, slot, fingerprint da vara, mapa, corpo de água,
   margem, reserva e presença da vara antes de substituir qualquer ordem. Replay,
   slot ou água stale e companion de outro owner devem falhar sem item, XP,
@@ -441,6 +590,7 @@ este roteiro antes de publicar uma nova versão.
 - Dar duplo clique em toggle/diretiva e numa retirada enquanto outro companion
   muda o estado global; o comando deve ser idempotente e jamais retirar outra
   qualidade/cor/modData da mesma ID.
-- Confirmar que somente a ferramenta e o mapa do owner são usados.
+- Confirmar que cada tarefa usa somente a ferramenta equipada no perfil
+  owner/NPC e que o mapa validado pertence ao owner do comando.
 - Verificar logs de versão diferente e ausência de disputa visível de controller.
 - Confirmar que Harvest remoto informa a limitação e não credita itens/XP ao host.

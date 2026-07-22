@@ -26,8 +26,16 @@ internal static class Program
         new("CompanionWorkAreaPolicy usa geometria circular com borda inclusiva", CompanionWorkAreaPolicyUsesCircularInclusiveGeometry),
         new("CompanionWorkAreaPolicy aplica padding sem encolher a area", CompanionWorkAreaPolicyAppliesNonNegativePadding),
         new("CompanionWorkAreaPolicy limita raios entre tres e vinte", CompanionWorkAreaPolicyNormalizesRadiusBounds),
+        new("Enums de trabalho preservam valores e anexam rega", CompanionWorkEnumsPreserveStableValues),
         new("CompanionWorkAreaPolicy restringe tarefas por especialidade", CompanionWorkAreaPolicyRestrictsTasksBySpecialty),
         new("CompanionWorkAreaPolicy valida estado persistido ativo", CompanionWorkAreaPolicyValidatesPersistedState),
+        new("WateringTargetPolicy rejeita solo ja molhado", WateringTargetPolicyRejectsAlreadyWateredDirt),
+        new("CompanionRoutinePolicy normaliza grade e identifica blocos", CompanionRoutinePolicyNormalizesGridAndFindsBlocks),
+        new("CompanionRoutinePolicy ativa edicoes e reserva a rotina da autonomia", CompanionRoutinePolicyActivatesEditsAndSuppressesAutonomy),
+        new("CompanionRoutinePolicy respeita execucao unica e revisao", CompanionRoutinePolicyTracksExecutionByRevision),
+        new("CompanionRoutinePolicy aplica atalho 06-18 e presets unicos", CompanionRoutinePolicyAppliesShiftAndUniquePresets),
+        new("CompanionRoutinePolicy codifica edicao CAS sem dados operacionais", CompanionRoutinePolicyEncodesCasConfigurationOnly),
+        new("CompanionStateCopy preserva diretiva e area de rega", CompanionStateCopyPreservesWateringWorkState),
         new("FishingWaterBodyPolicy descobre componente e margens estaveis", FishingWaterBodyPolicyDiscoversStableComponentAndShore),
         new("FishingWaterBodyPolicy falha fechado em entrada invalida ou truncada", FishingWaterBodyPolicyFailsClosedForInvalidOrTruncatedDiscovery),
         new("FishingWaterBodyPolicy escolhe bobber cardinal profundo", FishingWaterBodyPolicySelectsDeepCardinalBobber),
@@ -52,6 +60,9 @@ internal static class Program
         new("CompanionItemRoutingPolicy sempre prioriza companion e preserva world drop", CompanionItemRoutingPolicyKeepsRequiredEndpoints),
         new("CompanionItemRoutingPolicy usa squad sem depender do owner", CompanionItemRoutingPolicyUsesSquadWhenEnabled),
         new("CompanionItemRoutingPolicy usa owner somente quando disponivel", CompanionItemRoutingPolicyUsesAvailableOwnerWhenSquadIsDisabled),
+        new("CompanionChestRoutingPolicy prioriza override e exige GUID", CompanionChestRoutingPolicySelectsValidOverride),
+        new("CompanionChestRoutingPolicy nunca trata identidade vazia como wildcard", CompanionChestRoutingPolicyRejectsMissingExpectation),
+        new("CompanionChestRoutingPolicy falha fechado para GUID ambiguo", CompanionChestRoutingPolicyRejectsAmbiguousIdentity),
         new("CommandReplayGuard rejeita replay por jogador", CommandReplayGuardRejectsReplayPerPlayer),
         new("CommandReplayGuard isola jogadores", CommandReplayGuardIsolatesPlayers),
         new("CommandReplayGuard expulsa o comando mais antigo por capacidade", CommandReplayGuardEvictsOldestAtCapacity),
@@ -60,6 +71,14 @@ internal static class Program
         new("SavedItemStackIdentity distingue stack", SavedItemStackIdentityDistinguishesStack),
         new("SavedItemStackIdentity distingue quality", SavedItemStackIdentityDistinguishesQuality),
         new("SavedItemStackIdentity distingue ModData", SavedItemStackIdentityDistinguishesModData),
+        new("CompanionEquipmentPolicy isola owner e ignora caixa do NPC", CompanionEquipmentPolicyScopesKeysByOwnerAndNpc),
+        new("CompanionEquipmentPolicy valida upgrade e capacidade do regador", CompanionEquipmentPolicyValidatesToolBoundaries),
+        new("CompanionEquipmentPolicy filtra especialidades pela ferramenta", CompanionEquipmentPolicyFiltersWorkSpecialtiesByTool),
+        new("SavedItemStack preserva e identifica estado fiel da ferramenta", SavedToolStateIsClonedAndTokenizedFaithfully),
+        new("CompanionOperationsStateCopy clona perfil operacional profundamente", CompanionOperationsStateCopyDeepClonesProfile),
+        new("CompanionProfilePolicy migra progressao sem ownership ou inventario", CompanionProfilePolicyMigratesProgressionOnly),
+        new("CompanionProfilePolicy restaura progressao ao recrutar novamente", CompanionProfilePolicyRestoresProgressionOnRecruit),
+        new("CompanionStateCopy clona perfil permanente profundamente", CompanionStateCopyDeepClonesProfile),
         new("NpcHatRenderPolicy acompanha bob real sem inventar movimento", NpcHatRenderPolicyTracksMeasuredWalkingBob),
         new("CompanionStateCopy clona cosmetico e chapeu profundamente", CompanionStateCopyDeepClonesNpcCosmetic)
     };
@@ -571,11 +590,29 @@ internal static class Program
         Assert.Equal(3, CompanionWorkAreaPolicy.NormalizeRadius(3), "raio minimo");
         Assert.Equal(20, CompanionWorkAreaPolicy.NormalizeRadius(20), "raio maximo");
         Assert.Equal(20, CompanionWorkAreaPolicy.NormalizeRadius(int.MaxValue), "raio acima do maximo");
+        Assert.Equal(3, CompanionWorkAreaPolicy.ClampRadiusToMaximum(20, 3), "preset respeita maximo configurado menor");
+        Assert.Equal(8, CompanionWorkAreaPolicy.ClampRadiusToMaximum(8, 20), "maximo maior preserva raio do preset");
 
         Assert.True(CompanionWorkAreaPolicy.Contains(0, 0, 0, 3, 0), "Contains deve normalizar para tres");
         Assert.False(CompanionWorkAreaPolicy.Contains(0, 0, 0, 4, 0), "limite normalizado inferior");
         Assert.True(CompanionWorkAreaPolicy.Contains(0, 0, 99, 20, 0), "Contains deve normalizar para vinte");
         Assert.False(CompanionWorkAreaPolicy.Contains(0, 0, 99, 21, 0), "limite normalizado superior");
+    }
+
+    private static void CompanionWorkEnumsPreserveStableValues()
+    {
+        Assert.Equal(0, (int)CompanionMode.Following, "modo seguir legado");
+        Assert.Equal(1, (int)CompanionMode.Waiting, "modo esperar legado");
+        Assert.Equal(2, (int)CompanionMode.ParkedForDisconnect, "modo desconectado legado");
+        Assert.Equal(3, (int)CompanionMode.OriginalRoutine, "rotina original anexada");
+        Assert.Equal(0, (int)CompanionDirective.SearchWood, "diretiva madeira legada");
+        Assert.Equal(1, (int)CompanionDirective.SearchMining, "diretiva mineracao legada");
+        Assert.Equal(2, (int)CompanionDirective.ClearArea, "diretiva limpar legada");
+        Assert.Equal(3, (int)CompanionDirective.SearchWatering, "diretiva regar anexada");
+        Assert.Equal(0, (int)CompanionWorkSpecialty.ClearArea, "especialidade limpar legada");
+        Assert.Equal(1, (int)CompanionWorkSpecialty.Wood, "especialidade madeira legada");
+        Assert.Equal(2, (int)CompanionWorkSpecialty.Mining, "especialidade mineracao legada");
+        Assert.Equal(3, (int)CompanionWorkSpecialty.Watering, "especialidade regar anexada");
     }
 
     private static void CompanionWorkAreaPolicyRestrictsTasksBySpecialty()
@@ -584,6 +621,9 @@ internal static class Program
         Assert.False(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Wood, CompanionTaskKind.Mining), "madeira rejeita mineracao");
         Assert.True(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Mining, CompanionTaskKind.Mining), "mineracao permite pedras");
         Assert.False(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Mining, CompanionTaskKind.Lumbering), "mineracao rejeita corte");
+        Assert.True(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Watering, CompanionTaskKind.Watering), "rega permite terra seca");
+        Assert.False(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Watering, CompanionTaskKind.Lumbering), "rega rejeita corte");
+        Assert.False(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.Watering, CompanionTaskKind.Mining), "rega rejeita mineracao");
         Assert.True(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.ClearArea, CompanionTaskKind.Lumbering), "limpar permite corte");
         Assert.True(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.ClearArea, CompanionTaskKind.Mining), "limpar permite mineracao");
         Assert.False(CompanionWorkAreaPolicy.Allows(CompanionWorkSpecialty.ClearArea, CompanionTaskKind.Watering), "area fixa nao inclui rega");
@@ -607,6 +647,9 @@ internal static class Program
         Assert.True(
             CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order-2", "Mine", 80, 120, 20, CompanionWorkSpecialty.Mining),
             "estado valido no limite superior");
+        Assert.True(
+            CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order-water", "Farm", 12, 14, 8, CompanionWorkSpecialty.Watering),
+            "estado persistido aceita area de rega");
 
         Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, " ", "Farm", 1, 1, 8, CompanionWorkSpecialty.ClearArea), "order id vazio");
         Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", " ", 1, 1, 8, CompanionWorkSpecialty.ClearArea), "mapa vazio");
@@ -615,6 +658,350 @@ internal static class Program
         Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", "Farm", 1, 1, 2, CompanionWorkSpecialty.ClearArea), "raio abaixo de tres");
         Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", "Farm", 1, 1, 21, CompanionWorkSpecialty.ClearArea), "raio acima de vinte");
         Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", "Farm", 1, 1, 8, (CompanionWorkSpecialty)999), "especialidade desconhecida");
+    }
+
+    private static void WateringTargetPolicyRejectsAlreadyWateredDirt()
+    {
+        Assert.True(WateringTargetPolicy.IsValid(cropNeedsWatering: true, dirtIsWatered: false), "cultivo seco deve ser alvo");
+        Assert.False(WateringTargetPolicy.IsValid(cropNeedsWatering: true, dirtIsWatered: true), "cultivo ja molhado nao pode repetir");
+        Assert.False(WateringTargetPolicy.IsValid(cropNeedsWatering: false, dirtIsWatered: false), "cultivo que dispensa agua nao deve ser alvo");
+        Assert.False(WateringTargetPolicy.IsValid(cropNeedsWatering: false, dirtIsWatered: true), "solo molhado sem demanda continua invalido");
+    }
+
+    private static void CompanionRoutinePolicyNormalizesGridAndFindsBlocks()
+    {
+        IReadOnlyList<CompanionRoutineHourState> hours = CompanionRoutinePolicy.NormalizeHours(new[]
+        {
+            new CompanionRoutineHourState { Hour = 7, Activity = CompanionRoutineActivity.Water },
+            new CompanionRoutineHourState { Hour = 8, Activity = CompanionRoutineActivity.Water },
+            new CompanionRoutineHourState { Hour = 26, Activity = CompanionRoutineActivity.Deposit },
+            new CompanionRoutineHourState { Hour = 8, Activity = CompanionRoutineActivity.Mine }
+        });
+
+        Assert.Equal(CompanionRoutinePolicy.HourCount, hours.Count, "vinte horas de 06h a 25h");
+        Assert.Equal(CompanionRoutinePolicy.FirstHour, hours[0].Hour, "primeira hora");
+        Assert.Equal(CompanionRoutinePolicy.LastHour, hours[^1].Hour, "ultima hora");
+        Assert.Equal(CompanionRoutineActivity.Follow, hours[0].Activity, "lacuna recebe seguir");
+        Assert.Equal(CompanionRoutineActivity.Water, hours[1].Activity, "atividade valida preservada");
+        Assert.Equal(CompanionRoutineActivity.Mine, hours[2].Activity, "ultimo valor duplicado vence");
+
+        Assert.Equal(7, CompanionRoutinePolicy.GetBlockStartHour(hours, 750), "inicio do bloco de rega");
+        Assert.Equal(8, CompanionRoutinePolicy.GetBlockStartHour(hours, 830), "troca de atividade abre bloco");
+
+        IReadOnlyList<CompanionRoutineHourState> lateHours = CompanionRoutinePolicy.NormalizeHours(new[]
+        {
+            new CompanionRoutineHourState { Hour = 23, Activity = CompanionRoutineActivity.Wait },
+            new CompanionRoutineHourState { Hour = 24, Activity = CompanionRoutineActivity.Wait },
+            new CompanionRoutineHourState { Hour = 25, Activity = CompanionRoutineActivity.Wait }
+        });
+        Assert.Equal(CompanionRoutineActivity.Follow, CompanionRoutinePolicy.GetActivity(lateHours, 600), "inicio das 06h");
+        Assert.Equal(CompanionRoutineActivity.Follow, CompanionRoutinePolicy.GetActivity(lateHours, 659), "fim das 06h");
+        Assert.Equal(CompanionRoutineActivity.Follow, CompanionRoutinePolicy.GetActivity(lateHours, 700), "inicio das 07h");
+        Assert.Equal(CompanionRoutineActivity.Wait, CompanionRoutinePolicy.GetActivity(lateHours, 2350), "faixa das 23h");
+        Assert.Equal(CompanionRoutineActivity.Wait, CompanionRoutinePolicy.GetActivity(lateHours, 2400), "inicio das 00h");
+        Assert.Equal(CompanionRoutineActivity.Wait, CompanionRoutinePolicy.GetActivity(lateHours, 2450), "faixa das 00h");
+        Assert.Equal(CompanionRoutineActivity.Wait, CompanionRoutinePolicy.GetActivity(lateHours, 2500), "inicio das 01h");
+        Assert.Equal(CompanionRoutineActivity.Wait, CompanionRoutinePolicy.GetActivity(lateHours, 2550), "faixa das 01h");
+        Assert.Equal(CompanionRoutineActivity.Wait, CompanionRoutinePolicy.GetActivity(lateHours, 2600), "relogio apos 01h permanece na ultima faixa");
+        Assert.Equal(23, CompanionRoutinePolicy.GetBlockStartHour(lateHours, 2550), "bloco atravessa 23h, 00h e 01h");
+
+        CompanionRoutineState oneDay = new() { Enabled = true, RepeatDaily = false, ScheduledDayIndex = 42 };
+        Assert.True(CompanionRoutinePolicy.ShouldRun(oneDay, 42), "roda no dia agendado");
+        Assert.False(CompanionRoutinePolicy.ShouldRun(oneDay, 43), "nao repete no dia seguinte");
+        oneDay.RepeatDaily = true;
+        Assert.True(CompanionRoutinePolicy.ShouldRun(oneDay, 43), "rotina diaria ignora dia inicial");
+
+        CompanionRoutineState disabledEdit = new() { Enabled = false };
+        Assert.True(
+            CompanionRoutinePolicy.ShouldApplyCompletionAfterEdit(new CompanionRoutineState { Enabled = true }, disabledEdit),
+            "desativar uma rotina ativa aplica o comportamento de conclusao");
+        Assert.False(
+            CompanionRoutinePolicy.ShouldApplyCompletionAfterEdit(new CompanionRoutineState { Enabled = false }, disabledEdit),
+            "salvar uma rotina ja inativa nao toma controle do NPC");
+    }
+
+    private static void CompanionRoutinePolicyTracksExecutionByRevision()
+    {
+        CompanionRoutineState routine = new()
+        {
+            Enabled = true,
+            Revision = 3,
+            Hours = new List<CompanionRoutineHourState>
+            {
+                new() { Hour = 6, Activity = CompanionRoutineActivity.Water }
+            }
+        };
+        CompanionRoutinePolicy.MarkApplied(routine, dayIndex: 12, blockStartHour: 6);
+        Assert.True(
+            CompanionRoutinePolicy.ShouldRetryAppliedOperationalBlock(
+                routine,
+                dayIndex: 12,
+                blockStartHour: 6,
+                CompanionRoutineActivity.Water,
+                hasExplicitOverride: false,
+                hasActiveRoutineWorkArea: false),
+            "bloco reivindicado sem area continua tentando");
+        Assert.Equal(
+            CompanionRoutinePlanningLane.None,
+            CompanionRoutinePolicy.SelectPlanningLane(routine, dayIndex: 12, hasExplicitDirective: false),
+            "durante o retry a rotina ainda reserva o planejamento");
+        Assert.False(
+            CompanionRoutinePolicy.ShouldRetryAppliedOperationalBlock(
+                routine,
+                dayIndex: 12,
+                blockStartHour: 6,
+                CompanionRoutineActivity.Water,
+                hasExplicitOverride: true,
+                hasActiveRoutineWorkArea: false),
+            "override explicito pausa o retry da rotina");
+        Assert.Equal(
+            CompanionRoutinePlanningLane.ExplicitDirective,
+            CompanionRoutinePolicy.SelectPlanningLane(routine, dayIndex: 12, hasExplicitDirective: true),
+            "override explicito recebe a lane enquanto esta ativo");
+        Assert.True(
+            CompanionRoutinePolicy.ShouldRetryAppliedOperationalBlock(
+                routine,
+                dayIndex: 12,
+                blockStartHour: 6,
+                CompanionRoutineActivity.Water,
+                hasExplicitOverride: false,
+                hasActiveRoutineWorkArea: false),
+            "ao terminar o override a rotina retoma o bloco reivindicado");
+        Assert.False(
+            CompanionRoutinePolicy.ShouldRetryAppliedOperationalBlock(
+                routine,
+                dayIndex: 12,
+                blockStartHour: 6,
+                CompanionRoutineActivity.Water,
+                hasExplicitOverride: false,
+                hasActiveRoutineWorkArea: true),
+            "area da rotina em andamento nao e recriada");
+        Assert.Equal(
+            CompanionRoutinePlanningLane.ExplicitDirective,
+            CompanionRoutinePolicy.SelectPlanningLane(routine, dayIndex: 12, hasExplicitDirective: true),
+            "area operacional ativa continua na lane explicita");
+
+        CompanionRoutinePolicy.MarkCompleted(routine, dayIndex: 12, blockStartHour: 6);
+
+        Assert.True(CompanionRoutinePolicy.IsAppliedBlock(routine, 12, 6), "bloco aplicado na revisao atual");
+        Assert.True(CompanionRoutinePolicy.IsCompletedBlock(routine, 12, 6), "bloco concluido na revisao atual");
+        Assert.False(
+            CompanionRoutinePolicy.ShouldRetryAppliedOperationalBlock(
+                routine,
+                dayIndex: 12,
+                blockStartHour: 6,
+                CompanionRoutineActivity.Water,
+                hasExplicitOverride: false,
+                hasActiveRoutineWorkArea: false),
+            "bloco concluido nunca tenta novamente");
+        Assert.Equal(
+            CompanionRoutinePlanningLane.None,
+            CompanionRoutinePolicy.SelectPlanningLane(routine, dayIndex: 12, hasExplicitDirective: false),
+            "bloco concluido nao libera autonomia generica no restante da hora");
+        Assert.True(
+            CompanionRoutinePolicy.IsActivityModeActive(
+                CompanionRoutineActivity.Follow,
+                CompanionMode.Following),
+            "seguir ja aplicado nao precisa ser repetido a cada refresh");
+        Assert.False(
+            CompanionRoutinePolicy.IsActivityModeActive(
+                CompanionRoutineActivity.Follow,
+                CompanionMode.Waiting),
+            "fim de override em espera exige restaurar o bloco seguir");
+        Assert.True(
+            CompanionRoutinePolicy.IsActivityModeActive(
+                CompanionRoutineActivity.Wait,
+                CompanionMode.Waiting),
+            "espera ja aplicada e idempotente");
+        Assert.False(
+            CompanionRoutinePolicy.IsActivityModeActive(
+                CompanionRoutineActivity.Wait,
+                CompanionMode.Following),
+            "fim de task em following exige restaurar o bloco esperar");
+        Assert.True(
+            CompanionRoutinePolicy.IsActivityModeActive(
+                CompanionRoutineActivity.VanillaRoutine,
+                CompanionMode.OriginalRoutine),
+            "rotina vanilla ja restaurada e idempotente");
+        routine.Revision++;
+        Assert.False(CompanionRoutinePolicy.IsAppliedBlock(routine, 12, 6), "edicao invalida aplicacao anterior");
+        Assert.False(CompanionRoutinePolicy.IsCompletedBlock(routine, 12, 6), "edicao invalida conclusao anterior");
+        Assert.False(
+            CompanionRoutinePolicy.ShouldRetryAppliedOperationalBlock(
+                routine,
+                dayIndex: 12,
+                blockStartHour: 6,
+                CompanionRoutineActivity.Water,
+                hasExplicitOverride: false,
+                hasActiveRoutineWorkArea: false),
+            "revisao nova nao reaproveita reivindicacao obsoleta");
+
+        CompanionRoutineState depositRoutine = new() { Enabled = true, Revision = 4 };
+        CompanionRoutinePolicy.MarkApplied(depositRoutine, dayIndex: 12, blockStartHour: 7);
+        Assert.True(
+            CompanionRoutinePolicy.ShouldRetryAppliedOperationalBlock(
+                depositRoutine,
+                dayIndex: 12,
+                blockStartHour: 7,
+                CompanionRoutineActivity.Deposit,
+                hasExplicitOverride: false,
+                hasActiveRoutineWorkArea: false),
+            "deposito reivindicado repete enquanto o destino nao estiver pronto");
+        Assert.False(
+            CompanionRoutinePolicy.ShouldRetryAppliedOperationalBlock(
+                depositRoutine,
+                dayIndex: 12,
+                blockStartHour: 7,
+                CompanionRoutineActivity.Deposit,
+                hasExplicitOverride: true,
+                hasActiveRoutineWorkArea: false),
+            "override explicito tambem pausa o retry de deposito");
+    }
+
+    private static void CompanionRoutinePolicyActivatesEditsAndSuppressesAutonomy()
+    {
+        CompanionRoutineState routine = new();
+        CompanionRoutinePolicy.PaintHour(routine, 9, CompanionRoutineActivity.Wait);
+
+        Assert.True(routine.Enabled, "pintar uma celula ativa a rotina");
+        Assert.Equal(
+            CompanionRoutineActivity.Wait,
+            CompanionRoutinePolicy.GetActivity(routine.Hours, 950),
+            "atividade pintada e preservada");
+
+        string encoded = CompanionRoutinePolicy.Encode(routine);
+        Assert.True(
+            CompanionRoutinePolicy.TryDecode(encoded, out CompanionRoutineState decoded),
+            "edicao ativa sobrevive ao payload");
+        Assert.True(
+            CompanionRoutinePolicy.ShouldRun(decoded, 42),
+            "rotina diaria editada fica executavel");
+        Assert.Equal(
+            CompanionRoutinePlanningLane.None,
+            CompanionRoutinePolicy.SelectPlanningLane(decoded, 42, hasExplicitDirective: false),
+            "rotina ativa impede autonomia generica");
+        Assert.Equal(
+            CompanionRoutinePlanningLane.ExplicitDirective,
+            CompanionRoutinePolicy.SelectPlanningLane(decoded, 42, hasExplicitDirective: true),
+            "diretiva explicita precede a rotina ativa");
+
+        decoded.Enabled = false;
+        Assert.Equal(
+            CompanionRoutinePlanningLane.ConfiguredAutonomy,
+            CompanionRoutinePolicy.SelectPlanningLane(decoded, 42, hasExplicitDirective: false),
+            "rotina pausada devolve controle a autonomia generica");
+
+        CompanionRoutineState once = new() { RepeatDaily = false };
+        CompanionRoutinePolicy.PaintHour(once, 10, CompanionRoutineActivity.Deposit);
+        Assert.True(
+            CompanionRoutinePolicy.TryDecode(
+                CompanionRoutinePolicy.Encode(once),
+                out CompanionRoutineState decodedOnce),
+            "edicao somente hoje sobrevive ao payload");
+        decodedOnce.ScheduledDayIndex = 42;
+        decodedOnce.Revision = 1;
+        CompanionRoutinePolicy.ResetExecution(decodedOnce);
+        Assert.True(CompanionRoutinePolicy.ShouldRun(decodedOnce, 42), "host agenda somente hoje no dia do commit");
+        Assert.False(CompanionRoutinePolicy.ShouldRun(decodedOnce, 43), "somente hoje nao invade o dia seguinte");
+    }
+
+    private static void CompanionRoutinePolicyAppliesShiftAndUniquePresets()
+    {
+        CompanionRoutineState routine = new()
+        {
+            CompletionBehavior = CompanionRoutineCompletionBehavior.VanillaRoutine
+        };
+        CompanionRoutinePolicy.ApplyWorkUntilSixPm(routine, CompanionRoutineActivity.Lumber);
+
+        Assert.True(routine.Enabled, "atalho de turno ativa a rotina");
+        Assert.Equal(CompanionRoutineActivity.Lumber, CompanionRoutinePolicy.GetActivity(routine.Hours, 1750), "trabalho antes das 18h");
+        Assert.Equal(CompanionRoutineActivity.VanillaRoutine, CompanionRoutinePolicy.GetActivity(routine.Hours, 1800), "conclusao a partir das 18h");
+
+        CompanionRoutinePolicy.UpsertAreaPreset(routine, new CompanionRoutineAreaPreset
+        {
+            Specialty = CompanionWorkSpecialty.Wood,
+            LocationName = "Farm",
+            CenterX = 4,
+            CenterY = 5,
+            Radius = 8
+        });
+        CompanionRoutinePolicy.UpsertAreaPreset(routine, new CompanionRoutineAreaPreset
+        {
+            Specialty = CompanionWorkSpecialty.Wood,
+            LocationName = "Forest",
+            CenterX = 12,
+            CenterY = 13,
+            Radius = 6
+        });
+
+        Assert.Equal(1, routine.AreaPresets.Count, "um preset por especialidade");
+        Assert.Equal("Forest", CompanionRoutinePolicy.GetAreaPreset(routine, CompanionWorkSpecialty.Wood)?.LocationName, "preset mais recente vence");
+    }
+
+    private static void CompanionRoutinePolicyEncodesCasConfigurationOnly()
+    {
+        CompanionRoutineState routine = new()
+        {
+            Enabled = true,
+            RepeatDaily = false,
+            ScheduledDayIndex = 99,
+            Revision = 7,
+            CompletionBehavior = CompanionRoutineCompletionBehavior.Wait,
+            AreaPresets = new List<CompanionRoutineAreaPreset>
+            {
+                new()
+                {
+                    Specialty = CompanionWorkSpecialty.Mining,
+                    LocationName = "Mine",
+                    CenterX = 10,
+                    CenterY = 20,
+                    Radius = 5
+                }
+            }
+        };
+        CompanionRoutinePolicy.ApplyWorkUntilSixPm(routine, CompanionRoutineActivity.Mine);
+        string token = CompanionRoutinePolicy.CreateStateToken(routine);
+        string encoded = CompanionRoutinePolicy.Encode(routine);
+
+        Assert.True(CompanionRoutinePolicy.TryDecode(encoded, out CompanionRoutineState decoded), "payload valido");
+        Assert.True(decoded.Enabled, "enabled no payload");
+        Assert.False(decoded.RepeatDaily, "repeat no payload");
+        Assert.Equal(CompanionRoutineCompletionBehavior.Wait, decoded.CompletionBehavior, "conclusao no payload");
+        Assert.Equal(0, decoded.AreaPresets.Count, "preset permanece host-side");
+        Assert.Equal(-1, decoded.ScheduledDayIndex, "dia e definido pelo host");
+        Assert.NotEqual(token, CompanionRoutinePolicy.CreateStateToken(new CompanionRoutineState
+        {
+            Enabled = routine.Enabled,
+            RepeatDaily = routine.RepeatDaily,
+            Revision = routine.Revision + 1,
+            CompletionBehavior = routine.CompletionBehavior,
+            Hours = CompanionRoutinePolicy.NormalizeHours(routine.Hours).ToList()
+        }), "revisao participa do token CAS");
+    }
+
+    private static void CompanionStateCopyPreservesWateringWorkState()
+    {
+        SquadMemberState source = new()
+        {
+            NpcName = "Leah",
+            SearchWatering = true,
+            PreferredWorkSpecialty = CompanionWorkSpecialty.Watering,
+            WorkAreaActive = true,
+            WorkAreaOrderId = "water-order",
+            WorkAreaLocationName = "Farm",
+            WorkAreaCenterX = 8,
+            WorkAreaCenterY = 9,
+            WorkAreaRadius = 7,
+            WorkAreaSpecialty = CompanionWorkSpecialty.Watering
+        };
+
+        SquadMemberState clone = CompanionStateCopy.CloneMember(source);
+
+        Assert.True(clone.SearchWatering, "diretiva regar clonada");
+        Assert.Equal(CompanionWorkSpecialty.Watering, clone.PreferredWorkSpecialty, "preferencia regar clonada");
+        Assert.True(clone.WorkAreaActive, "area ativa clonada");
+        Assert.Equal("water-order", clone.WorkAreaOrderId, "ordem de rega clonada");
+        Assert.Equal(CompanionWorkSpecialty.Watering, clone.WorkAreaSpecialty, "especialidade da area clonada");
     }
 
     private static void FishingWaterBodyPolicyDiscoversStableComponentAndShore()
@@ -1231,6 +1618,87 @@ internal static class Program
             "Squad desativado nao deve incluir um owner indisponivel.");
     }
 
+    private static void CompanionChestRoutingPolicySelectsValidOverride()
+    {
+        string individualId = Guid.NewGuid().ToString("N");
+        string defaultId = Guid.NewGuid().ToString("D");
+        CompanionChestDestinationState individual = new()
+        {
+            LocationName = "Farm",
+            TileX = 10,
+            TileY = 11,
+            ChestId = individualId
+        };
+        CompanionChestDestinationState ownerDefault = new()
+        {
+            LocationName = "Shed_1",
+            TileX = 3,
+            TileY = 4,
+            ChestId = defaultId
+        };
+
+        Assert.True(
+            ReferenceEquals(individual, CompanionChestRoutingPolicy.Select(individual, ownerDefault)),
+            "override individual valido deve preceder o default do owner");
+        Assert.True(
+            CompanionChestRoutingPolicy.RefersToChestId(individual, new Guid(individualId).ToString("D")),
+            "formatos equivalentes do mesmo GUID devem resolver a mesma identidade");
+        Assert.False(
+            CompanionChestRoutingPolicy.RefersTo(individual, "Farm", 99, 99),
+            "coordenadas antigas nao devem fingir que o bau ainda esta no mesmo tile");
+
+        individual.ChestId = "not-a-guid";
+        Assert.True(
+            ReferenceEquals(ownerDefault, CompanionChestRoutingPolicy.Select(individual, ownerDefault)),
+            "override invalido deve cair no default valido");
+        ownerDefault.LocationName = "";
+        Assert.True(
+            CompanionChestRoutingPolicy.Select(individual, ownerDefault) is null,
+            "sem destino estruturalmente valido o roteamento deve falhar fechado");
+    }
+
+    private static void CompanionChestRoutingPolicyRejectsAmbiguousIdentity()
+    {
+        string id = Guid.NewGuid().ToString("N");
+        FakeChestCandidate first = new(id);
+        FakeChestCandidate duplicate = new(id);
+
+        Assert.True(
+            ReferenceEquals(
+                first,
+                CompanionChestRoutingPolicy.SelectUnique(new[] { first }, candidate => candidate.ChestId)),
+            "uma unica ocorrencia deve ser resolvida");
+        Assert.True(
+            ReferenceEquals(
+                first,
+                CompanionChestRoutingPolicy.SelectUnique(new[] { first, first }, candidate => candidate.ChestId)),
+            "a mesma instancia observada por dois caminhos nao e ambigua");
+        Assert.True(
+            CompanionChestRoutingPolicy.SelectUnique(new[] { first, duplicate }, candidate => candidate.ChestId) is null,
+            "duas instancias com o mesmo GUID devem ser rejeitadas");
+        Assert.True(
+            CompanionChestRoutingPolicy.SelectUnique(Array.Empty<FakeChestCandidate>(), candidate => candidate.ChestId) is null,
+            "GUID ausente deve manter o fallback atual");
+    }
+
+    private static void CompanionChestRoutingPolicyRejectsMissingExpectation()
+    {
+        string currentId = Guid.NewGuid().ToString("N");
+
+        Assert.False(
+            CompanionChestRoutingPolicy.MatchesExpectedIdentity("", currentId),
+            "token vazio nao pode autorizar o bau encontrado no tile");
+        Assert.False(
+            CompanionChestRoutingPolicy.MatchesExpectedIdentity("not-a-guid", currentId),
+            "token malformado deve falhar fechado");
+        Assert.False(
+            CompanionChestRoutingPolicy.MatchesExpectedIdentity(Guid.NewGuid().ToString("N"), currentId),
+            "GUID de outro bau deve falhar fechado");
+        Assert.True(
+            CompanionChestRoutingPolicy.MatchesExpectedIdentity(new Guid(currentId).ToString("D"), currentId),
+            "formatos textuais equivalentes devem representar a mesma identidade");
+    }
+
     private static void CommandReplayGuardIsolatesPlayers()
     {
         CommandReplayGuard guard = new();
@@ -1306,6 +1774,266 @@ internal static class Program
             CreateSavedItem(stack: 1, quality: 0, ("example.author/key-a", "same")),
             CreateSavedItem(stack: 1, quality: 0, ("example.author/key-b", "same")),
             "chave de ModData");
+    }
+
+    private static void CompanionProfilePolicyMigratesProgressionOnly()
+    {
+        SquadMemberState legacy = new()
+        {
+            NpcName = "Abigail",
+            OwnerId = 77,
+            Level = 8,
+            Xp = 1500,
+            UnspentSkillPoints = 3,
+            BonusLevelTenPointGranted = false,
+            UnlockedSkillIds = new List<string> { "wood_1", "mining_1" },
+            Inventory = new List<SavedItemStack> { CreateSavedItem(stack: 9, quality: 0) },
+            RecentLoot = new List<RecentCompanionLoot>
+            {
+                new()
+                {
+                    QualifiedItemId = "(O)388",
+                    DisplayName = "Wood",
+                    Stack = 4,
+                    SourceKey = "lumbering",
+                    AddedAtUtcTicks = 123
+                }
+            }
+        };
+
+        CompanionProfileState migrated = CompanionProfilePolicy.MigrateLegacyMember(legacy);
+        legacy.UnlockedSkillIds.Add("changed_after_migration");
+        legacy.RecentLoot[0].Stack = 99;
+
+        Assert.Equal("Abigail", migrated.NpcName, "NPC do perfil migrado");
+        Assert.Equal(8, migrated.Level, "nivel migrado");
+        Assert.Equal(1500, migrated.Xp, "XP migrado");
+        Assert.Equal(3, migrated.UnspentSkillPoints, "pontos migrados");
+        Assert.False(migrated.BonusLevelTenPointGranted, "marco de nivel 10 migrado");
+        Assert.SequenceEqual(new[] { "wood_1", "mining_1" }, migrated.UnlockedSkillIds, "skills migradas e destacadas");
+        Assert.Equal(4, migrated.RecentLoot[0].Stack, "historico de loot migrado e destacado");
+        Assert.True(typeof(CompanionProfileState).GetProperty(nameof(SquadMemberState.OwnerId)) is null, "perfil nao deve persistir ownership");
+        Assert.True(typeof(CompanionProfileState).GetProperty(nameof(SquadMemberState.Inventory)) is null, "perfil nao deve persistir inventario");
+        Assert.False(legacy.ShouldSerializeLevel(), "nivel legado nao deve voltar ao membro no schema novo");
+        Assert.False(legacy.ShouldSerializeRecentLoot(), "loot legado nao deve voltar ao membro no schema novo");
+    }
+
+    private static void CompanionProfilePolicyRestoresProgressionOnRecruit()
+    {
+        CompanionProfileState permanent = CompanionProfilePolicy.Create("Leah");
+        SquadMemberState firstRecruitment = new()
+        {
+            NpcName = "Leah",
+            OwnerId = 11,
+            Inventory = new List<SavedItemStack> { CreateSavedItem(stack: 5, quality: 0) }
+        };
+        CompanionProfilePolicy.Attach(firstRecruitment, permanent);
+        firstRecruitment.Level = 6;
+        firstRecruitment.Xp = 900;
+        firstRecruitment.UnspentSkillPoints = 2;
+        firstRecruitment.BonusLevelTenPointGranted = true;
+        firstRecruitment.UnlockedSkillIds.Add("gathering_1");
+        firstRecruitment.RecentLoot.Add(new RecentCompanionLoot { QualifiedItemId = "(O)16", Stack = 1 });
+
+        // A newly recruited membership has new ownership and empty carried-item
+        // state, but is attached to the NPC's existing permanent profile.
+        SquadMemberState secondRecruitment = new() { NpcName = "Leah", OwnerId = 22 };
+        CompanionProfilePolicy.Attach(secondRecruitment, permanent);
+
+        Assert.Equal(22L, secondRecruitment.OwnerId, "ownership pertence ao recrutamento atual");
+        Assert.Equal(0, secondRecruitment.Inventory.Count, "inventario antigo nao deve ser duplicado");
+        Assert.Equal(6, secondRecruitment.Level, "nivel restaurado");
+        Assert.Equal(900, secondRecruitment.Xp, "XP restaurado");
+        Assert.Equal(2, secondRecruitment.UnspentSkillPoints, "pontos restaurados");
+        Assert.True(secondRecruitment.BonusLevelTenPointGranted, "marco de nivel 10 restaurado");
+        Assert.SequenceEqual(new[] { "gathering_1" }, secondRecruitment.UnlockedSkillIds, "skills restauradas");
+        Assert.Equal(1, secondRecruitment.RecentLoot.Count, "historico de loot restaurado");
+        Assert.True(ReferenceEquals(firstRecruitment.Profile, secondRecruitment.Profile), "recrutamentos devem compartilhar a fonte permanente");
+    }
+
+    private static void CompanionStateCopyDeepClonesProfile()
+    {
+        CompanionProfileState source = new()
+        {
+            NpcName = "Robin",
+            Level = 10,
+            Xp = 2500,
+            UnspentSkillPoints = 4,
+            BonusLevelTenPointGranted = true,
+            UnlockedSkillIds = new List<string> { "mining_1", "mining_2" },
+            RecentLoot = new List<RecentCompanionLoot>
+            {
+                new() { QualifiedItemId = "(O)390", DisplayName = "Stone", Stack = 3, SourceKey = "mining", AddedAtUtcTicks = 456 }
+            }
+        };
+
+        CompanionProfileState clone = CompanionStateCopy.CloneProfile(source);
+        source.NpcName = "Changed";
+        source.UnlockedSkillIds[0] = "changed";
+        source.RecentLoot[0].Stack = 100;
+
+        Assert.Equal("Robin", clone.NpcName, "nome destacado");
+        Assert.Equal("mining_1", clone.UnlockedSkillIds[0], "skills destacadas");
+        Assert.Equal(3, clone.RecentLoot[0].Stack, "loot destacado");
+        Assert.False(ReferenceEquals(source.UnlockedSkillIds, clone.UnlockedSkillIds), "lista de skills precisa ser destacada");
+        Assert.False(ReferenceEquals(source.RecentLoot, clone.RecentLoot), "lista de loot precisa ser destacada");
+        Assert.False(ReferenceEquals(source.RecentLoot[0], clone.RecentLoot[0]), "entrada de loot precisa ser destacada");
+    }
+
+    private static void CompanionEquipmentPolicyScopesKeysByOwnerAndNpc()
+    {
+        CompanionOperationalProfileKey first = CompanionEquipmentPolicy.CreateKey(1001, "Leah");
+        CompanionOperationalProfileKey same = CompanionEquipmentPolicy.CreateKey(1001, "  leAH  ");
+        CompanionOperationalProfileKey otherOwner = CompanionEquipmentPolicy.CreateKey(1002, "Leah");
+
+        Assert.Equal(first, same, "a identidade do NPC deve ignorar caixa e espacos externos");
+        Assert.NotEqual(first, otherOwner, "o mesmo NPC pertence a perfis operacionais separados por owner");
+    }
+
+    private static void CompanionEquipmentPolicyValidatesToolBoundaries()
+    {
+        Assert.True(CompanionEquipmentPolicy.IsValidUpgradeLevel(0), "upgrade basico valido");
+        Assert.True(CompanionEquipmentPolicy.IsValidUpgradeLevel(4), "upgrade iridio valido");
+        Assert.False(CompanionEquipmentPolicy.IsValidUpgradeLevel(-1), "upgrade negativo invalido");
+        Assert.False(CompanionEquipmentPolicy.IsValidUpgradeLevel(5), "upgrade acima de iridio invalido");
+        Assert.Equal(40, CompanionEquipmentPolicy.GetWateringCanCapacity(0), "capacidade basica");
+        Assert.Equal(100, CompanionEquipmentPolicy.GetWateringCanCapacity(4), "capacidade de iridio");
+        Assert.True(CompanionEquipmentPolicy.IsValidWateringCanState(2, 70), "capacidade inclusiva valida");
+        Assert.False(CompanionEquipmentPolicy.IsValidWateringCanState(2, 71), "agua acima da capacidade invalida");
+        Assert.False(CompanionEquipmentPolicy.IsValidWateringCanState(2, -1), "agua negativa invalida");
+    }
+
+    private static void CompanionEquipmentPolicyFiltersWorkSpecialtiesByTool()
+    {
+        Assert.True(
+            CompanionEquipmentPolicy.CanWorkSpecialty(
+                CompanionWorkSpecialty.Wood,
+                lumberingEnabled: true,
+                miningEnabled: true,
+                wateringEnabled: true,
+                hasUsableAxe: true,
+                hasUsablePickaxe: false,
+                hasUsableWateringCan: false),
+            "madeira aceita machado");
+        Assert.False(
+            CompanionEquipmentPolicy.CanWorkSpecialty(
+                CompanionWorkSpecialty.Wood,
+                lumberingEnabled: true,
+                miningEnabled: true,
+                wateringEnabled: true,
+                hasUsableAxe: false,
+                hasUsablePickaxe: true,
+                hasUsableWateringCan: true),
+            "madeira rejeita ferramentas de outro slot");
+        Assert.True(
+            CompanionEquipmentPolicy.CanWorkSpecialty(
+                CompanionWorkSpecialty.ClearArea,
+                lumberingEnabled: true,
+                miningEnabled: true,
+                wateringEnabled: true,
+                hasUsableAxe: false,
+                hasUsablePickaxe: true,
+                hasUsableWateringCan: false),
+            "limpar aceita ao menos uma ferramenta compativel");
+        Assert.False(
+            CompanionEquipmentPolicy.CanWorkSpecialty(
+                CompanionWorkSpecialty.ClearArea,
+                lumberingEnabled: true,
+                miningEnabled: true,
+                wateringEnabled: true,
+                hasUsableAxe: false,
+                hasUsablePickaxe: false,
+                hasUsableWateringCan: true),
+            "limpar nao usa regador");
+        Assert.False(
+            CompanionEquipmentPolicy.CanWorkSpecialty(
+                CompanionWorkSpecialty.Watering,
+                lumberingEnabled: true,
+                miningEnabled: true,
+                wateringEnabled: false,
+                hasUsableAxe: true,
+                hasUsablePickaxe: true,
+                hasUsableWateringCan: true),
+            "modo desativado ainda bloqueia rega");
+    }
+
+    private static void SavedToolStateIsClonedAndTokenizedFaithfully()
+    {
+        SavedItemStack source = new()
+        {
+            QualifiedItemId = "(T)WateringCan",
+            Stack = 1,
+            HasToolData = true,
+            ToolUpgradeLevel = 2,
+            WateringCanWaterLeft = 37,
+            ModData = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["example/tool"] = "state"
+            }
+        };
+
+        SavedItemStack clone = CompanionStateCopy.CloneItem(source);
+        Assert.Equal(2, clone.ToolUpgradeLevel, "upgrade clonado");
+        Assert.Equal(37, clone.WateringCanWaterLeft, "agua clonada");
+        Assert.True(clone.HasToolData, "marcador de ferramenta clonado");
+
+        clone.WateringCanWaterLeft = 36;
+        AssertDifferentTokens(source, clone, "agua restante do regador");
+        clone.WateringCanWaterLeft = 37;
+        clone.ToolUpgradeLevel = 3;
+        AssertDifferentTokens(source, clone, "upgrade da ferramenta");
+    }
+
+    private static void CompanionOperationsStateCopyDeepClonesProfile()
+    {
+        CompanionOperationalProfileState source = new()
+        {
+            OwnerId = 77,
+            NpcName = "Maru",
+            Equipment = new CompanionEquipmentState
+            {
+                Pickaxe = new SavedItemStack
+                {
+                    QualifiedItemId = "(T)Pickaxe",
+                    Stack = 1,
+                    HasToolData = true,
+                    ToolUpgradeLevel = 3,
+                    ModData = new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["example/tool"] = "original"
+                    }
+                }
+            },
+            Routine = new CompanionRoutineState
+            {
+                ScheduledDayIndex = 12,
+                Hours = new List<CompanionRoutineHourState>
+                {
+                    new() { Hour = 9, Activity = CompanionRoutineActivity.Mine }
+                },
+                Execution = new CompanionRoutineExecutionState { AppliedDayIndex = 12 }
+            },
+            ChestDestination = new CompanionChestDestinationState
+            {
+                LocationName = "Farm",
+                TileX = 4,
+                TileY = 5,
+                ChestId = Guid.NewGuid().ToString("N")
+            }
+        };
+
+        CompanionOperationalProfileState clone = CompanionOperationsStateCopy.CloneOperationalProfile(source);
+        source.Equipment.Pickaxe!.ToolUpgradeLevel = 1;
+        source.Equipment.Pickaxe.ModData["example/tool"] = "changed";
+        source.Routine.Hours[0].Activity = CompanionRoutineActivity.Wait;
+        source.Routine.Execution.AppliedDayIndex = 99;
+        source.ChestDestination!.LocationName = "Changed";
+
+        Assert.Equal(3, clone.Equipment.Pickaxe?.ToolUpgradeLevel, "upgrade destacado");
+        Assert.Equal("original", clone.Equipment.Pickaxe?.ModData["example/tool"], "ModData destacado");
+        Assert.Equal(CompanionRoutineActivity.Mine, clone.Routine.Hours[0].Activity, "hora destacada");
+        Assert.Equal(12, clone.Routine.Execution.AppliedDayIndex, "execucao destacada");
+        Assert.Equal("Farm", clone.ChestDestination?.LocationName, "destino destacado");
     }
 
     private static void CompanionStateCopyDeepClonesNpcCosmetic()
@@ -1398,6 +2126,7 @@ internal static class Program
         Assert.False(SavedItemStackIdentity.Matches(second, firstToken), $"Matches deve distinguir {difference}.");
     }
 
+    private sealed record FakeChestCandidate(string ChestId);
     private sealed record TestCase(string Name, Action Body);
 }
 

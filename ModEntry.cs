@@ -16,7 +16,9 @@ namespace PelicanCompanions;
 public sealed partial class ModEntry : Mod
 {
     private const string SaveKey = "pelican-companions-state";
-    private const int CurrentSaveVersion = 10;
+    private const int CompanionProfilesSaveVersion = 11;
+    private const int OperationalProfilesSaveVersion = 13;
+    private const int CurrentSaveVersion = 13;
     private const string NpcConfigAssetKey = "Lucas.PelicanCompanions/NpcConfig";
     private const string MessageActionRequest = "CompanionActionRequest";
     private const string MessageStateRequest = "CompanionStateRequest";
@@ -81,6 +83,9 @@ public sealed partial class ModEntry : Mod
     };
 
     private readonly Dictionary<string, SquadMemberState> members = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CompanionProfileState> companionProfiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<CompanionOperationalProfileKey, CompanionOperationalProfileState> operationalProfiles = new();
+    private readonly Dictionary<long, CompanionOwnerLogisticsState> ownerLogistics = new();
     private readonly Dictionary<string, PendingCompanionTask> pendingTasks = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> workTargetReservations = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SharedWorkTargetReservation> sharedWorkTargetReservations = new(StringComparer.OrdinalIgnoreCase);
@@ -167,6 +172,7 @@ public sealed partial class ModEntry : Mod
         int NpcY,
         bool SearchWood,
         bool SearchMining,
+        bool SearchWatering,
         bool ClearArea,
         bool WorkAreaActive,
         string WorkAreaLocationName,
@@ -205,6 +211,7 @@ public sealed partial class ModEntry : Mod
         helper.Events.Input.ButtonPressed += this.OnButtonPressed;
         helper.Events.Input.MouseWheelScrolled += this.OnMouseWheelScrolled;
         helper.Events.Display.RenderedHud += this.OnRenderedHud;
+        helper.Events.Display.RenderedActiveMenu += this.OnRenderedActiveMenu;
         helper.Events.Display.RenderedWorld += this.OnRenderedWorld;
         helper.Events.Content.AssetRequested += this.OnAssetRequested;
         helper.Events.Multiplayer.ModMessageReceived += this.OnModMessageReceived;
@@ -213,7 +220,8 @@ public sealed partial class ModEntry : Mod
 
         CompanionBehaviorPatches.IsControlled = npc => Context.IsOnHostComputer
             && !this.pendingDailyCompanionRefresh
-            && this.members.ContainsKey(npc.Name);
+            && this.members.TryGetValue(npc.Name, out SquadMemberState? controlledMember)
+            && controlledMember.Mode != CompanionMode.OriginalRoutine;
         CompanionBehaviorPatches.IsVanillaMovementExplicitlyAllowed = this.IsVanillaMovementAllowed;
         CompanionBehaviorPatches.ShouldSuppressVanillaArrival = npc => this.suppressedVanillaArrivals.ContainsKey(npc);
         CompanionBehaviorPatches.NeutralizeVanillaBedtimeController = this.NeutralizeVanillaBedtimeController;

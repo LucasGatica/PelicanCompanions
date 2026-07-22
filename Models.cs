@@ -5,9 +5,10 @@ namespace PelicanCompanions;
 
 internal enum CompanionMode
 {
-    Following,
-    Waiting,
-    ParkedForDisconnect
+    Following = 0,
+    Waiting = 1,
+    ParkedForDisconnect = 2,
+    OriginalRoutine = 3
 }
 
 internal enum CompanionMovementIntent
@@ -19,6 +20,8 @@ internal enum CompanionMovementIntent
 
 internal sealed class SquadMemberState
 {
+    private CompanionProfileState profile = new();
+
     public string NpcName { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public long OwnerId { get; set; }
@@ -41,14 +44,30 @@ internal sealed class SquadMemberState
     public long ParkedAtUtcTicks { get; set; }
     public long LastDialogueUtcTicks { get; set; }
     public List<string> RecentDialogueKeys { get; set; } = new();
-    public int Level { get; set; } = 1;
-    public int Xp { get; set; }
-    public int UnspentSkillPoints { get; set; }
-    public bool BonusLevelTenPointGranted { get; set; }
-    public List<string> UnlockedSkillIds { get; set; } = new();
+    /// <summary>The NPC-owned profile used while this membership is active.</summary>
+    /// <remarks>
+    /// This is deliberately non-public so SMAPI's save serializer doesn't nest
+    /// the permanent profile inside the active-member record. It is attached
+    /// from <see cref="SavedModState.CompanionProfiles"/> when state is loaded.
+    /// </remarks>
+    internal CompanionProfileState Profile
+    {
+        get => this.profile;
+        set => this.profile = value ?? throw new ArgumentNullException(nameof(value));
+    }
+
+    // These forwarding properties keep runtime/UI call sites source-compatible
+    // and let schema <= 10 JSON populate a temporary legacy profile. Json.NET's
+    // ShouldSerialize convention prevents them from being written in schema 11+.
+    public int Level { get => this.Profile.Level; set => this.Profile.Level = value; }
+    public int Xp { get => this.Profile.Xp; set => this.Profile.Xp = value; }
+    public int UnspentSkillPoints { get => this.Profile.UnspentSkillPoints; set => this.Profile.UnspentSkillPoints = value; }
+    public bool BonusLevelTenPointGranted { get => this.Profile.BonusLevelTenPointGranted; set => this.Profile.BonusLevelTenPointGranted = value; }
+    public List<string> UnlockedSkillIds { get => this.Profile.UnlockedSkillIds; set => this.Profile.UnlockedSkillIds = value; }
     public List<SavedItemStack> Inventory { get; set; } = new();
     public bool SearchWood { get; set; }
     public bool SearchMining { get; set; }
+    public bool SearchWatering { get; set; }
     public bool ClearArea { get; set; }
     public bool CurrentWorkIsDirect { get; set; }
     public CompanionWorkSpecialty PreferredWorkSpecialty { get; set; } = CompanionWorkSpecialty.ClearArea;
@@ -69,7 +88,14 @@ internal sealed class SquadMemberState
     public string PreviewReasonKey { get; set; } = "";
     public int PreviewTargetX { get; set; } = -1;
     public int PreviewTargetY { get; set; } = -1;
-    public List<RecentCompanionLoot> RecentLoot { get; set; } = new();
+    public List<RecentCompanionLoot> RecentLoot { get => this.Profile.RecentLoot; set => this.Profile.RecentLoot = value; }
+
+    public bool ShouldSerializeLevel() => false;
+    public bool ShouldSerializeXp() => false;
+    public bool ShouldSerializeUnspentSkillPoints() => false;
+    public bool ShouldSerializeBonusLevelTenPointGranted() => false;
+    public bool ShouldSerializeUnlockedSkillIds() => false;
+    public bool ShouldSerializeRecentLoot() => false;
 }
 
 internal sealed class SavedModState
@@ -77,12 +103,32 @@ internal sealed class SavedModState
     public int Version { get; set; } = 1;
     public long Revision { get; set; }
     public List<SquadMemberState> Members { get; set; } = new();
+    public List<CompanionProfileState> CompanionProfiles { get; set; } = new();
+    public List<CompanionOperationalProfileState> OperationalProfiles { get; set; } = new();
+    public List<CompanionOwnerLogisticsState> OwnerLogistics { get; set; } = new();
     public List<NpcCosmeticState> NpcCosmetics { get; set; } = new();
     public Dictionary<string, bool> TaskTogglesByPlayer { get; set; } = new();
     public List<SavedItemStack> SquadInventory { get; set; } = new();
     public List<SavedItemStack> LegacyOverflowItems { get; set; } = new();
     public List<DeferredNpcRestoreState> PendingNpcRestores { get; set; } = new();
     public CompanionHostRules? HostRules { get; set; }
+}
+
+/// <summary>Permanent NPC-owned data which survives recruitment and dismissal.</summary>
+/// <remarks>
+/// Ownership, inventory, movement, and work orders intentionally remain on the
+/// active membership. Keeping them out of this profile prevents a re-recruit
+/// from duplicating carried items or inheriting a previous player's ownership.
+/// </remarks>
+internal sealed class CompanionProfileState
+{
+    public string NpcName { get; set; } = "";
+    public int Level { get; set; } = 1;
+    public int Xp { get; set; }
+    public int UnspentSkillPoints { get; set; }
+    public bool BonusLevelTenPointGranted { get; set; }
+    public List<string> UnlockedSkillIds { get; set; } = new();
+    public List<RecentCompanionLoot> RecentLoot { get; set; } = new();
 }
 
 /// <summary>Cosmetic equipment which belongs to an NPC independently of recruitment.</summary>
@@ -141,6 +187,9 @@ internal sealed class SavedItemStack
     public byte ColorG { get; set; }
     public byte ColorB { get; set; }
     public byte ColorA { get; set; } = byte.MaxValue;
+    public bool HasToolData { get; set; }
+    public int ToolUpgradeLevel { get; set; }
+    public int WateringCanWaterLeft { get; set; }
 }
 
 internal sealed class RecentCompanionLoot
@@ -226,6 +275,7 @@ internal sealed class CompanionCommandFeedbackMessage
     public bool IsError { get; set; }
     public string Action { get; set; } = "";
     public string CommandId { get; set; } = "";
+    public string StateToken { get; set; } = "";
 }
 
 internal sealed class CompanionExpressionMessage
@@ -318,16 +368,18 @@ internal readonly record struct EligibilityResult(bool Allowed, string ReasonKey
 
 internal enum CompanionDirective
 {
-    SearchWood,
-    SearchMining,
-    ClearArea
+    SearchWood = 0,
+    SearchMining = 1,
+    ClearArea = 2,
+    SearchWatering = 3
 }
 
 internal enum CompanionWorkSpecialty
 {
-    ClearArea,
-    Wood,
-    Mining
+    ClearArea = 0,
+    Wood = 1,
+    Mining = 2,
+    Watering = 3
 }
 
 internal sealed record CompanionSkillDefinition(

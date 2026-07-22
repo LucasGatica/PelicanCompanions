@@ -164,8 +164,10 @@ public sealed partial class ModEntry
             NpcName = npc.Name,
             DisplayName = npc.displayName,
             OwnerId = ownerId,
-            Mode = CompanionMode.Following
+            Mode = CompanionMode.Following,
+            Profile = this.GetOrCreateCompanionProfile(npc.Name)
         };
+        this.GetOrCreateOperationalProfile(ownerId, npc.Name);
         CaptureOriginalNpcState(member, npc, captureSchedule: true);
         this.deferredNpcRestores.Remove(npc.Name);
         this.members[npc.Name] = member;

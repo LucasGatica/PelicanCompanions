@@ -11,6 +11,11 @@ internal static class CompanionWorkAreaPolicy
         return Math.Clamp(radius, MinimumRadius, MaximumRadius);
     }
 
+    public static int ClampRadiusToMaximum(int radius, int maximumRadius)
+    {
+        return Math.Min(NormalizeRadius(radius), NormalizeRadius(maximumRadius));
+    }
+
     public static bool Contains(int centerX, int centerY, int radius, int tileX, int tileY, int padding = 0)
     {
         int normalizedRadius = NormalizeRadius(radius) + Math.Max(0, padding);
@@ -25,6 +30,7 @@ internal static class CompanionWorkAreaPolicy
         {
             CompanionWorkSpecialty.Wood => kind == CompanionTaskKind.Lumbering,
             CompanionWorkSpecialty.Mining => kind == CompanionTaskKind.Mining,
+            CompanionWorkSpecialty.Watering => kind == CompanionTaskKind.Watering,
             CompanionWorkSpecialty.ClearArea => kind is CompanionTaskKind.Lumbering or CompanionTaskKind.Mining,
             _ => false
         };

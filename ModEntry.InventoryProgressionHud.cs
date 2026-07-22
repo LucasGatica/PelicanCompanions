@@ -200,6 +200,11 @@ public sealed partial class ModEntry
 
     private Item? AddToCompanionInventory(SquadMemberState member, Item item)
     {
+        // Equipment has a dedicated owner/NPC profile and may only move through
+        // the atomic loadout swap. Never mix tools into loot cargo.
+        if (item is Tool)
+            return item;
+
         int originalStack = 1;
         int inventoryBefore = 0;
         string qualifiedItemId = "<unknown>";
@@ -533,6 +538,22 @@ public sealed partial class ModEntry
 
         try
         {
+            if (notAdded is Tool)
+            {
+                // Defensive fallback for custom task drops: tools bypass chest,
+                // companion, and squad cargo entirely.
+                if (owner is not null)
+                    notAdded = this.AddToFarmerInventorySafely(owner, notAdded, sourceKey);
+                if (notAdded is not null)
+                    this.DropItemSafely(notAdded, location, tile, owner?.FacingDirection ?? 2, sourceKey);
+                return;
+            }
+
+            // An assigned world chest is the first endpoint. A missing, moved,
+            // ambiguous, locked, or full chest returns only the untouched
+            // remainder so the established companion/squad/owner/world route
+            // can continue without duplicating or losing the reward.
+            notAdded = this.AddToAssignedChestSafely(member, notAdded, sourceKey);
             foreach (CompanionItemDestination destination in CompanionItemRoutingPolicy.GetRoute(useSquadInventory, owner is not null))
             {
                 if (notAdded is null)
