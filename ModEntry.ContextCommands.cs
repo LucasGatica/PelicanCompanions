@@ -68,6 +68,19 @@ public sealed partial class ModEntry
             return true;
         }
 
+        if (this.IsFishingWaterTile(location, tile))
+        {
+            target = new ContextWorldTarget(
+                CompanionTaskKind.Fishing,
+                location.NameOrUniqueName,
+                tile,
+                "wheel.target.water",
+                "wheel.target_name.water",
+                GetContextWaterToken(tile),
+                location.Map);
+            return true;
+        }
+
         return false;
     }
 
@@ -97,6 +110,18 @@ public sealed partial class ModEntry
         return this.TryGetContextWorldTarget(location, NormalizeTile(cursor.Tile), out target);
     }
 
+    private static bool IsContextTargetWithinCompanionReach(Vector2 ownerTile, Vector2 targetTile)
+    {
+        ownerTile = NormalizeTile(ownerTile);
+        targetTile = NormalizeTile(targetTile);
+        return ContextCommandPolicy.HasAdjacentStandWithinRadius(
+            (int)ownerTile.X,
+            (int)ownerTile.Y,
+            (int)targetTile.X,
+            (int)targetTile.Y,
+            MaxCompanionDistanceTiles);
+    }
+
     private static string GetContextCropToken(Crop crop)
     {
         string? cropId = crop.GetData()?.HarvestItemId;
@@ -114,6 +139,35 @@ public sealed partial class ModEntry
     private static string GetContextStoneToken(SObject obj)
     {
         return $"stone|{obj.QualifiedItemId}|{obj.ParentSheetIndex}";
+    }
+
+    private static string GetContextWaterToken(Vector2 tile)
+    {
+        tile = NormalizeTile(tile);
+        return $"water|{(int)tile.X}|{(int)tile.Y}";
+    }
+
+    private bool IsFishingWaterTile(GameLocation location, Vector2 rawTile)
+    {
+        Vector2 tile = NormalizeTile(rawTile);
+        if (!this.IsTileInsideMap(location, tile))
+            return false;
+
+        int x = (int)tile.X;
+        int y = (int)tile.Y;
+        try
+        {
+            return location.canFishHere()
+                && location.isWaterTile(x, y)
+                && location.isTileFishable(x, y);
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log(
+                $"Could not validate fishing water at {location.NameOrUniqueName} ({x}, {y}): {ex.Message}",
+                LogLevel.Trace);
+            return false;
+        }
     }
 
     private bool TryGetContextTargetIdentity(
@@ -150,6 +204,15 @@ public sealed partial class ModEntry
                 {
                     token = GetContextStoneToken(obj);
                     instance = obj;
+                    return true;
+                }
+                break;
+
+            case CompanionTaskKind.Fishing:
+                if (this.IsFishingWaterTile(location, tile))
+                {
+                    token = GetContextWaterToken(tile);
+                    instance = location.Map;
                     return true;
                 }
                 break;
@@ -243,7 +306,10 @@ public sealed partial class ModEntry
         Vector2 rawTile,
         string expectedTargetToken)
     {
-        if (kind is not (CompanionTaskKind.Lumbering or CompanionTaskKind.Mining or CompanionTaskKind.Harvesting)
+        if (kind is not (CompanionTaskKind.Lumbering
+                or CompanionTaskKind.Mining
+                or CompanionTaskKind.Harvesting
+                or CompanionTaskKind.Fishing)
             || !this.AreTaskActionsSafe(ownerId))
         {
             return;
@@ -255,12 +321,24 @@ public sealed partial class ModEntry
         if (owner is null
             || location is null
             || !string.Equals(location.NameOrUniqueName, locationName, StringComparison.Ordinal)
-            || !IsWithinCompanionDistance(owner.Tile, tile)
+            || (kind != CompanionTaskKind.Fishing
+                && !IsContextTargetWithinCompanionReach(owner.Tile, tile))
             || !this.TryGetContextWorldTarget(location, tile, out ContextWorldTarget currentTarget)
             || currentTarget.Kind != kind
             || !string.Equals(currentTarget.TargetToken, expectedTargetToken, StringComparison.Ordinal))
         {
             this.Warn("multiplayer.command_stale");
+            return;
+        }
+
+        if (kind == CompanionTaskKind.Fishing)
+        {
+            this.TryAssignFishingContextTask(
+                ownerId,
+                requestedNpcName,
+                location,
+                tile,
+                currentTarget.TargetToken);
             return;
         }
 

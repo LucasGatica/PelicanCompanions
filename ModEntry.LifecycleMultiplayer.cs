@@ -69,6 +69,13 @@ public sealed partial class ModEntry
                 this.members.Add(member.NpcName, member);
             }
 
+            foreach (NpcCosmeticState? incoming in data.NpcCosmetics ?? Enumerable.Empty<NpcCosmeticState>())
+            {
+                NpcCosmeticState cosmetic = this.ValidateAndCloneNpcCosmetic(incoming, "The saved cosmetic state");
+                if (!this.npcCosmetics.TryAdd(cosmetic.NpcName, cosmetic))
+                    throw new InvalidDataException($"The cosmetic list contains duplicate NPC key '{cosmetic.NpcName}'.");
+            }
+
             foreach ((string key, bool value) in data.TaskTogglesByPlayer ?? new Dictionary<string, bool>())
             {
                 if (long.TryParse(key, out long playerId))
@@ -291,6 +298,9 @@ public sealed partial class ModEntry
     private void ResetRuntimeState(bool clearProfiles, bool preserveCosmeticRuntime = false)
     {
         this.members.Clear();
+        this.npcCosmetics.Clear();
+        this.npcHatCache.Clear();
+        this.npcHatFrameOffsets.Clear();
         this.pendingTasks.Clear();
         this.workTargetReservations.Clear();
         this.sharedWorkTargetReservations.Clear();
@@ -318,6 +328,8 @@ public sealed partial class ModEntry
         this.workTargetRetryAfterTicks.Clear();
         this.priorityTaskPlanningMembers.Clear();
         this.workAreaPositionRecoveryNeeded.Clear();
+        this.trackedFallingTrees.Clear();
+        CompanionTaskDropPatches.IsCaptureActive = false;
         this.suppressedVanillaArrivals.Clear();
         this.reachabilityCache.Clear();
         this.targetPreviewCache.Clear();
@@ -436,6 +448,7 @@ public sealed partial class ModEntry
     {
         this.DrawCompanionWorkAreas(e.SpriteBatch);
         this.DrawCompanionWorkAnimations(e.SpriteBatch);
+        this.DrawCompanionFishingVisuals(e.SpriteBatch);
     }
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)
@@ -445,6 +458,7 @@ public sealed partial class ModEntry
 
         this.CaptureLocalOwnerSimulationBlockState();
         this.UpdateCompanionActionWheel();
+        this.PrepareVisibleNpcHatFrameOffsets();
         if (this.saveWritesBlocked)
             return;
 
@@ -499,6 +513,7 @@ public sealed partial class ModEntry
 
         if (e.IsMultipleOf(60))
         {
+            this.PruneTrackedFallingTrees();
             if (!this.IsBlockedGameState(blockForMenu: false))
                 this.MaintainCompanionScheduleLocks(stopCurrentRoutes: false);
             this.UpdateAmbientDialogue();
@@ -778,11 +793,13 @@ public sealed partial class ModEntry
         message.Argument ??= "";
         message.LocationName ??= "";
         message.ExpectedItemToken ??= "";
+        message.ExpectedStateToken ??= "";
         if (action.Length > 64
             || message.NpcName.Length > 128
             || message.Argument.Length > 512
             || message.LocationName.Length > 256
-            || message.ExpectedItemToken.Length > 128)
+            || message.ExpectedItemToken.Length > 128
+            || message.ExpectedStateToken.Length > 128)
         {
             return;
         }
@@ -895,8 +912,7 @@ public sealed partial class ModEntry
                         string.IsNullOrWhiteSpace(message.NpcName) ? null : message.NpcName,
                         message.LocationName,
                         new Vector2(message.TileX, message.TileY),
-                        workSpecialty,
-                        message.Index);
+                        workSpecialty);
                 }
                 break;
 
@@ -943,9 +959,39 @@ public sealed partial class ModEntry
                 }
                 break;
 
+            case "DepositFishingRod":
+                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? fishingRodMember))
+                {
+                    this.DepositCompanionFishingRod(
+                        fishingRodMember,
+                        message.Index,
+                        message.Argument,
+                        playerId,
+                        message.ExpectedItemToken);
+                }
+                break;
+
             case "WithdrawAllCompanionItems":
                 if (this.members.TryGetValue(message.NpcName, out SquadMemberState? allItemsMember))
                     this.WithdrawAllCompanionInventoryItems(allItemsMember, playerId);
+                break;
+
+            case "SetCompanionHat":
+                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? hatMember))
+                {
+                    this.SetCompanionHat(
+                        hatMember,
+                        message.Index,
+                        message.Argument,
+                        playerId,
+                        message.ExpectedItemToken,
+                        message.ExpectedStateToken);
+                }
+                break;
+
+            case "RemoveCompanionHat":
+                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? bareHeadedMember))
+                    this.RemoveCompanionHat(bareHeadedMember, playerId, message.ExpectedStateToken);
                 break;
 
             case "WithdrawSquadInventory":

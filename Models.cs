@@ -77,11 +77,19 @@ internal sealed class SavedModState
     public int Version { get; set; } = 1;
     public long Revision { get; set; }
     public List<SquadMemberState> Members { get; set; } = new();
+    public List<NpcCosmeticState> NpcCosmetics { get; set; } = new();
     public Dictionary<string, bool> TaskTogglesByPlayer { get; set; } = new();
     public List<SavedItemStack> SquadInventory { get; set; } = new();
     public List<SavedItemStack> LegacyOverflowItems { get; set; } = new();
     public List<DeferredNpcRestoreState> PendingNpcRestores { get; set; } = new();
     public CompanionHostRules? HostRules { get; set; }
+}
+
+/// <summary>Cosmetic equipment which belongs to an NPC independently of recruitment.</summary>
+internal sealed class NpcCosmeticState
+{
+    public string NpcName { get; set; } = "";
+    public SavedItemStack? EquippedHat { get; set; }
 }
 
 internal sealed class DeferredNpcRestoreState
@@ -208,6 +216,7 @@ internal sealed class SquadActionMessage
     public int TileY { get; set; }
     public int Index { get; set; } = -1;
     public string ExpectedItemToken { get; set; } = "";
+    public string ExpectedStateToken { get; set; } = "";
     public bool? DesiredEnabled { get; set; }
 }
 
@@ -250,7 +259,8 @@ internal enum CompanionTaskKind
     Watering,
     Gathering,
     Harvesting,
-    Petting
+    Petting,
+    Fishing
 }
 
 internal sealed class PendingCompanionTask
@@ -288,6 +298,11 @@ internal sealed class PendingCompanionTask
     public bool HasPathStartAttempted { get; set; }
     public HashSet<Vector2> RejectedStandTiles { get; } = new();
     public int NoProgressTicks { get; set; }
+    public Vector2 FishingWaterAnchorTile { get; set; }
+    public Vector2 FishingCastTile { get; set; }
+    public string FishingWaterBodyToken { get; set; } = "";
+    public int FishingWaterDepth { get; set; }
+    public int NextFishingTime { get; set; }
 }
 
 internal sealed class SharedWorkTargetReservation
@@ -361,7 +376,10 @@ internal static class CompanionProgression
         new("SKILL-MINING-003", "Mining", "skills.mining_3.name", "skills.mining_3.description", 2, "SKILL-MINING-002"),
         new("SKILL-UTILITY-001", "Utility", "skills.utility_1.name", "skills.utility_1.description", 1, null),
         new("SKILL-UTILITY-002", "Utility", "skills.utility_2.name", "skills.utility_2.description", 1, "SKILL-UTILITY-001"),
-        new("SKILL-UTILITY-003", "Utility", "skills.utility_3.name", "skills.utility_3.description", 2, "SKILL-UTILITY-002")
+        new("SKILL-UTILITY-003", "Utility", "skills.utility_3.name", "skills.utility_3.description", 2, "SKILL-UTILITY-002"),
+        new("SKILL-FISHING-001", "Fishing", "skills.fishing_1.name", "skills.fishing_1.description", 1, null),
+        new("SKILL-FISHING-002", "Fishing", "skills.fishing_2.name", "skills.fishing_2.description", 1, "SKILL-FISHING-001"),
+        new("SKILL-FISHING-003", "Fishing", "skills.fishing_3.name", "skills.fishing_3.description", 2, "SKILL-FISHING-002")
     };
 
     public static int GetLevelForXp(int xp)

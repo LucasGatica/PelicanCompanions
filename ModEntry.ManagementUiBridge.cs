@@ -63,6 +63,13 @@ public sealed partial class ModEntry
         if (!this.CanOwnerMutate(member, ownerId))
             return;
 
+        if (enabled
+            && this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? fishingTask)
+            && fishingTask.Kind == CompanionTaskKind.Fishing)
+        {
+            this.RemovePendingTask(fishingTask);
+        }
+
         bool isActive = this.IsCompanionQuickWorkActive(member);
         if (!enabled)
         {
@@ -333,6 +340,10 @@ public sealed partial class ModEntry
             getMapInfo: this.GetCompanionMapInfo,
             getDirectivePreviewText: this.GetDirectivePreviewText,
             getInventoryItems: this.GetCompanionInventoryItems,
+            getEquippedHat: this.GetCompanionEquippedHat,
+            hasEquippedHat: this.HasCompanionEquippedHat,
+            changeHat: this.ChangeCompanionHat,
+            depositFishingRod: this.DepositSelectedFishingRod,
             withdrawInventoryItem: this.WithdrawCompanionInventoryItem,
             withdrawAllInventoryItems: this.WithdrawAllCompanionInventoryItems,
             toggleDirective: this.ToggleCompanionDirective,
@@ -399,6 +410,12 @@ public sealed partial class ModEntry
 
         if (member.Mode == CompanionMode.ParkedForDisconnect)
             return this.Tr("companion.status.parked");
+
+        if (member.CurrentActivityKey == "companion.status.moving_to_fish")
+            return this.Tr("companion.status.moving_to_fish");
+
+        if (member.CurrentActivityKey == "companion.status.fishing")
+            return this.Tr("companion.status.fishing");
 
         if (member.CurrentActivityKey == "companion.status.stuck")
             return this.Tr("companion.status.stuck");
@@ -596,6 +613,193 @@ public sealed partial class ModEntry
         }
 
         return items;
+    }
+
+    private bool DepositSelectedFishingRod(SquadMemberState member)
+    {
+        long ownerId = Game1.player.UniqueMultiplayerID;
+        if (!this.CanOwnerMutate(member, ownerId))
+            return false;
+
+        Farmer? owner = this.GetOwnerFarmer(ownerId);
+        int itemIndex = owner?.CurrentToolIndex ?? -1;
+        Item? selectedItem = owner is not null && itemIndex >= 0 && itemIndex < owner.Items.Count
+            ? owner.Items[itemIndex]
+            : null;
+        if (selectedItem is not FishingRod rod || selectedItem.Stack != 1)
+        {
+            this.Warn("companion.inventory.deposit_fishing_rod_select");
+            return false;
+        }
+
+        if (!this.TryPrepareFishingRodForDeposit(rod, ownerId, out SavedItemStack saved))
+            return false;
+
+        if (member.Inventory.Count >= this.GetCompanionInventoryCapacity())
+        {
+            this.Warn("companion.inventory.full", new { npc = member.DisplayName });
+            return false;
+        }
+
+        string token = SavedItemStackIdentity.CreateToken(saved);
+        if (!Context.IsMainPlayer)
+        {
+            this.SendActionRequest(
+                "DepositFishingRod",
+                member.NpcName,
+                saved.QualifiedItemId,
+                index: itemIndex,
+                expectedItemToken: token);
+            return true;
+        }
+
+        return this.DepositCompanionFishingRod(
+            member,
+            itemIndex,
+            saved.QualifiedItemId,
+            ownerId,
+            token);
+    }
+
+    private bool DepositCompanionFishingRod(
+        SquadMemberState member,
+        int itemIndex,
+        string expectedItemId,
+        long ownerId,
+        string? expectedItemToken)
+    {
+        if (!this.CanOwnerMutate(member, ownerId, showWarning: false))
+            return false;
+
+        Farmer? owner = this.GetOwnerFarmer(ownerId);
+        if (owner is null || itemIndex < 0 || itemIndex >= owner.Items.Count)
+        {
+            if (this.ShouldShowFeedbackFor(ownerId))
+                this.Warn("multiplayer.command_stale");
+            return false;
+        }
+
+        Item? selectedItem = owner.Items[itemIndex];
+        if (selectedItem is not FishingRod rod || selectedItem.Stack != 1)
+        {
+            if (this.ShouldShowFeedbackFor(ownerId))
+                this.Warn("multiplayer.command_stale");
+            return false;
+        }
+
+        if (!this.TryPrepareFishingRodForDeposit(rod, ownerId, out SavedItemStack selectedSaved))
+            return false;
+
+        if (!string.Equals(selectedSaved.QualifiedItemId, expectedItemId, StringComparison.Ordinal)
+            || !SavedItemStackIdentity.Matches(selectedSaved, expectedItemToken))
+        {
+            if (this.ShouldShowFeedbackFor(ownerId))
+                this.Warn("multiplayer.command_stale");
+            return false;
+        }
+
+        if (member.Inventory.Count >= this.GetCompanionInventoryCapacity())
+        {
+            if (this.ShouldShowFeedbackFor(ownerId))
+                this.Warn("companion.inventory.full", new { npc = member.DisplayName });
+            return false;
+        }
+
+        SavedItemStack stored = CompanionStateCopy.CloneItem(selectedSaved);
+        string displayName = selectedItem.DisplayName;
+        try
+        {
+            // Both collections are host-owned and this runs synchronously on the
+            // game thread. Remove the source first, then roll it back if the
+            // persistent inventory append unexpectedly fails.
+            owner.Items[itemIndex] = null;
+            member.Inventory.Add(stored);
+        }
+        catch (Exception ex)
+        {
+            Exception? rollbackError = null;
+            try
+            {
+                member.Inventory.Remove(stored);
+                if (itemIndex >= 0
+                    && itemIndex < owner.Items.Count
+                    && owner.Items[itemIndex] is null)
+                {
+                    owner.Items[itemIndex] = selectedItem;
+                }
+            }
+            catch (Exception rollbackEx)
+            {
+                rollbackError = rollbackEx;
+            }
+
+            this.Monitor.Log(
+                rollbackError is null
+                    ? $"Could not deposit fishing rod '{selectedSaved.QualifiedItemId}' for '{member.NpcName}'; the transfer was rolled back. {ex}"
+                    : $"Could not deposit fishing rod '{selectedSaved.QualifiedItemId}' for '{member.NpcName}', and rollback also failed. Transfer error: {ex} Rollback error: {rollbackError}",
+                LogLevel.Error);
+            if (this.ShouldShowFeedbackFor(ownerId))
+                this.Warn("multiplayer.command_failed");
+            return false;
+        }
+
+        this.MarkStateDirty();
+        if (this.ShouldShowFeedbackFor(ownerId))
+        {
+            this.Info("companion.inventory.deposit_fishing_rod_complete", new
+            {
+                npc = member.DisplayName,
+                item = displayName
+            });
+        }
+        return true;
+    }
+
+    private bool TryPrepareFishingRodForDeposit(
+        FishingRod rod,
+        long ownerId,
+        out SavedItemStack saved)
+    {
+        saved = null!;
+        try
+        {
+            if (rod.attachments.Any(attachment => attachment is not null))
+            {
+                if (this.ShouldShowFeedbackFor(ownerId))
+                    this.Warn("companion.inventory.deposit_fishing_rod_attachments");
+                return false;
+            }
+
+            if (rod.enchantments.Count > 0 || rod.previousEnchantments.Count > 0)
+            {
+                if (this.ShouldShowFeedbackFor(ownerId))
+                    this.Warn("companion.inventory.deposit_fishing_rod_enchantments");
+                return false;
+            }
+
+            SavedItemStack? serialized = this.ToSavedItem(rod);
+            if (serialized is null)
+                throw new InvalidOperationException($"Couldn't serialize fishing rod '{rod.QualifiedItemId}'.");
+
+            if (this.TryCreateItem(serialized) is not FishingRod restored
+                || restored.UpgradeLevel != rod.UpgradeLevel
+                || restored.AttachmentSlotsCount != rod.AttachmentSlotsCount)
+            {
+                if (this.ShouldShowFeedbackFor(ownerId))
+                    this.Warn("companion.inventory.deposit_fishing_rod_unsupported");
+                return false;
+            }
+
+            saved = serialized;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Could not validate fishing rod '{rod.QualifiedItemId}' for companion deposit: {ex}", LogLevel.Error);
+            if (this.ShouldShowFeedbackFor(ownerId))
+                this.Warn("multiplayer.command_failed");
+            return false;
+        }
     }
 
     private bool WithdrawCompanionInventoryItem(SquadMemberState member, int index)
@@ -885,6 +1089,12 @@ public sealed partial class ModEntry
     {
         if (!this.CanOwnerMutate(member, ownerId))
             return;
+
+        if (this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? fishingTask)
+            && fishingTask.Kind == CompanionTaskKind.Fishing)
+        {
+            this.RemovePendingTask(fishingTask);
+        }
 
         if (IsDirectiveEnabled(member, directive) == enabled)
             return;

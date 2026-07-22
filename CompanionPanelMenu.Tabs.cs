@@ -309,15 +309,58 @@ internal sealed partial class CompanionPanelMenu
 
     private void DrawInventory(SpriteBatch b, SquadMemberState member, Rectangle area)
     {
-        int headerHeight = Math.Min(36, Math.Max(26, area.Height / 5));
-        int withdrawWidth = Math.Min(150, Math.Max(84, area.Width / 3));
-        this.withdrawAllButton = new Rectangle(area.Right - withdrawWidth, area.Y, withdrawWidth, headerHeight);
-        Utility.drawTextWithShadow(
+        int headerHeight = Math.Min(48, Math.Max(36, area.Height / 5));
+        int hatSize = Math.Min(headerHeight, 48);
+        this.hatSlot = new Rectangle(area.X, area.Y, hatSize, hatSize);
+        this.DrawFlatPanel(b, this.hatSlot, new Color(235, 220, 193), AccentGold, 2);
+
+        Item? equippedHat = this.getEquippedHat(member);
+        if (equippedHat is not null)
+        {
+            float hatScale = Math.Clamp((hatSize - 7) / 64f, 0.35f, 0.75f);
+            equippedHat.drawInMenu(b, new Vector2(this.hatSlot.X + 4, this.hatSlot.Y + 4), hatScale);
+        }
+        else if (this.hasEquippedHat(member))
+        {
+            DrawCenteredPanelText(b, "?", Game1.smallFont, this.hatSlot, MutedTextColor, PanelTextScale, 4, 4);
+        }
+
+        int buttonHeight = Math.Min(36, headerHeight);
+        int actionStartX = this.hatSlot.Right + 8;
+        int actionWidth = Math.Max(1, area.Right - actionStartX);
+        int actionGap = actionWidth >= 12 ? 6 : 0;
+        int preferredButtonWidth = Math.Min(150, Math.Max(72, area.Width / 4));
+        int buttonWidth = Math.Min(
+            preferredButtonWidth,
+            Math.Max(1, (actionWidth - actionGap) / 2));
+        this.withdrawAllButton = new Rectangle(area.Right - buttonWidth, area.Y, buttonWidth, buttonHeight);
+        this.depositFishingRodButton = new Rectangle(
+            this.withdrawAllButton.X - actionGap - buttonWidth,
+            area.Y,
+            buttonWidth,
+            buttonHeight);
+        int labelX = this.hatSlot.Right + 8;
+        int labelWidth = Math.Max(1, this.depositFishingRodButton.X - labelX - 8);
+        if (labelWidth >= 28)
+        {
+            string hatLabel = equippedHat is not null
+                ? this.translate("companion.hat.slot_equipped", new { hat = equippedHat.DisplayName })
+                : this.hasEquippedHat(member)
+                    ? this.translate("companion.hat.slot_unavailable", null)
+                    : this.translate("companion.hat.slot_empty", null);
+            Utility.drawTextWithShadow(
+                b,
+                FitText(hatLabel, Game1.tinyFont, labelWidth),
+                Game1.tinyFont,
+                new Vector2(labelX, area.Y + Math.Max(3, (headerHeight - Game1.tinyFont.LineSpacing) / 2)),
+                TextColor);
+        }
+        this.DrawButton(
             b,
-            FitText(this.translate("companion.inventory.title", new { npc = member.DisplayName }), Game1.tinyFont, Math.Max(1, area.Width - withdrawWidth - 10)),
-            Game1.tinyFont,
-            new Vector2(area.X + 2, area.Y + 8),
-            TextColor);
+            this.depositFishingRodButton,
+            this.translate("companion.inventory.deposit_fishing_rod", null),
+            false,
+            danger: false);
         this.DrawButton(b, this.withdrawAllButton, this.translate("companion.inventory.withdraw_all", null), false, danger: false);
 
         IReadOnlyList<Item> items = this.GetCachedInventoryItems(member);
@@ -770,6 +813,7 @@ internal sealed partial class CompanionPanelMenu
             "Lumbering" => AccentGreen,
             "Mining" => new Color(74, 113, 154),
             "Utility" => new Color(126, 91, 144),
+            "Fishing" => new Color(45, 137, 166),
             _ => AccentBlue
         };
     }

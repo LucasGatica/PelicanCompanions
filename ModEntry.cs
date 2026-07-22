@@ -16,7 +16,7 @@ namespace PelicanCompanions;
 public sealed partial class ModEntry : Mod
 {
     private const string SaveKey = "pelican-companions-state";
-    private const int CurrentSaveVersion = 9;
+    private const int CurrentSaveVersion = 10;
     private const string NpcConfigAssetKey = "Lucas.PelicanCompanions/NpcConfig";
     private const string MessageActionRequest = "CompanionActionRequest";
     private const string MessageStateRequest = "CompanionStateRequest";
@@ -87,6 +87,8 @@ public sealed partial class ModEntry : Mod
     private readonly Dictionary<string, string> workStandReservations = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> followDestinationsThisUpdate = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DeferredNpcRestoreState> deferredNpcRestores = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, NpcCosmeticState> npcCosmetics = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, NpcHatCacheEntry> npcHatCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<long, bool> taskToggles = new();
     private readonly Dictionary<long, List<FollowTrailPoint>> ownerTrails = new();
     private readonly Dictionary<string, Vector2> lastFollowTargets = new(StringComparer.OrdinalIgnoreCase);
@@ -151,6 +153,7 @@ public sealed partial class ModEntry : Mod
         float PlayerDistance);
     private readonly record struct TargetPreview(bool HasTarget, string TargetKey, int X, int Y, string ReasonKey);
     private readonly record struct CompanionHudNotice(string NpcName, string Text, string? ItemQualifiedId, int StartedTick, int DurationTicks, Color Accent);
+    private readonly record struct NpcHatCacheEntry(StardewValley.Objects.Hat? Hat, int CheckedAtTick);
     private readonly record struct ReachabilityCacheKey(string LocationName, int OriginX, int OriginY, int MaxVisitedTiles);
     private readonly record struct ReachabilityCacheEntry(int Tick, Dictionary<Vector2, int> Distances);
     private readonly record struct TargetPreviewCacheKey(
@@ -194,6 +197,7 @@ public sealed partial class ModEntry : Mod
         helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
         helper.Events.GameLoop.SaveLoaded += this.OnSaveLoaded;
         helper.Events.GameLoop.DayStarted += this.OnDayStarted;
+        helper.Events.GameLoop.DayEnding += this.OnDayEnding;
         helper.Events.GameLoop.Saving += this.OnSaving;
         helper.Events.GameLoop.ReturnedToTitle += this.OnReturnedToTitle;
         helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
@@ -213,6 +217,9 @@ public sealed partial class ModEntry : Mod
         CompanionBehaviorPatches.IsVanillaMovementExplicitlyAllowed = this.IsVanillaMovementAllowed;
         CompanionBehaviorPatches.ShouldSuppressVanillaArrival = npc => this.suppressedVanillaArrivals.ContainsKey(npc);
         CompanionBehaviorPatches.NeutralizeVanillaBedtimeController = this.NeutralizeVanillaBedtimeController;
+        CompanionBehaviorPatches.DrawCosmeticHat = this.DrawNpcCosmeticHat;
+        CompanionTaskDropPatches.BeforeTrackedTreeTick = this.BeforeTrackedTreeTick;
+        CompanionTaskDropPatches.AfterTrackedTreeTick = this.AfterTrackedTreeTick;
         this.harmony = new Harmony(this.ModManifest.UniqueID);
         try
         {

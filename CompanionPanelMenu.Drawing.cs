@@ -222,6 +222,10 @@ internal sealed partial class CompanionPanelMenu
             this.focusTargets.Add(this.dismissButton);
         this.focusTargets.AddRange(this.directiveButtons.Select(p => p.Bounds));
         this.focusTargets.AddRange(this.skillButtons.Select(p => p.Bounds));
+        if (this.hatSlot.Width > 0)
+            this.focusTargets.Add(this.hatSlot);
+        if (this.depositFishingRodButton.Width > 0)
+            this.focusTargets.Add(this.depositFishingRodButton);
         if (this.withdrawAllButton.Width > 0)
             this.focusTargets.Add(this.withdrawAllButton);
         this.focusTargets.AddRange(this.inventorySlotsBounds.Select(p => p.Bounds));
@@ -472,6 +476,10 @@ internal sealed partial class CompanionPanelMenu
             return AccentGold;
         if (member.CurrentActivityKey == "companion.status.moving_to_wait")
             return AccentBlue;
+        if (member.CurrentActivityKey == "companion.status.moving_to_fish")
+            return AccentBlue;
+        if (member.CurrentActivityKey == "companion.status.fishing")
+            return new Color(45, 137, 166);
         if (member.CurrentActivityKey == "companion.status.working")
             return new Color(207, 133, 50);
         if (member.CurrentActivityKey == "companion.status.returning")

@@ -52,6 +52,10 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private readonly Func<SquadMemberState, CompanionPanelMapInfo> getMapInfo;
     private readonly Func<SquadMemberState, CompanionDirective, string> getDirectivePreviewText;
     private readonly Func<SquadMemberState, List<Item>> getInventoryItems;
+    private readonly Func<SquadMemberState, Item?> getEquippedHat;
+    private readonly Func<SquadMemberState, bool> hasEquippedHat;
+    private readonly Func<SquadMemberState, bool> changeHat;
+    private readonly Func<SquadMemberState, bool> depositFishingRod;
     private readonly Func<SquadMemberState, int, bool> withdrawInventoryItem;
     private readonly Func<SquadMemberState, bool> withdrawAllInventoryItems;
     private readonly Action<SquadMemberState, CompanionDirective> toggleDirective;
@@ -74,7 +78,9 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private Rectangle memberListArea;
     private Rectangle previousMemberButton;
     private Rectangle nextMemberButton;
+    private Rectangle depositFishingRodButton;
     private Rectangle withdrawAllButton;
+    private Rectangle hatSlot;
     private Rectangle waitButton;
     private Rectangle recallButton;
     private Rectangle dismissButton;
@@ -102,6 +108,10 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         Func<SquadMemberState, CompanionPanelMapInfo> getMapInfo,
         Func<SquadMemberState, CompanionDirective, string> getDirectivePreviewText,
         Func<SquadMemberState, List<Item>> getInventoryItems,
+        Func<SquadMemberState, Item?> getEquippedHat,
+        Func<SquadMemberState, bool> hasEquippedHat,
+        Func<SquadMemberState, bool> changeHat,
+        Func<SquadMemberState, bool> depositFishingRod,
         Func<SquadMemberState, int, bool> withdrawInventoryItem,
         Func<SquadMemberState, bool> withdrawAllInventoryItems,
         Action<SquadMemberState, CompanionDirective> toggleDirective,
@@ -128,6 +138,10 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.getMapInfo = getMapInfo;
         this.getDirectivePreviewText = getDirectivePreviewText;
         this.getInventoryItems = getInventoryItems;
+        this.getEquippedHat = getEquippedHat;
+        this.hasEquippedHat = hasEquippedHat;
+        this.changeHat = changeHat;
+        this.depositFishingRod = depositFishingRod;
         this.withdrawInventoryItem = withdrawInventoryItem;
         this.withdrawAllInventoryItems = withdrawAllInventoryItems;
         this.toggleDirective = toggleDirective;
@@ -206,6 +220,18 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
 
         if (this.currentTab == PanelTab.Inventory)
         {
+            if (this.hatSlot.Contains(x, y))
+            {
+                Game1.playSound(this.changeHat(selected) ? "coin" : "cancel");
+                return;
+            }
+
+            if (this.depositFishingRodButton.Contains(x, y))
+            {
+                Game1.playSound(this.depositFishingRod(selected) ? "coin" : "cancel");
+                return;
+            }
+
             if (this.withdrawAllButton.Contains(x, y))
             {
                 Game1.playSound(this.withdrawAllInventoryItems(selected) ? "coin" : "cancel");
@@ -415,6 +441,23 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         if (this.withdrawAllButton.Contains(x, y))
         {
             this.hoverText = this.translate("companion.inventory.withdraw_all", null);
+            return;
+        }
+
+        if (this.depositFishingRodButton.Contains(x, y))
+        {
+            this.hoverText = this.translate("companion.inventory.deposit_fishing_rod_hint", null);
+            return;
+        }
+
+        if (this.hatSlot.Contains(x, y))
+        {
+            Item? hat = this.getEquippedHat(selected);
+            this.hoverText = hat is not null
+                ? this.translate("companion.hat.replace_hint", new { hat = hat.DisplayName })
+                : this.hasEquippedHat(selected)
+                    ? this.translate("companion.hat.unavailable_hint", null)
+                    : this.translate("companion.hat.equip_hint", null);
             return;
         }
 
@@ -656,7 +699,9 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.memberListArea = new Rectangle();
         this.previousMemberButton = new Rectangle();
         this.nextMemberButton = new Rectangle();
+        this.depositFishingRodButton = new Rectangle();
         this.withdrawAllButton = new Rectangle();
+        this.hatSlot = new Rectangle();
         this.waitButton = new Rectangle();
         this.recallButton = new Rectangle();
         this.dismissButton = new Rectangle();

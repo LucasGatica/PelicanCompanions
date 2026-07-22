@@ -222,23 +222,31 @@ public sealed partial class ModEntry
             return this.TryBuildGroundActionWheel(cursor, out model);
         }
 
-        if (!IsWithinCompanionDistance(Game1.player.Tile, target.Tile))
+        if (target.Kind != CompanionTaskKind.Fishing
+            && !IsContextTargetWithinCompanionReach(Game1.player.Tile, target.Tile))
         {
             this.Warn("tasks.no_valid_target");
             return false;
         }
 
-        List<SquadMemberState> workers = this.GetContextCommandMembers(target.LocationName, target.Tile).ToList();
+        List<SquadMemberState> workers = (target.Kind == CompanionTaskKind.Fishing
+                ? this.GetFishingContextCommandMembers(target.LocationName, target.Tile)
+                : this.GetContextCommandMembers(target.LocationName, target.Tile))
+            .ToList();
         if (workers.Count == 0)
         {
-            this.Warn("commands.no_followers");
+            this.Warn(target.Kind == CompanionTaskKind.Fishing
+                ? "fishing.no_rod"
+                : "commands.no_followers");
             return false;
         }
 
         List<CompanionActionWheelOption> options = new()
         {
             new(
-                this.Tr("wheel.send_all"),
+                this.Tr(target.Kind == CompanionTaskKind.Fishing
+                    ? "wheel.send_all_fishing"
+                    : "wheel.send_all"),
                 CompanionActionWheelTone.Positive,
                 () => this.RequestContextTask(target, npcName: null))
         };
@@ -247,7 +255,11 @@ public sealed partial class ModEntry
         {
             string workerName = worker.NpcName;
             string displayName = worker.DisplayName;
-            string actionLabel = this.Tr("wheel.send_npc", new { npc = displayName });
+            string actionLabel = this.Tr(
+                target.Kind == CompanionTaskKind.Fishing
+                    ? "wheel.send_npc_fishing"
+                    : "wheel.send_npc",
+                new { npc = displayName });
             options.Add(new CompanionActionWheelOption(
                 useShortLabels ? displayName : actionLabel,
                 CompanionActionWheelTone.Profile,
@@ -334,15 +346,15 @@ public sealed partial class ModEntry
             new(
                 this.Tr("companion.directive.wood.short"),
                 CompanionActionWheelTone.Positive,
-                () => this.OpenWorkAreaRadiusWheel(locationName, tile, CompanionWorkSpecialty.Wood, screenPosition)),
+                () => this.OpenWorkAreaMemberWheel(locationName, tile, CompanionWorkSpecialty.Wood, screenPosition)),
             new(
                 this.Tr("companion.directive.mining.short"),
                 CompanionActionWheelTone.Profile,
-                () => this.OpenWorkAreaRadiusWheel(locationName, tile, CompanionWorkSpecialty.Mining, screenPosition)),
+                () => this.OpenWorkAreaMemberWheel(locationName, tile, CompanionWorkSpecialty.Mining, screenPosition)),
             new(
                 this.Tr("companion.directive.clear.short"),
                 CompanionActionWheelTone.Warning,
-                () => this.OpenWorkAreaRadiusWheel(locationName, tile, CompanionWorkSpecialty.ClearArea, screenPosition))
+                () => this.OpenWorkAreaMemberWheel(locationName, tile, CompanionWorkSpecialty.ClearArea, screenPosition))
         };
         wheel.Open(
             new CompanionActionWheelModel(
@@ -353,47 +365,10 @@ public sealed partial class ModEntry
             screenPosition);
     }
 
-    private void OpenWorkAreaRadiusWheel(
-        string locationName,
-        Vector2 tile,
-        CompanionWorkSpecialty specialty,
-        Vector2 screenPosition)
-    {
-        CompanionActionWheel? wheel = this.companionActionWheels?.Value;
-        if (wheel is null || !this.IsWorkAreaWheelContextValid(locationName, tile))
-            return;
-
-        int maximumRadius = CompanionWorkAreaPolicy.NormalizeRadius(this.GetConfiguredWorkRadius());
-        int[] radii = new[] { maximumRadius, 3, 5, 8, 12, 20 }
-            .Where(radius => radius <= maximumRadius)
-            .Distinct()
-            .Take(CompanionActionWheelPagination.MaximumVisibleSlots)
-            .ToArray();
-        CompanionActionWheelOption[] options = radii
-            .Select(radius => new CompanionActionWheelOption(
-                this.Tr(
-                    radius == maximumRadius ? "work_area.radius_max" : "work_area.radius_option",
-                    new { radius }),
-                radius == maximumRadius
-                    ? CompanionActionWheelTone.Positive
-                    : CompanionActionWheelTone.Neutral,
-                () => this.OpenWorkAreaMemberWheel(locationName, tile, specialty, radius, screenPosition)))
-            .ToArray();
-
-        wheel.Open(
-            new CompanionActionWheelModel(
-                this.Tr("work_area.choose_radius"),
-                this.Tr("wheel.hint"),
-                options,
-                () => this.IsWorkAreaWheelContextValid(locationName, tile)),
-            screenPosition);
-    }
-
     private void OpenWorkAreaMemberWheel(
         string locationName,
         Vector2 tile,
         CompanionWorkSpecialty specialty,
-        int radius,
         Vector2 screenPosition)
     {
         CompanionActionWheel? wheel = this.companionActionWheels?.Value;
@@ -415,8 +390,7 @@ public sealed partial class ModEntry
                     npcName: null,
                     locationName,
                     rawCenter: tile,
-                    specialty,
-                    radius))
+                    specialty))
         };
         bool useShortLabels = workers.Count > CompanionActionWheelPagination.PageSize;
         foreach (SquadMemberState worker in workers)
@@ -431,8 +405,7 @@ public sealed partial class ModEntry
                     workerName,
                     locationName,
                     rawCenter: tile,
-                    specialty,
-                    radius),
+                    specialty),
                 actionLabel));
         }
 
@@ -571,7 +544,7 @@ public sealed partial class ModEntry
             return;
         }
 
-        this.TryRecruit(npc, Game1.player.UniqueMultiplayerID, showPrompt: true);
+        this.TryRecruit(npc, Game1.player.UniqueMultiplayerID, showPrompt: false);
     }
 
     private bool IsOwnedNpcWheelContextValid(string npcName, string locationName)

@@ -200,12 +200,17 @@ public sealed partial class ModEntry
 
     private Item? AddToCompanionInventory(SquadMemberState member, Item item)
     {
-        int originalStack = Math.Max(1, item.Stack);
-        int inventoryBefore = CountSavedItemStack(member.Inventory, item.QualifiedItemId);
-        Item copy;
+        int originalStack = 1;
+        int inventoryBefore = 0;
+        string qualifiedItemId = "<unknown>";
+        bool baselineCaptured = false;
         try
         {
-            copy = CloneItemStack(item);
+            originalStack = Math.Max(1, item.Stack);
+            qualifiedItemId = item.QualifiedItemId;
+            inventoryBefore = CountSavedItemStack(member.Inventory, qualifiedItemId);
+            baselineCaptured = true;
+            Item copy = CloneItemStack(item);
             for (int i = 0; i < member.Inventory.Count; i++)
             {
                 Item? existing = this.TryCreateItem(member.Inventory[i]);
@@ -227,7 +232,7 @@ public sealed partial class ModEntry
                 copy.Stack = remainder;
             }
 
-            if (member.Inventory.Count >= this.config.CompanionInventorySlots)
+            if (member.Inventory.Count >= this.GetCompanionInventoryCapacity())
                 return copy;
 
             SavedItemStack? saved = this.ToSavedItem(copy);
@@ -240,11 +245,13 @@ public sealed partial class ModEntry
         }
         catch (Exception ex)
         {
-            int transferred = Math.Clamp(
-                CountSavedItemStack(member.Inventory, item.QualifiedItemId) - inventoryBefore,
-                0,
-                originalStack);
-            this.Monitor.Log($"Companion reward transfer failed for '{item.QualifiedItemId}' and was reconciled: {ex}", LogLevel.Error);
+            int transferred = baselineCaptured
+                ? Math.Clamp(
+                    CountSavedItemStack(member.Inventory, qualifiedItemId) - inventoryBefore,
+                    0,
+                    originalStack)
+                : 0;
+            this.Monitor.Log($"Companion reward transfer failed for '{qualifiedItemId}' and was reconciled: {ex}", LogLevel.Error);
             return this.CreateRemainderStack(item, originalStack - transferred);
         }
     }
@@ -259,49 +266,55 @@ public sealed partial class ModEntry
 
     private Item? AddToFarmerInventorySafely(Farmer owner, Item item, string context)
     {
-        int originalStack = Math.Max(1, item.Stack);
-        Item candidate;
+        int originalStack = 1;
+        int inventoryBefore = 0;
+        string qualifiedItemId = "<unknown>";
+        bool baselineCaptured = false;
         try
         {
-            candidate = CloneItemStack(item);
-        }
-        catch (Exception ex)
-        {
-            this.Monitor.Log($"Couldn't clone '{item.QualifiedItemId}' for {context}: {ex.Message}", LogLevel.Warn);
-            return this.CreateRemainderStack(item, originalStack);
-        }
-
-        int inventoryBefore = CountInventoryStack(owner, item.QualifiedItemId);
-        try
-        {
+            originalStack = Math.Max(1, item.Stack);
+            qualifiedItemId = item.QualifiedItemId;
+            Item candidate = CloneItemStack(item);
+            inventoryBefore = CountInventoryStack(owner, qualifiedItemId);
+            baselineCaptured = true;
             return owner.addItemToInventory(candidate);
         }
         catch (Exception ex)
         {
-            int transferred = Math.Clamp(
-                CountInventoryStack(owner, item.QualifiedItemId) - inventoryBefore,
-                0,
-                originalStack);
-            this.Monitor.Log($"Farmer inventory transfer failed for '{item.QualifiedItemId}' during {context} and was reconciled: {ex}", LogLevel.Error);
+            int transferred = baselineCaptured
+                ? Math.Clamp(
+                    CountInventoryStack(owner, qualifiedItemId) - inventoryBefore,
+                    0,
+                    originalStack)
+                : 0;
+            this.Monitor.Log($"Farmer inventory transfer failed for '{qualifiedItemId}' during {context} and was reconciled: {ex}", LogLevel.Error);
             return this.CreateRemainderStack(item, originalStack - transferred);
         }
     }
 
     private Item? AddToSquadInventorySafely(Item item, string context)
     {
-        int originalStack = Math.Max(1, item.Stack);
-        int inventoryBefore = CountItemStack(this.squadInventory, item.QualifiedItemId);
+        int originalStack = 1;
+        int inventoryBefore = 0;
+        string qualifiedItemId = "<unknown>";
+        bool baselineCaptured = false;
         try
         {
+            originalStack = Math.Max(1, item.Stack);
+            qualifiedItemId = item.QualifiedItemId;
+            inventoryBefore = CountItemStack(this.squadInventory, qualifiedItemId);
+            baselineCaptured = true;
             return this.AddToSquadInventory(item);
         }
         catch (Exception ex)
         {
-            int transferred = Math.Clamp(
-                CountItemStack(this.squadInventory, item.QualifiedItemId) - inventoryBefore,
-                0,
-                originalStack);
-            this.Monitor.Log($"Squad inventory transfer failed for '{item.QualifiedItemId}' during {context} and was reconciled: {ex}", LogLevel.Error);
+            int transferred = baselineCaptured
+                ? Math.Clamp(
+                    CountItemStack(this.squadInventory, qualifiedItemId) - inventoryBefore,
+                    0,
+                    originalStack)
+                : 0;
+            this.Monitor.Log($"Squad inventory transfer failed for '{qualifiedItemId}' during {context} and was reconciled: {ex}", LogLevel.Error);
             return this.CreateRemainderStack(item, originalStack - transferred);
         }
     }
@@ -398,23 +411,176 @@ public sealed partial class ModEntry
         }
     }
 
+    private static HashSet<Debris> SnapshotLocationDebris(GameLocation location)
+    {
+        return location.debris.ToHashSet();
+    }
+
+    private void RouteNewTaskDebris(
+        SquadMemberState member,
+        GameLocation location,
+        Vector2 tile,
+        IReadOnlySet<Debris> debrisBefore,
+        string sourceKey)
+    {
+        List<Debris> producedDebris;
+        try
+        {
+            producedDebris = location.debris
+                .Where(debris => !debrisBefore.Contains(debris))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Couldn't inspect task drops after {sourceKey}; vanilla debris was left untouched. {ex.Message}", LogLevel.Warn);
+            return;
+        }
+
+        // The vanilla action has already committed the world mutation. Convert
+        // only the collectible debris created by that exact synchronous call;
+        // cosmetic chunks and pre-existing player drops remain in the world.
+        foreach (Debris debris in producedDebris)
+        {
+            Item? item = this.TryCreateTaskDebrisItem(debris, sourceKey);
+            if (item is null)
+                continue;
+
+            bool removed;
+            try
+            {
+                removed = location.debris.Remove(debris);
+            }
+            catch (Exception ex)
+            {
+                this.Monitor.Log($"Couldn't claim a vanilla task drop after {sourceKey}; it was left in the world. {ex.Message}", LogLevel.Warn);
+                continue;
+            }
+
+            if (!removed)
+                continue;
+
+            this.RouteTaskRewardOrDrop(member, item, location, tile, sourceKey);
+        }
+    }
+
+    private Item? TryCreateTaskDebrisItem(Debris debris, string sourceKey)
+    {
+        try
+        {
+            Debris.DebrisType type = debris.debrisType.Value;
+            if (type is not Debris.DebrisType.OBJECT and not Debris.DebrisType.RESOURCE)
+                return null;
+
+            if (debris.isEssentialItem())
+                return null;
+
+            if (debris.item is Item exactItem)
+            {
+                if (debris.Chunks.Count != 1
+                    || string.Equals(exactItem.QualifiedItemId, "(O)GoldCoin", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                return CloneItemStack(exactItem);
+            }
+
+            string qualifiedItemId = debris.itemId.Value;
+            int stack = debris.Chunks.Count;
+            if (string.IsNullOrWhiteSpace(qualifiedItemId)
+                || string.Equals(qualifiedItemId, "(O)GoldCoin", StringComparison.Ordinal)
+                || stack <= 0)
+            {
+                return null;
+            }
+
+            return ItemRegistry.Create(
+                qualifiedItemId,
+                stack,
+                debris.itemQuality,
+                allowNull: true);
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Couldn't materialize a vanilla task drop after {sourceKey}; it was left in the world. {ex.Message}", LogLevel.Warn);
+            return null;
+        }
+    }
+
     private void RouteTaskRewardOrDrop(SquadMemberState member, Item item, GameLocation location, Vector2 tile, string sourceKey)
     {
-        this.RecordCompanionLoot(member, item, sourceKey);
+        Farmer? owner = null;
+        try
+        {
+            owner = this.GetOwnerFarmer(member.OwnerId);
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Couldn't resolve the owner for '{member.NpcName}' after {sourceKey}; routing will continue through the companion and world fallback. {ex.Message}", LogLevel.Warn);
+        }
 
-        Item? notAdded = this.AddToCompanionInventory(member, item);
-        if (notAdded is null)
-            return;
+        bool useSquadInventory = this.replicatedHostRules?.UseSquadInventory ?? this.config.UseSquadInventory;
+        Item? notAdded = item;
 
-        Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
-        if (owner is not null)
-            notAdded = this.AddToFarmerInventorySafely(owner, notAdded, sourceKey);
-        if (notAdded is null)
-            return;
+        try
+        {
+            this.RecordCompanionLoot(member, item, sourceKey);
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Couldn't record recent loot for '{member.NpcName}' after {sourceKey}; item routing will continue. {ex.Message}", LogLevel.Warn);
+        }
 
-        this.DropItemSafely(notAdded, location, tile, owner?.FacingDirection ?? 2, sourceKey);
-        this.SetTaskFailure(member, "companion.task_failure.inventory_full_world_drop");
-        this.Warn("companion.inventory.full", new { npc = member.DisplayName });
+        try
+        {
+            foreach (CompanionItemDestination destination in CompanionItemRoutingPolicy.GetRoute(useSquadInventory, owner is not null))
+            {
+                if (notAdded is null)
+                    return;
+
+                switch (destination)
+                {
+                    case CompanionItemDestination.Companion:
+                        notAdded = this.AddToCompanionInventory(member, notAdded);
+                        break;
+
+                    case CompanionItemDestination.Squad:
+                        notAdded = this.AddToSquadInventorySafely(notAdded, sourceKey);
+                        break;
+
+                    case CompanionItemDestination.Owner when owner is not null:
+                        notAdded = this.AddToFarmerInventorySafely(owner, notAdded, sourceKey);
+                        break;
+
+                    case CompanionItemDestination.WorldDrop:
+                        this.DropItemSafely(notAdded, location, tile, owner?.FacingDirection ?? 2, sourceKey);
+                        this.ReportTaskInventoryOverflow(member);
+                        return;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Destination helpers reconcile partial commits and return only the
+            // remainder. This outer guard ensures an unexpected custom-item
+            // failure can't escape after the source debris has been claimed.
+            this.Monitor.Log($"Unexpected item-routing failure for '{member.NpcName}' after {sourceKey}; preserving the uncommitted remainder as a world drop. {ex}", LogLevel.Error);
+            if (notAdded is not null)
+                this.DropItemSafely(notAdded, location, tile, owner?.FacingDirection ?? 2, sourceKey);
+        }
+    }
+
+    private void ReportTaskInventoryOverflow(SquadMemberState member)
+    {
+        try
+        {
+            this.SetTaskFailure(member, "companion.task_failure.inventory_full_world_drop");
+            this.WarnForPlayer(member.OwnerId, "companion.inventory.full", new { npc = member.DisplayName });
+        }
+        catch (Exception ex)
+        {
+            this.Monitor.Log($"Couldn't report inventory overflow for '{member.NpcName}', but its item was preserved in the world. {ex.Message}", LogLevel.Warn);
+        }
     }
 
     private static Item CloneItemStack(Item item)
@@ -732,6 +898,7 @@ public sealed partial class ModEntry
             "water" => new Color(80, 145, 210),
             "harvest" => new Color(196, 145, 62),
             "pet" => new Color(218, 126, 154),
+            "fish" => new Color(45, 137, 166),
             "return" => new Color(90, 165, 220),
             _ => new Color(225, 176, 76)
         };
@@ -751,7 +918,7 @@ public sealed partial class ModEntry
             // Visual signal is non-critical; keep the task running if a custom map rejects sprites.
         }
 
-        if (kind is "forage" or "water" or "harvest" or "pet" or "return")
+        if (kind is "forage" or "water" or "harvest" or "pet" or "fish" or "return")
         {
             npc.jumpWithoutSound(2f);
             npc.shake(90);

@@ -485,6 +485,8 @@ public sealed partial class ModEntry
             "foraging" => CompanionTaskKind.Gathering,
             "harvesting" => CompanionTaskKind.Harvesting,
             "petting" => CompanionTaskKind.Petting,
+            "fishing_waiting" => CompanionTaskKind.Fishing,
+            "fishing_caught" => CompanionTaskKind.Fishing,
             _ => null
         };
     }

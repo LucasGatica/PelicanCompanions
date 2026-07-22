@@ -4,6 +4,63 @@ All notable Pelican Companions changes are documented here.
 
 ## Unreleased
 
+### Directed companion fishing
+
+- Added an explicit Inventory-tab transfer for a selected fishing rod. Only a
+  single unenchanted rod with no bait or tackle is accepted; the host revalidates its slot
+  and fingerprint before storing it in the companion's persistent inventory,
+  without opening general player-to-companion deposits.
+- `X` on water now offers Send all fishing and named choices for local
+  companions carrying rods. The host discovers the exact cardinally connected
+  water body, then assigns each worker the closest reachable safe shore with a
+  distinct reservation, replan support, and no teleporting to another pond.
+- A directed session continues through repeated catches until 26:00/day end or
+  another command. Regular non-legendary fish enter the companion inventory
+  first, use the configured overflow/world-drop route when full, and grant 8 XP
+  per fish through the existing progression system.
+- Fishing commands reject non-fishable/`NoFishing` water. Catches use Stardew's
+  data-driven fish selector directly, bypassing virtual location overrides that
+  can consume one-time quest or team rewards before returning a non-fish item.
+- Added Fishing as a fourth three-node skill branch: faster catches, one extra
+  casting tile plus one quality tier, then a 25% chance of an extra fish. Pure
+  water-body and session policies cover connectivity, shore/cast selection,
+  timing, XP, quality, and bonus-catch boundaries in the regression harness.
+
+### Persistent cosmetic hats
+
+- Added a dedicated hat slot to each NPC companion's Inventory tab. A selected
+  toolbar hat can be equipped or swapped atomically, while an empty selected
+  slot removes the equipped hat back to the player.
+- Hat ownership is stored separately from recruitment and ordinary carried
+  items, so dismiss, dismiss-all, schedule restoration, day changes, and
+  save/reload leave the NPC wearing it. Save schema is now 10.
+- Hat changes are host-authoritative in multiplayer; requests fingerprint both
+  the selected toolbar hat and the cosmetic state shown by the client, while
+  snapshots replicate the result. Missing custom hats remain preserved until
+  their content pack is restored instead of becoming an invisible inventory item.
+- Hats now follow the head movement drawn inside each walking frame. The offset
+  is measured and cached from the NPC's own texture, so villagers that bob only
+  in some directions (or don't bob at all) keep the correct alignment.
+
+### Contextual resource reach
+
+- Direct `X` commands now measure the three-tile safety limit against the
+  companion's adjacent stand instead of the resource tile itself. A tree,
+  stone, or crop one tile beyond that radius is accepted when its working side
+  remains in range, with the same validation repeated by the host.
+
+### Companion inventory routing
+
+- Safe forage and the collectible item/resource debris created by companion
+  lumbering and mining now enter that companion's inventory instead of bypassing
+  it for the player/shared inventory or remaining scattered on the ground.
+- A full companion inventory falls back to the configured shared squad inventory
+  or owner inventory, then to a world drop. Mining uses a synchronous debris
+  diff; a felled tree stays tied to the companion through its exact final
+  `tickUpdate`, when the trunk drops actually appear. Existing drops, cosmetic
+  chunks, archaeology, and essential items are left untouched.
+- Added pure routing-order regressions; the automated harness now has 55 tests.
+
 ### Visible companion work
 
 - Companions now face their target and show a short tool or hand motion only
@@ -20,9 +77,10 @@ All notable Pelican Companions changes are documented here.
 ### Persistent work areas
 
 - `X` on safe empty ground now offers Work, then Wood, Mining, or Clear Area,
-  a radius preset up to the host-configured maximum, and finally Send all or a
-  specific companion. The chosen 3–20 tile radius is rendered as a temporary
-  circular boundary.
+  and finally Send all or a specific companion. The intermediate radius menu
+  was removed; every new order uses the host-configured maximum radius and
+  renders that 3–20 tile circle as a temporary boundary. Existing saved orders
+  retain their recorded boundary until replaced, avoiding unexpected expansion.
 - Area workers remain anchored to the selected map and center, accept only
   matching resources inside the inclusive circle, and may stand one adjacent
   tile outside it. Reserved or unreachable targets pause the order instead of
@@ -34,7 +92,8 @@ All notable Pelican Companions changes are documented here.
   retried even when the NPC is already in the area's location.
 - A truly exhausted area ends in Waiting with clear success feedback. The area
   intent survives save/reload while target, path, reservation, preview, and
-  animation remain transient; save schema is now 9. Reloading with tasks disabled
+  animation remain transient; this feature originally advanced the save schema
+  to 9 (the current schema is 10). Reloading with tasks disabled
   preserves the paused state, and exhaustion still completes during placement
   recovery instead of retrying forever.
 
@@ -63,9 +122,11 @@ All notable Pelican Companions changes are documented here.
   Generic fallbacks. Explicit fallback overlays can enrich an exact profile
   with shared season, weather, or friendship reactions; equally specific
   authored NPC lines still win before weighted anti-repeat selection.
-- Recruitment confirmation and refusal now use the same host-authoritative flow
-  from the hotkey, action wheel, and farmhands. Multiplayer speech is translated
-  per client, with the host-resolved text retained if a locale lacks the key.
+- Recruitment from the `X` action wheel commits immediately after selecting
+  Recruit, while the dedicated recruitment hotkey keeps its confirmation and
+  refusal flow. Both paths remain host-authoritative for farmhands. Multiplayer
+  speech is translated per client, with the host-resolved text retained if a
+  locale lacks the key.
 - Authored lines can react to friendship, spouse status, time/period, season,
   weather, indoor/outdoor location, map/context, task, manual orders, outcome,
   failure reason, and discovered item, with matching runtime tokens.

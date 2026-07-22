@@ -438,6 +438,7 @@ public sealed partial class ModEntry
             Version = CurrentSaveVersion,
             Revision = this.stateRevision,
             Members = detachedMembers,
+            NpcCosmetics = this.npcCosmetics.Values.Select(CompanionStateCopy.CloneCosmetic).ToList(),
             TaskTogglesByPlayer = this.taskToggles.ToDictionary(p => p.Key.ToString(), p => p.Value),
             SquadInventory = this.squadInventory.Select(this.ToSavedItem).Where(p => p is not null).Cast<SavedItemStack>().ToList(),
             LegacyOverflowItems = this.legacyOverflowItems.Select(CompanionStateCopy.CloneItem).ToList(),
@@ -629,6 +630,8 @@ public sealed partial class ModEntry
         this.ResetRuntimeState(clearProfiles: false, preserveCosmeticRuntime: true);
         foreach ((string npcName, SquadMemberState member) in prepared.Members)
             this.members.Add(npcName, member);
+        foreach ((string npcName, NpcCosmeticState cosmetic) in prepared.NpcCosmetics)
+            this.npcCosmetics.Add(npcName, cosmetic);
         foreach ((long ownerId, bool enabled) in prepared.TaskToggles)
             this.taskToggles.Add(ownerId, enabled);
         this.squadInventory.AddRange(prepared.SquadInventory);
@@ -674,6 +677,18 @@ public sealed partial class ModEntry
                 preparedToggles[ownerId] = value;
         }
 
+        List<NpcCosmeticState> incomingCosmetics = data.NpcCosmetics ?? new List<NpcCosmeticState>();
+        if (incomingCosmetics.Count > 256)
+            throw new InvalidDataException("The multiplayer snapshot contains too many NPC cosmetics.");
+
+        Dictionary<string, NpcCosmeticState> preparedCosmetics = new(StringComparer.OrdinalIgnoreCase);
+        foreach (NpcCosmeticState? incoming in incomingCosmetics)
+        {
+            NpcCosmeticState cosmetic = this.ValidateAndCloneNpcCosmetic(incoming, "The multiplayer snapshot");
+            if (!preparedCosmetics.TryAdd(cosmetic.NpcName, cosmetic))
+                throw new InvalidDataException($"The multiplayer snapshot contains duplicate cosmetic NPC key '{cosmetic.NpcName}'.");
+        }
+
         List<SavedItemStack> incomingSquadInventory = data.SquadInventory ?? new List<SavedItemStack>();
         List<SavedItemStack> incomingOverflow = data.LegacyOverflowItems ?? new List<SavedItemStack>();
         if (incomingSquadInventory.Count > 4096 || incomingOverflow.Count > 4096)
@@ -700,6 +715,7 @@ public sealed partial class ModEntry
         return new PreparedStateSnapshot(
             data.Revision,
             preparedMembers,
+            preparedCosmetics,
             preparedToggles,
             preparedInventory,
             preparedOverflow,
@@ -717,6 +733,7 @@ public sealed partial class ModEntry
     private sealed record PreparedStateSnapshot(
         long Revision,
         Dictionary<string, SquadMemberState> Members,
+        Dictionary<string, NpcCosmeticState> NpcCosmetics,
         Dictionary<long, bool> TaskToggles,
         List<Item> SquadInventory,
         List<SavedItemStack> OverflowItems,
@@ -855,6 +872,7 @@ public sealed partial class ModEntry
         Vector2? tile = null,
         int index = -1,
         string expectedItemToken = "",
+        string expectedStateToken = "",
         bool? desiredEnabled = null,
         string? expectedLocationName = null)
     {
@@ -872,6 +890,7 @@ public sealed partial class ModEntry
                 TileY = (int)normalizedTile.Y,
                 Index = index,
                 ExpectedItemToken = expectedItemToken,
+                ExpectedStateToken = expectedStateToken,
                 DesiredEnabled = desiredEnabled
             },
             MessageActionRequest,

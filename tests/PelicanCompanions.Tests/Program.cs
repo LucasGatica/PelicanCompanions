@@ -15,7 +15,7 @@ internal static class Program
         new("CompanionProgression respeita fronteiras de nivel", CompanionProgressionRespectsLevelBoundaries),
         new("CompanionProgression limita consultas de XP por nivel", CompanionProgressionClampsLevelQueries),
         new("CompanionProgression reembolsa skills legadas uma unica vez", CompanionProgressionRefundsLegacySkillsOnce),
-        new("Catalogo de skills forma tres trilhas validas", CompanionSkillCatalogFormsThreeValidTracks),
+        new("Catalogo de skills forma quatro trilhas validas", CompanionSkillCatalogFormsFourValidTracks),
         new("CompanionSkillTreePolicy diferencia todos os estados", CompanionSkillTreePolicyClassifiesEveryState),
         new("CompanionSkillTreePolicy respeita caixa e limite de pontos", CompanionSkillTreePolicyHonorsCasingAndPointBoundary),
         new("IGenericModConfigMenuApiCompat e publica", GenericModConfigMenuCompatibilityApiIsPublic),
@@ -28,6 +28,13 @@ internal static class Program
         new("CompanionWorkAreaPolicy limita raios entre tres e vinte", CompanionWorkAreaPolicyNormalizesRadiusBounds),
         new("CompanionWorkAreaPolicy restringe tarefas por especialidade", CompanionWorkAreaPolicyRestrictsTasksBySpecialty),
         new("CompanionWorkAreaPolicy valida estado persistido ativo", CompanionWorkAreaPolicyValidatesPersistedState),
+        new("FishingWaterBodyPolicy descobre componente e margens estaveis", FishingWaterBodyPolicyDiscoversStableComponentAndShore),
+        new("FishingWaterBodyPolicy falha fechado em entrada invalida ou truncada", FishingWaterBodyPolicyFailsClosedForInvalidOrTruncatedDiscovery),
+        new("FishingWaterBodyPolicy escolhe bobber cardinal profundo", FishingWaterBodyPolicySelectsDeepCardinalBobber),
+        new("FishingWaterBodyPolicy desempata direcao e nao salta agua", FishingWaterBodyPolicyUsesStableDirectionAndContiguousWater),
+        new("FishingSessionPolicy controla relogio e prontidao", FishingSessionPolicyHandlesClockAndReadiness),
+        new("FishingSessionPolicy limita alcance e melhora qualidade", FishingSessionPolicyClampsCastAndUpgradesQuality),
+        new("FishingSessionPolicy concede XP e limita captura extra", FishingSessionPolicyAwardsXpAndBoundsExtraCatch),
         new("RecruitmentContextPolicy permite recrutamento distante no mesmo mapa", RecruitmentContextPolicyAllowsAnyDistanceOnSameMap),
         new("CompanionDialoguePolicy mantem pets silenciosos", CompanionDialoguePolicyKeepsPetsSilent),
         new("CompanionDialogueSelectionPolicy evita repeticao e usa a menos recente", CompanionDialogueSelectionPolicyAvoidsRecentLines),
@@ -39,8 +46,12 @@ internal static class Program
         new("TaskNavigationPolicy reutiliza stand validado sem novo probe", TaskNavigationPolicyReusesValidatedStand),
         new("TaskNavigationPolicy limita criacao e reinicio de rotas", TaskNavigationPolicyBudgetsPathStarts),
         new("TaskPlanningPolicy prioriza e percorre membros sem starvation", TaskPlanningPolicyPrioritizesAndRotatesFairly),
+        new("ContextCommandPolicy mede alcance pelo stand adjacente", ContextCommandPolicyUsesAdjacentStandRange),
         new("GroundCommandPolicy abre contexto local seguro sem raio de follow", GroundCommandPolicyOpensSafeLocalContext),
         new("GroundCommandPolicy lista membros locais fora da formacao", GroundCommandPolicyListsLocalMembers),
+        new("CompanionItemRoutingPolicy sempre prioriza companion e preserva world drop", CompanionItemRoutingPolicyKeepsRequiredEndpoints),
+        new("CompanionItemRoutingPolicy usa squad sem depender do owner", CompanionItemRoutingPolicyUsesSquadWhenEnabled),
+        new("CompanionItemRoutingPolicy usa owner somente quando disponivel", CompanionItemRoutingPolicyUsesAvailableOwnerWhenSquadIsDisabled),
         new("CommandReplayGuard rejeita replay por jogador", CommandReplayGuardRejectsReplayPerPlayer),
         new("CommandReplayGuard isola jogadores", CommandReplayGuardIsolatesPlayers),
         new("CommandReplayGuard expulsa o comando mais antigo por capacidade", CommandReplayGuardEvictsOldestAtCapacity),
@@ -48,7 +59,9 @@ internal static class Program
         new("SavedItemStackIdentity e estavel para a ordem de ModData", SavedItemStackIdentityIsStableAcrossModDataOrder),
         new("SavedItemStackIdentity distingue stack", SavedItemStackIdentityDistinguishesStack),
         new("SavedItemStackIdentity distingue quality", SavedItemStackIdentityDistinguishesQuality),
-        new("SavedItemStackIdentity distingue ModData", SavedItemStackIdentityDistinguishesModData)
+        new("SavedItemStackIdentity distingue ModData", SavedItemStackIdentityDistinguishesModData),
+        new("NpcHatRenderPolicy acompanha bob real sem inventar movimento", NpcHatRenderPolicyTracksMeasuredWalkingBob),
+        new("CompanionStateCopy clona cosmetico e chapeu profundamente", CompanionStateCopyDeepClonesNpcCosmetic)
     };
 
     public static int Main()
@@ -261,15 +274,15 @@ internal static class Program
             "skills legadas distintas, ignorando caixa e desconhecidas");
     }
 
-    private static void CompanionSkillCatalogFormsThreeValidTracks()
+    private static void CompanionSkillCatalogFormsFourValidTracks()
     {
-        Assert.Equal(9, CompanionProgression.Skills.Length, "quantidade de skills ativas");
+        Assert.Equal(12, CompanionProgression.Skills.Length, "quantidade de skills ativas");
         Assert.Equal(
-            9,
+            12,
             CompanionProgression.Skills.Select(skill => skill.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
             "IDs de skill devem ser unicos");
         Assert.SequenceEqual(
-            new[] { "Lumbering", "Mining", "Utility" },
+            new[] { "Lumbering", "Mining", "Utility", "Fishing" },
             CompanionProgression.Skills.Select(skill => skill.Branch).Distinct(),
             "ordem dos ramos ativos");
         Assert.False(
@@ -286,7 +299,7 @@ internal static class Program
                 Assert.Equal(skills[index - 1].Id, skills[index].PrerequisiteId, $"pre-requisito do tier {index + 1} em {branch.Key}");
         }
 
-        Assert.Equal(12, CompanionProgression.Skills.Sum(skill => skill.Cost), "custo total da arvore");
+        Assert.Equal(16, CompanionProgression.Skills.Sum(skill => skill.Cost), "custo total da arvore");
     }
 
     private static void CompanionSkillTreePolicyClassifiesEveryState()
@@ -604,6 +617,253 @@ internal static class Program
         Assert.False(CompanionWorkAreaPolicy.IsPersistedStateValid(true, "order", "Farm", 1, 1, 8, (CompanionWorkSpecialty)999), "especialidade desconhecida");
     }
 
+    private static void FishingWaterBodyPolicyDiscoversStableComponentAndShore()
+    {
+        HashSet<FishingTile> water = new()
+        {
+            new(2, 2),
+            new(3, 2),
+            new(2, 3),
+            new(3, 3),
+            new(5, 2)
+        };
+
+        Assert.True(
+            FishingWaterBodyPolicy.TryDiscover(
+                new FishingTile(3, 3),
+                mapWidth: 7,
+                mapHeight: 6,
+                water.Contains,
+                maximumComponentTiles: 16,
+                out FishingWaterBody first),
+            "O clique deve descobrir o quadrado cardinal completo.");
+        Assert.SequenceEqual(
+            new[]
+            {
+                new FishingTile(2, 2),
+                new FishingTile(3, 2),
+                new FishingTile(2, 3),
+                new FishingTile(3, 3)
+            },
+            first.WaterTiles,
+            "A agua deve ser ordenada por linha e coluna.");
+        Assert.Equal(new FishingTile(2, 2), first.Anchor, "A ancora deve ser o primeiro tile na ordem estavel.");
+        Assert.SequenceEqual(
+            new[]
+            {
+                new FishingTile(2, 1),
+                new FishingTile(3, 1),
+                new FishingTile(1, 2),
+                new FishingTile(4, 2),
+                new FishingTile(1, 3),
+                new FishingTile(4, 3),
+                new FishingTile(2, 4),
+                new FishingTile(3, 4)
+            },
+            first.ShoreTiles,
+            "Margens cardinais devem ser unicas e deterministicas.");
+        Assert.True(first.Token.StartsWith("water|2,2|4|", StringComparison.Ordinal), "O token deve carregar ancora e tamanho estaveis.");
+
+        Assert.True(
+            FishingWaterBodyPolicy.TryDiscover(
+                new FishingTile(2, 2),
+                7,
+                6,
+                water.Contains,
+                16,
+                out FishingWaterBody sameComponent),
+            "Outro tile do mesmo corpo deve ser aceito.");
+        Assert.Equal(first.Token, sameComponent.Token, "O token nao pode depender do tile clicado.");
+        Assert.Equal(first.Anchor, sameComponent.Anchor, "A ancora nao pode depender do tile clicado.");
+
+        Assert.True(
+            FishingWaterBodyPolicy.TryDiscover(
+                new FishingTile(5, 2),
+                7,
+                6,
+                water.Contains,
+                16,
+                out FishingWaterBody disconnected),
+            "A agua separada por terra ainda forma seu proprio corpo.");
+        Assert.Equal(1, disconnected.WaterTiles.Count, "O componente cardinal nao pode atravessar a terra.");
+        Assert.NotEqual(first.Token, disconnected.Token, "Corpos desconectados precisam de identidades diferentes.");
+    }
+
+    private static void FishingWaterBodyPolicyFailsClosedForInvalidOrTruncatedDiscovery()
+    {
+        HashSet<FishingTile> water = new()
+        {
+            new(2, 2),
+            new(3, 2),
+            new(2, 3),
+            new(3, 3)
+        };
+
+        Assert.False(
+            FishingWaterBodyPolicy.TryDiscover(new FishingTile(2, 2), 0, 5, water.Contains, 10, out _),
+            "Largura invalida deve falhar.");
+        Assert.False(
+            FishingWaterBodyPolicy.TryDiscover(new FishingTile(2, 2), 5, -1, water.Contains, 10, out _),
+            "Altura invalida deve falhar.");
+        Assert.False(
+            FishingWaterBodyPolicy.TryDiscover(new FishingTile(-1, 2), 5, 5, water.Contains, 10, out _),
+            "Clique fora do mapa deve falhar.");
+        Assert.False(
+            FishingWaterBodyPolicy.TryDiscover(new FishingTile(1, 1), 5, 5, water.Contains, 10, out _),
+            "Clique em terra deve falhar.");
+        Assert.False(
+            FishingWaterBodyPolicy.TryDiscover(new FishingTile(2, 2), 5, 5, water.Contains, 0, out _),
+            "Limite vazio deve falhar.");
+
+        Assert.False(
+            FishingWaterBodyPolicy.TryDiscover(
+                new FishingTile(2, 2),
+                5,
+                5,
+                water.Contains,
+                maximumComponentTiles: 3,
+                out FishingWaterBody truncated),
+            "Um componente maior que o limite nao pode retornar um recorte parcial.");
+        Assert.Equal<FishingWaterBody?>(null, truncated, "Descoberta truncada deve limpar a saida.");
+        Assert.True(
+            FishingWaterBodyPolicy.TryDiscover(new FishingTile(2, 2), 5, 5, water.Contains, 4, out FishingWaterBody exact),
+            "Um componente exatamente no limite deve ser aceito.");
+        Assert.Equal(4, exact.WaterTiles.Count, "O limite inclusivo deve preservar o componente completo.");
+    }
+
+    private static void FishingWaterBodyPolicySelectsDeepCardinalBobber()
+    {
+        HashSet<FishingTile> water = Enumerable.Range(1, 5)
+            .SelectMany(y => Enumerable.Range(2, 5).Select(x => new FishingTile(x, y)))
+            .ToHashSet();
+        Assert.True(
+            FishingWaterBodyPolicy.TryDiscover(new FishingTile(4, 3), 9, 8, water.Contains, 100, out FishingWaterBody body),
+            "O lago retangular deve ser descoberto.");
+
+        Assert.Equal(1, FishingWaterBodyPolicy.GetApproximateDepth(body, new FishingTile(4, 5)), "agua junto a margem");
+        Assert.Equal(3, FishingWaterBodyPolicy.GetApproximateDepth(body, new FishingTile(4, 3)), "centro do lago");
+        Assert.Equal(2, FishingWaterBodyPolicy.GetApproximateDepth(body, new FishingTile(4, 3), maximumDepth: 2), "limite de profundidade");
+        Assert.Equal(0, FishingWaterBodyPolicy.GetApproximateDepth(body, new FishingTile(4, 6)), "tile fora do corpo");
+
+        Assert.True(
+            FishingWaterBodyPolicy.TrySelectBobber(body, new FishingTile(4, 6), 3, out FishingBobberSelection selection),
+            "A margem sul deve permitir um arremesso cardinal.");
+        Assert.Equal(new FishingTile(4, 3), selection.Tile, "O bobber deve buscar a agua mais profunda dentro do alcance.");
+        Assert.Equal(3, selection.CastDistance, "distancia do arremesso");
+        Assert.Equal(3, selection.ApproximateDepth, "profundidade do bobber");
+
+        Assert.False(
+            FishingWaterBodyPolicy.TrySelectBobber(body, new FishingTile(4, 6), 0, out _),
+            "Alcance nulo deve falhar.");
+        Assert.False(
+            FishingWaterBodyPolicy.TrySelectBobber(body, new FishingTile(0, 7), 8, out _),
+            "O arremesso nao pode dobrar ou atravessar terra ate o lago.");
+    }
+
+    private static void FishingWaterBodyPolicyUsesStableDirectionAndContiguousWater()
+    {
+        HashSet<FishingTile> cornerWater = new()
+        {
+            new(3, 2),
+            new(4, 2),
+            new(4, 3)
+        };
+        Assert.True(
+            FishingWaterBodyPolicy.TryDiscover(new FishingTile(4, 2), 7, 7, cornerWater.Contains, 10, out FishingWaterBody cornerBody),
+            "O canto de agua deve ser conectado.");
+        Assert.True(
+            FishingWaterBodyPolicy.TrySelectBobber(cornerBody, new FishingTile(3, 3), 1, out FishingBobberSelection tie),
+            "Duas direcoes cardinais equivalentes devem produzir um bobber.");
+        Assert.Equal(new FishingTile(3, 2), tie.Tile, "Empate deve preferir Norte antes de Leste.");
+        Assert.True(
+            FishingWaterBodyPolicy.TrySelectBobber(
+                cornerBody,
+                new FishingTile(3, 3),
+                1,
+                tile => tile != new FishingTile(3, 2),
+                out FishingBobberSelection allowed),
+            "Um destino de pesca proibido deve permitir outra direcao valida.");
+        Assert.Equal(new FishingTile(4, 3), allowed.Tile, "O bobber deve respeitar o filtro de destino pescavel.");
+        Assert.False(
+            FishingWaterBodyPolicy.TrySelectBobber(
+                cornerBody,
+                new FishingTile(3, 3),
+                1,
+                _ => false,
+                out _),
+            "Sem destino permitido, o arremesso deve falhar fechado.");
+
+        HashSet<FishingTile> detourWater = new()
+        {
+            new(1, 3),
+            new(0, 3),
+            new(0, 2),
+            new(0, 1),
+            new(1, 1)
+        };
+        Assert.True(
+            FishingWaterBodyPolicy.TryDiscover(new FishingTile(1, 3), 5, 6, detourWater.Contains, 10, out FishingWaterBody detourBody),
+            "A agua distante deve pertencer ao mesmo componente pelo desvio.");
+        Assert.True(
+            FishingWaterBodyPolicy.TrySelectBobber(detourBody, new FishingTile(1, 4), 3, out FishingBobberSelection contiguous),
+            "A primeira agua cardinal deve continuar pescavel.");
+        Assert.Equal(new FishingTile(1, 3), contiguous.Tile, "O bobber nao pode saltar a lacuna de terra na mesma coluna.");
+        Assert.Equal(1, contiguous.CastDistance, "A lacuna deve encerrar o raio cardinal.");
+    }
+
+    private static void FishingSessionPolicyHandlesClockAndReadiness()
+    {
+        Assert.False(FishingSessionPolicy.HasDayEnded(2550), "25:50 ainda permite a sessao.");
+        Assert.True(FishingSessionPolicy.HasDayEnded(2600), "26:00 encerra no limite.");
+        Assert.True(FishingSessionPolicy.HasDayEnded(2710), "Horario posterior permanece encerrado.");
+        Assert.Equal(60, FishingSessionPolicy.GetCatchIntervalMinutes(hasFishingSkillOne: false), "intervalo base");
+        Assert.Equal(50, FishingSessionPolicy.GetCatchIntervalMinutes(hasFishingSkillOne: true), "intervalo da skill 1");
+
+        Assert.Equal(700, FishingSessionPolicy.AddMinutes(600, 60), "uma hora exata");
+        Assert.Equal(710, FishingSessionPolicy.AddMinutes(650, 20), "normalizacao de minutos");
+        Assert.Equal(2410, FishingSessionPolicy.AddMinutes(2350, 20), "relogio alem de 24h");
+        Assert.Equal(2650, FishingSessionPolicy.AddMinutes(2550, 60), "agendamento pode ficar alem do fim do dia");
+        Assert.Throws<ArgumentOutOfRangeException>(() => FishingSessionPolicy.AddMinutes(1260, 10), "minuto HHMM invalido");
+        Assert.Throws<ArgumentOutOfRangeException>(() => FishingSessionPolicy.AddMinutes(1200, -1), "adicao negativa");
+
+        Assert.False(FishingSessionPolicy.IsCatchReady(1240, 1250), "antes do horario agendado");
+        Assert.True(FishingSessionPolicy.IsCatchReady(1250, 1250), "pronto no limite inclusivo");
+        Assert.True(FishingSessionPolicy.IsCatchReady(1300, 1250), "pronto depois do agendamento");
+        Assert.False(FishingSessionPolicy.IsCatchReady(2600, 2500), "fim do dia precede uma captura atrasada");
+    }
+
+    private static void FishingSessionPolicyClampsCastAndUpgradesQuality()
+    {
+        Assert.Equal(3, FishingSessionPolicy.GetMaximumCastDistance(int.MinValue, hasFishingSkillTwo: false), "upgrade negativo");
+        Assert.Equal(3, FishingSessionPolicy.GetMaximumCastDistance(0, hasFishingSkillTwo: false), "alcance base");
+        Assert.Equal(5, FishingSessionPolicy.GetMaximumCastDistance(2, hasFishingSkillTwo: false), "upgrade intermediario");
+        Assert.Equal(7, FishingSessionPolicy.GetMaximumCastDistance(int.MaxValue, hasFishingSkillTwo: false), "clamp do upgrade");
+        Assert.Equal(8, FishingSessionPolicy.GetMaximumCastDistance(int.MaxValue, hasFishingSkillTwo: true), "bonus da skill 2 depois do clamp");
+
+        Assert.Equal(0, FishingSessionPolicy.GetCatchQuality(-10, hasFishingSkillTwo: false), "profundidade invalida fica normal");
+        Assert.Equal(0, FishingSessionPolicy.GetCatchQuality(1, hasFishingSkillTwo: false), "margem normal");
+        Assert.Equal(1, FishingSessionPolicy.GetCatchQuality(2, hasFishingSkillTwo: false), "profundidade prata");
+        Assert.Equal(1, FishingSessionPolicy.GetCatchQuality(3, hasFishingSkillTwo: false), "faixa prata inclusiva");
+        Assert.Equal(2, FishingSessionPolicy.GetCatchQuality(4, hasFishingSkillTwo: false), "profundidade ouro");
+        Assert.Equal(2, FishingSessionPolicy.GetCatchQuality(int.MaxValue, hasFishingSkillTwo: false), "qualidade base limitada a ouro");
+        Assert.Equal(1, FishingSessionPolicy.GetCatchQuality(1, hasFishingSkillTwo: true), "skill 2 normal para prata");
+        Assert.Equal(2, FishingSessionPolicy.GetCatchQuality(2, hasFishingSkillTwo: true), "skill 2 prata para ouro");
+        Assert.Equal(4, FishingSessionPolicy.GetCatchQuality(4, hasFishingSkillTwo: true), "skill 2 ouro para iridio");
+    }
+
+    private static void FishingSessionPolicyAwardsXpAndBoundsExtraCatch()
+    {
+        Assert.Equal(8, FishingSessionPolicy.XpPerCatch, "XP fixo por captura concluida");
+        Assert.False(FishingSessionPolicy.RollsExtraCatch(hasFishingSkillThree: false, roll: 0d), "sem skill 3");
+        Assert.True(FishingSessionPolicy.RollsExtraCatch(hasFishingSkillThree: true, roll: 0d), "inicio da faixa");
+        Assert.True(FishingSessionPolicy.RollsExtraCatch(hasFishingSkillThree: true, roll: 0.249999d), "abaixo de 25 por cento");
+        Assert.False(FishingSessionPolicy.RollsExtraCatch(hasFishingSkillThree: true, roll: 0.25d), "25 por cento e limite exclusivo");
+        Assert.False(FishingSessionPolicy.RollsExtraCatch(hasFishingSkillThree: true, roll: 1d), "fora do intervalo do RNG");
+        Assert.False(FishingSessionPolicy.RollsExtraCatch(hasFishingSkillThree: true, roll: -double.Epsilon), "roll negativo");
+        Assert.False(FishingSessionPolicy.RollsExtraCatch(hasFishingSkillThree: true, roll: double.NaN), "roll NaN");
+        Assert.False(FishingSessionPolicy.RollsExtraCatch(hasFishingSkillThree: true, roll: double.PositiveInfinity), "roll infinito");
+    }
+
     private static void RecruitmentContextPolicyAllowsAnyDistanceOnSameMap()
     {
         Assert.True(
@@ -862,6 +1122,31 @@ internal static class Program
         Assert.Equal(12, visited.Count, "Round-robin deve alcançar todos os 12 companions sem starvation.");
     }
 
+    private static void ContextCommandPolicyUsesAdjacentStandRange()
+    {
+        Assert.True(
+            ContextCommandPolicy.HasAdjacentStandWithinRadius(0, 0, 3, 0, 3),
+            "Alvo dentro do raio deve continuar valido.");
+        Assert.True(
+            ContextCommandPolicy.HasAdjacentStandWithinRadius(0, 0, 4, 0, 3),
+            "Arvore a quatro tiles deve valer quando o stand adjacente fica a tres.");
+        Assert.True(
+            ContextCommandPolicy.HasAdjacentStandWithinRadius(0, 0, 0, -4, 3),
+            "A regra deve funcionar igualmente em todas as direcoes.");
+        Assert.True(
+            ContextCommandPolicy.HasAdjacentStandWithinRadius(0, 0, 3, 2, 3),
+            "Um stand cardinal que cabe no circulo deve validar o alvo diagonal.");
+        Assert.False(
+            ContextCommandPolicy.HasAdjacentStandWithinRadius(0, 0, 5, 0, 3),
+            "Alvo sem nenhum stand adjacente dentro do raio deve ser rejeitado.");
+        Assert.False(
+            ContextCommandPolicy.HasAdjacentStandWithinRadius(0, 0, 3, 3, 3),
+            "Distancia diagonal nao pode ser tratada como alcance quadrado.");
+        Assert.False(
+            ContextCommandPolicy.HasAdjacentStandWithinRadius(0, 0, 1, 0, -1),
+            "Raio invalido deve falhar fechado.");
+    }
+
     private static void GroundCommandPolicyOpensSafeLocalContext()
     {
         Assert.True(
@@ -888,6 +1173,62 @@ internal static class Program
 
         Assert.True(guard.TryRegister(101, "command-a"), "O primeiro registro deveria ser aceito.");
         Assert.False(guard.TryRegister(101, "command-a"), "Um replay do mesmo jogador deveria ser rejeitado.");
+    }
+
+    private static void CompanionItemRoutingPolicyKeepsRequiredEndpoints()
+    {
+        foreach (bool useSquadInventory in new[] { false, true })
+        {
+            foreach (bool ownerAvailable in new[] { false, true })
+            {
+                IReadOnlyList<CompanionItemDestination> route = CompanionItemRoutingPolicy.GetRoute(
+                    useSquadInventory,
+                    ownerAvailable);
+
+                Assert.Equal(CompanionItemDestination.Companion, route[0], "Todo item deve tentar primeiro o inventario individual.");
+                Assert.Equal(CompanionItemDestination.WorldDrop, route[^1], "World drop deve preservar o restante no fim da rota.");
+            }
+        }
+    }
+
+    private static void CompanionItemRoutingPolicyUsesSquadWhenEnabled()
+    {
+        CompanionItemDestination[] expected =
+        {
+            CompanionItemDestination.Companion,
+            CompanionItemDestination.Squad,
+            CompanionItemDestination.WorldDrop
+        };
+
+        Assert.SequenceEqual(
+            expected,
+            CompanionItemRoutingPolicy.GetRoute(useSquadInventory: true, ownerAvailable: true),
+            "Squad ativo nao deve encaminhar o restante ao owner.");
+        Assert.SequenceEqual(
+            expected,
+            CompanionItemRoutingPolicy.GetRoute(useSquadInventory: true, ownerAvailable: false),
+            "Squad ativo deve funcionar mesmo sem owner disponivel.");
+    }
+
+    private static void CompanionItemRoutingPolicyUsesAvailableOwnerWhenSquadIsDisabled()
+    {
+        Assert.SequenceEqual(
+            new[]
+            {
+                CompanionItemDestination.Companion,
+                CompanionItemDestination.Owner,
+                CompanionItemDestination.WorldDrop
+            },
+            CompanionItemRoutingPolicy.GetRoute(useSquadInventory: false, ownerAvailable: true),
+            "Squad desativado deve usar o owner disponivel como fallback.");
+        Assert.SequenceEqual(
+            new[]
+            {
+                CompanionItemDestination.Companion,
+                CompanionItemDestination.WorldDrop
+            },
+            CompanionItemRoutingPolicy.GetRoute(useSquadInventory: false, ownerAvailable: false),
+            "Squad desativado nao deve incluir um owner indisponivel.");
     }
 
     private static void CommandReplayGuardIsolatesPlayers()
@@ -967,6 +1308,68 @@ internal static class Program
             "chave de ModData");
     }
 
+    private static void CompanionStateCopyDeepClonesNpcCosmetic()
+    {
+        SavedItemStack sourceHat = CreateSavedItem(
+            stack: 1,
+            quality: 0,
+            ("example.author/style", "original"));
+        sourceHat.QualifiedItemId = "(H)0";
+        NpcCosmeticState source = new()
+        {
+            NpcName = "Abigail",
+            EquippedHat = sourceHat
+        };
+
+        NpcCosmeticState clone = CompanionStateCopy.CloneCosmetic(source);
+        source.NpcName = "Changed";
+        source.EquippedHat!.QualifiedItemId = "(H)changed";
+        source.EquippedHat.ModData["example.author/style"] = "changed";
+
+        Assert.Equal("Abigail", clone.NpcName, "nome do NPC clonado");
+        Assert.Equal("(H)0", clone.EquippedHat?.QualifiedItemId, "ID do chapeu clonado");
+        Assert.Equal(
+            "original",
+            clone.EquippedHat?.ModData["example.author/style"],
+            "ModData do chapeu clonado");
+        Assert.False(ReferenceEquals(source.EquippedHat, clone.EquippedHat), "a pilha cosmetica precisa ser destacada");
+        Assert.False(
+            ReferenceEquals(source.EquippedHat!.ModData, clone.EquippedHat?.ModData),
+            "o ModData cosmetico precisa ser destacado");
+    }
+
+    private static void NpcHatRenderPolicyTracksMeasuredWalkingBob()
+    {
+        Assert.True(
+            NpcHatRenderPolicy.IsVanillaWalkingStepFrame(1, 4, 16, 32),
+            "primeiro frame de passo deve aceitar medicao");
+        Assert.True(
+            NpcHatRenderPolicy.IsVanillaWalkingStepFrame(15, 4, 16, 32),
+            "ultimo frame vanilla de passo deve aceitar medicao");
+        Assert.False(
+            NpcHatRenderPolicy.IsVanillaWalkingStepFrame(0, 4, 16, 32),
+            "frame par usa a ancora base");
+        Assert.False(
+            NpcHatRenderPolicy.IsVanillaWalkingStepFrame(17, 4, 16, 32),
+            "animacao especial nao deve herdar bob de caminhada");
+        Assert.False(
+            NpcHatRenderPolicy.IsVanillaWalkingStepFrame(1, 4, 32, 32),
+            "spritesheet fora do layout vanilla deve falhar fechada");
+
+        Assert.Equal(1, NpcHatRenderPolicy.GetHeadTopDelta(5, 6), "villager que desce um pixel");
+        Assert.Equal(0, NpcHatRenderPolicy.GetHeadTopDelta(7, 7), "George sem bob visual");
+        Assert.Equal(2, NpcHatRenderPolicy.GetHeadTopDelta(2, 20), "delta suspeito deve ser limitado");
+        Assert.Equal(
+            2,
+            NpcHatRenderPolicy.FindStableOpaqueTopRow(new[] { 0, 1, 7, 8 }, 3),
+            "pixel isolado de cabelo nao deve mascarar a descida da cabeca");
+        Assert.Equal(
+            1,
+            NpcHatRenderPolicy.FindStableOpaqueTopRow(new[] { 0, 1, 0 }, 3),
+            "sprite estreito usa o primeiro pixel como fallback");
+        Assert.Equal(4f, NpcHatRenderPolicy.ToWorldPixels(1, 1f, 4), "um pixel fonte no zoom vanilla");
+    }
+
     private static SavedItemStack CreateSavedItem(
         int stack,
         int quality,
@@ -1027,6 +1430,26 @@ internal static class Assert
     {
         if (EqualityComparer<T>.Default.Equals(notExpected, actual))
             throw new TestFailureException($"{context} Ambos eram <{actual}>.");
+    }
+
+    public static void Throws<TException>(Action action, string context)
+        where TException : Exception
+    {
+        try
+        {
+            action();
+        }
+        catch (TException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            throw new TestFailureException(
+                $"{context}: esperava {typeof(TException).Name}, recebeu {ex.GetType().Name}.");
+        }
+
+        throw new TestFailureException($"{context}: esperava {typeof(TException).Name}, mas nenhuma excecao foi lancada.");
     }
 
     public static void SequenceEqual<T>(IEnumerable<T> expected, IEnumerable<T> actual, string context)

@@ -1,5 +1,6 @@
 using HarmonyLib;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using StardewValley;
 using StardewValley.Characters;
 using StardewValley.GameData.Pets;
@@ -19,6 +20,8 @@ internal static class CompanionBehaviorPatches
 
     public static Action<NPC>? NeutralizeVanillaBedtimeController { get; set; }
 
+    public static Action<NPC, SpriteBatch, float>? DrawCosmeticHat { get; set; }
+
     private static bool ShouldControl(NPC npc)
     {
         return IsControlled?.Invoke(npc) == true;
@@ -33,6 +36,23 @@ internal static class CompanionBehaviorPatches
             || !Game1.hasStartedDay
             || Game1.showingEndOfNightStuff
             || Game1.CurrentEvent?.actors.Contains(npc) == true;
+    }
+
+    [HarmonyPatch(typeof(NPC), nameof(NPC.draw), typeof(SpriteBatch), typeof(float))]
+    private static class NpcDrawPatch
+    {
+        [HarmonyPostfix]
+        private static void Postfix(NPC __instance, SpriteBatch b, float alpha)
+        {
+            try
+            {
+                DrawCosmeticHat?.Invoke(__instance, b, alpha);
+            }
+            catch
+            {
+                // Cosmetic rendering must never interrupt the world's draw pass.
+            }
+        }
     }
 
     [HarmonyPatch(

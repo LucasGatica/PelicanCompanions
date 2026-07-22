@@ -1442,6 +1442,7 @@ public sealed partial class ModEntry
             CompanionTaskKind.Gathering => "companion.target.gathering",
             CompanionTaskKind.Harvesting => "companion.target.harvesting",
             CompanionTaskKind.Petting => "companion.target.petting",
+            CompanionTaskKind.Fishing => "companion.target.fishing",
             _ => ""
         };
         int x = (int)tile.X;

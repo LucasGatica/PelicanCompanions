@@ -84,6 +84,17 @@ internal static class CompanionStateCopy
         };
     }
 
+    public static NpcCosmeticState CloneCosmetic(NpcCosmeticState source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return new NpcCosmeticState
+        {
+            NpcName = source.NpcName,
+            EquippedHat = source.EquippedHat is null ? null : CloneItem(source.EquippedHat)
+        };
+    }
+
     public static RecentCompanionLoot CloneLoot(RecentCompanionLoot source)
     {
         ArgumentNullException.ThrowIfNull(source);

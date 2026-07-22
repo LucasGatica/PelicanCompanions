@@ -48,6 +48,8 @@ public sealed partial class ModEntry
         bool changed = false;
         foreach (SquadMemberState member in this.members.Values.Where(this.HasActiveWorkArea).ToList())
         {
+            // Preserve the exact boundary of an existing saved order when the
+            // host raises the setting; only clamp orders which now exceed it.
             if (member.WorkAreaRadius <= maximumRadius)
                 continue;
 
@@ -77,11 +79,10 @@ public sealed partial class ModEntry
         string? npcName,
         string locationName,
         Vector2 rawCenter,
-        CompanionWorkSpecialty specialty,
-        int radius)
+        CompanionWorkSpecialty specialty)
     {
         Vector2 center = NormalizeTile(rawCenter);
-        radius = CompanionWorkAreaPolicy.NormalizeRadius(radius);
+        int radius = CompanionWorkAreaPolicy.NormalizeRadius(this.GetConfiguredWorkRadius());
         if (!Context.IsMainPlayer)
         {
             string commandId = this.SendActionRequest(
@@ -89,7 +90,6 @@ public sealed partial class ModEntry
                 npcName ?? "",
                 specialty.ToString(),
                 center,
-                index: radius,
                 expectedLocationName: locationName);
             this.workAreaPreviews[Game1.player.UniqueMultiplayerID] = new WorkAreaPreviewState(
                 locationName,
@@ -113,8 +113,7 @@ public sealed partial class ModEntry
             npcName,
             locationName,
             center,
-            specialty,
-            radius);
+            specialty);
     }
 
     private void TryAssignWorkArea(
@@ -122,8 +121,7 @@ public sealed partial class ModEntry
         string? requestedNpcName,
         string locationName,
         Vector2 rawCenter,
-        CompanionWorkSpecialty specialty,
-        int radius)
+        CompanionWorkSpecialty specialty)
     {
         // The host replaces a locally optimistic preview with either the
         // authoritative persisted outline or an immediate rejection. Remote
@@ -133,12 +131,11 @@ public sealed partial class ModEntry
         Farmer? owner = this.GetOwnerFarmer(ownerId);
         GameLocation? location = owner?.currentLocation;
         Vector2 center = NormalizeTile(rawCenter);
+        int radius = CompanionWorkAreaPolicy.NormalizeRadius(this.GetConfiguredWorkRadius());
         if (!this.AreTaskActionsSafe(ownerId)
             || owner is null
             || location is null
             || !Enum.IsDefined(specialty)
-            || radius is < CompanionWorkAreaPolicy.MinimumRadius or > CompanionWorkAreaPolicy.MaximumRadius
-            || radius > this.GetConfiguredWorkRadius()
             || !string.Equals(location.NameOrUniqueName, locationName, StringComparison.Ordinal)
             || !this.IsGroundCommandTileAvailable(location, center))
         {

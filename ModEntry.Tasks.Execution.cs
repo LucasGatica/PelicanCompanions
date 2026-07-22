@@ -120,6 +120,7 @@ public sealed partial class ModEntry
             CompanionTaskKind.Gathering => !this.config.EnableGathering || this.config.ForagingMode == TaskMode.Disabled,
             CompanionTaskKind.Harvesting => this.config.HarvestingMode == TaskMode.Disabled,
             CompanionTaskKind.Petting => this.config.PettingMode == TaskMode.Disabled,
+            CompanionTaskKind.Fishing => this.config.FishingMode == FishingTaskMode.Disabled,
             _ => false
         };
         if (taskModeDisabled && !task.IgnoresTaskMode)
@@ -140,6 +141,10 @@ public sealed partial class ModEntry
 
             case CompanionTaskKind.Mining:
                 this.ProcessPendingMiningTask(task);
+                break;
+
+            case CompanionTaskKind.Fishing:
+                this.ProcessPendingFishingTask(task);
                 break;
 
             case CompanionTaskKind.Watering:
@@ -269,7 +274,12 @@ public sealed partial class ModEntry
                 return;
         }
 
-        if (!task.UsesFixedWorkArea && !IsWithinCompanionDistance(owner.Tile, targetTile))
+        bool usesContextTarget = task.ExpectedTargetInstance is not null
+            || !string.IsNullOrWhiteSpace(task.ExpectedTargetToken);
+        bool targetWithinReach = usesContextTarget
+            ? IsContextTargetWithinCompanionReach(owner.Tile, targetTile)
+            : IsWithinCompanionDistance(owner.Tile, targetTile);
+        if (!task.UsesFixedWorkArea && !targetWithinReach)
         {
             this.RemovePendingTask(task, "companion.task_failure.owner_too_far", returning: true);
             return;
@@ -335,8 +345,12 @@ public sealed partial class ModEntry
                 }
 
                 this.InvalidateReachabilityForLocation(location);
-                this.RouteItemToOwnerInventoryOrDrop(owner, item, location, targetTile);
-                this.RecordCompanionLoot(member, item, "companion.loot_source.forage");
+                this.RouteTaskRewardOrDrop(
+                    member,
+                    item,
+                    location,
+                    targetTile,
+                    "companion.loot_source.forage");
                 location.OnHarvestedForage(owner, forage);
                 this.ShowCompanionWorkSignal(npc, location, targetTile, "forage");
                 this.AddCompanionXp(member, 2);
@@ -414,16 +428,6 @@ public sealed partial class ModEntry
         this.ShowCompanionWorkSuccessAnimation(npc, task.Kind, targetTile);
         this.CompleteSharedTargetPeers(task);
         this.RemovePendingTask(task);
-    }
-
-    private void RouteItemToOwnerInventoryOrDrop(Farmer owner, Item item, GameLocation location, Vector2 tile)
-    {
-        Item? notAdded = this.config.UseSquadInventory
-            ? this.AddToSquadInventorySafely(item, "forage gathering")
-            : this.AddToFarmerInventorySafely(owner, item, "forage gathering");
-
-        if (notAdded is not null)
-            this.DropItemSafely(notAdded, location, tile, owner.FacingDirection, "forage gathering");
     }
 
     private void ProcessPendingLumberTask(PendingCompanionTask task)
@@ -981,7 +985,17 @@ public sealed partial class ModEntry
         }
 
         effectiveAxe.lastUser = owner;
+        bool wasFalling = tree.falling.Value;
+        HashSet<Debris> debrisBefore = SnapshotLocationDebris(location);
         bool removeFeature = tree.performToolAction(effectiveAxe, 0, tile);
+        if (!wasFalling && tree.falling.Value)
+            this.TrackFallingTreeDrops(tree, member, location, tile);
+        this.RouteNewTaskDebris(
+            member,
+            location,
+            tile,
+            debrisBefore,
+            "companion.loot_source.wood");
         this.AddCompanionXp(member, 1);
 
         if (removeFeature)
@@ -1034,14 +1048,24 @@ public sealed partial class ModEntry
         }
 
         effectivePickaxe.lastUser = owner;
+        HashSet<Debris> debrisBefore = SnapshotLocationDebris(location);
         bool destroyed = obj.performToolAction(effectivePickaxe);
         this.AddCompanionXp(member, 1);
+        if (destroyed)
+        {
+            location.Objects.Remove(tile);
+            this.InvalidateReachabilityForLocation(location);
+            location.OnStoneDestroyed(obj.ItemId, (int)tile.X, (int)tile.Y, owner);
+        }
+
+        this.RouteNewTaskDebris(
+            member,
+            location,
+            tile,
+            debrisBefore,
+            "companion.loot_source.mining");
         if (!destroyed)
             return false;
-
-        location.Objects.Remove(tile);
-        this.InvalidateReachabilityForLocation(location);
-        location.OnStoneDestroyed(obj.ItemId, (int)tile.X, (int)tile.Y, owner);
 
         if (this.HasSkill(member, "SKILL-MINING-003") && Game1.random.NextDouble() < 0.25)
         {

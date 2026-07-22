@@ -97,11 +97,17 @@ public sealed partial class ModEntry
         NPC? npc = this.GetNpcByName(member.NpcName);
         Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
         targetTile = NormalizeTile(targetTile);
+        bool usesContextTarget = expectedTargetInstance is not null
+            || !string.IsNullOrWhiteSpace(expectedTargetToken);
+        bool targetWithinReach = owner is not null
+            && (usesContextTarget
+                ? IsContextTargetWithinCompanionReach(owner.Tile, targetTile)
+                : IsWithinCompanionDistance(owner.Tile, targetTile));
         if (npc is null
             || owner is null
             || npc.currentLocation != location
             || owner.currentLocation != location
-            || !IsWithinCompanionDistance(owner.Tile, targetTile))
+            || !targetWithinReach)
         {
             return false;
         }
