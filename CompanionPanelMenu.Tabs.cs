@@ -11,9 +11,11 @@ internal sealed partial class CompanionPanelMenu
 {
     private void DrawOverview(SpriteBatch b, SquadMemberState member, Rectangle area)
     {
-        int commandHeight = Math.Clamp(area.Height / 5, 28, 38);
+        int commandHeight = area.Height >= 180
+            ? 44
+            : Math.Clamp(area.Height / 5, 28, 38);
         int commandY = area.Bottom - commandHeight;
-        int gap = 5;
+        int gap = area.Width >= 520 ? 8 : 5;
         int commandWidth = Math.Max(1, (area.Width - gap * 2) / 3);
         this.waitButton = new Rectangle(area.X, commandY, commandWidth, commandHeight);
         this.recallButton = new Rectangle(this.waitButton.Right + gap, commandY, commandWidth, commandHeight);
@@ -49,13 +51,29 @@ internal sealed partial class CompanionPanelMenu
             ? new Rectangle(content.X, content.Y, Math.Max(1, location.X - content.X - 8), content.Height)
             : content;
 
+        Rectangle detailContent = details;
+        if (details.Width >= 80 && details.Height >= 38)
+        {
+            this.DrawMenuCard(b, details, RowColor, this.GetMemberStatusColor(member));
+            detailContent = new Rectangle(
+                details.X + 17,
+                details.Y + 8,
+                Math.Max(1, details.Width - 29),
+                Math.Max(1, details.Height - 16));
+        }
+
         IReadOnlyList<string> lines = this.getDetailLines(member);
         int lineHeight = 19;
-        int maxLines = Math.Max(1, details.Height / lineHeight);
-        int y = details.Y + 2;
+        int maxLines = Math.Max(1, detailContent.Height / lineHeight);
+        int y = detailContent.Y + 1;
         foreach (string line in lines.Take(maxLines))
         {
-            Utility.drawTextWithShadow(b, FitText(line, Game1.tinyFont, details.Width - 6), Game1.tinyFont, new Vector2(details.X + 3, y), MutedTextColor);
+            Utility.drawTextWithShadow(
+                b,
+                FitText(line, Game1.tinyFont, Math.Max(1, detailContent.Width - 3)),
+                Game1.tinyFont,
+                new Vector2(detailContent.X, y),
+                MutedTextColor);
             y += lineHeight;
         }
 
@@ -65,16 +83,23 @@ internal sealed partial class CompanionPanelMenu
 
     private void DrawWork(SpriteBatch b, SquadMemberState member, Rectangle area)
     {
-        Utility.drawTextWithShadow(
+        bool roomyHeading = area.Width >= 320 && area.Height >= 180;
+        SpriteFont headingFont = Game1.tinyFont;
+        float headingScale = roomyHeading ? PanelHeadingTextScale : PanelTextScale;
+        DrawPanelText(
             b,
-            FitText(this.translate("companion.panel.work_orders", null), Game1.tinyFont, area.Width),
-            Game1.tinyFont,
+            FitText(this.translate("companion.panel.work_orders", null), headingFont, area.Width, headingScale),
+            headingFont,
             new Vector2(area.X + 2, area.Y + 2),
-            TextColor);
+            TextColor,
+            headingScale,
+            shadow: true);
 
-        int top = area.Y + 24;
-        int gap = 6;
-        int buttonHeight = Math.Clamp(area.Height / 6, 28, 38);
+        int top = area.Y + (roomyHeading ? 27 : 24);
+        int gap = area.Width >= 520 ? 8 : 6;
+        int buttonHeight = area.Height >= 220
+            ? 42
+            : Math.Clamp(area.Height / 6, 28, 38);
         int buttonWidth = Math.Max(1, (area.Width - gap) / 2);
         int secondRowTop = top + buttonHeight + gap;
         this.DrawDirectiveButton(b, new Rectangle(area.X, top, buttonWidth, buttonHeight), this.translate("companion.directive.wood.short", null), member.SearchWood, CompanionDirective.SearchWood);
@@ -217,7 +242,8 @@ internal sealed partial class CompanionPanelMenu
             Math.Max(1, branchArea.Height - 4),
             minimumScale: 0.46f);
         int branchLineHeight = GetScaledLineHeight(Game1.tinyFont, branchScale);
-        if (branchArea.Height < branchLineHeight * 2 + 4)
+        int branchProgressLineHeight = GetScaledLineHeight(Game1.tinyFont, PanelCompactNumericTextScale);
+        if (branchArea.Height < branchLineHeight + branchProgressLineHeight + 4)
         {
             DrawPanelText(
                 b,
@@ -229,7 +255,7 @@ internal sealed partial class CompanionPanelMenu
         }
         else
         {
-            int textBlockHeight = branchLineHeight * 2 + 4;
+            int textBlockHeight = branchLineHeight + branchProgressLineHeight + 4;
             int textY = branchArea.Center.Y - textBlockHeight / 2;
             DrawPanelText(
                 b,
@@ -244,7 +270,7 @@ internal sealed partial class CompanionPanelMenu
                 Game1.tinyFont,
                 new Vector2(branchArea.X, textY + branchLineHeight + 4),
                 Color.Lerp(MutedTextColor, accent, 0.3f),
-                PanelMetaTextScale);
+                PanelCompactNumericTextScale);
         }
 
         int nodesX = area.X + branchWidth + 6;
@@ -459,26 +485,40 @@ internal sealed partial class CompanionPanelMenu
     {
         Item? item = this.getEquipmentItem(member, slot);
         bool hasPersistedItem = item is not null || this.hasEquipmentItem(member, slot);
-        this.DrawFlatPanel(
-            b,
-            bounds,
-            hasPersistedItem ? new Color(226, 234, 207) : new Color(235, 220, 193),
-            hasPersistedItem ? AccentGreen : SurfaceBorder,
-            2);
+        Color fill = hasPersistedItem ? SelectedRowColor : ButtonIdle;
+        Color accent = hasPersistedItem ? AccentGreen : SurfaceBorder;
+        bool texturedCard = bounds.Width >= 64 && bounds.Height >= 40;
+        if (texturedCard)
+        {
+            this.DrawTexturedPanel(b, bounds, fill);
+            if (hasPersistedItem)
+            {
+                b.Draw(
+                    Game1.staminaRect,
+                    new Rectangle(bounds.X + 8, bounds.Bottom - 5, Math.Max(1, bounds.Width - 16), 3),
+                    accent);
+            }
+        }
+        else
+            this.DrawFlatPanel(b, bounds, fill, accent, 2);
         this.equipmentSlotsBounds.Add((bounds, slot));
 
+        int contentInset = texturedCard ? 8 : 4;
         string label = this.translate(GetEquipmentSlotTranslationKey(slot), null);
         Utility.drawTextWithShadow(
             b,
-            FitText(label, Game1.tinyFont, Math.Max(1, bounds.Width - 8)),
+            FitText(label, Game1.tinyFont, Math.Max(1, bounds.Width - contentInset * 2)),
             Game1.tinyFont,
-            new Vector2(bounds.X + 4, bounds.Y + 1),
+            new Vector2(bounds.X + contentInset, bounds.Y + (texturedCard ? 5 : 1)),
             TextColor);
 
-        int contentTop = bounds.Y + Math.Min(Game1.tinyFont.LineSpacing, Math.Max(12, bounds.Height / 3));
+        int contentTopOffset = texturedCard
+            ? Math.Max(Game1.tinyFont.LineSpacing + 5, bounds.Height / 3)
+            : Math.Min(Game1.tinyFont.LineSpacing, Math.Max(12, bounds.Height / 3));
+        int contentTop = bounds.Y + Math.Min(Math.Max(1, bounds.Height - 3), contentTopOffset);
         int contentHeight = Math.Max(1, bounds.Bottom - contentTop - 3);
         int iconSize = Math.Min(40, contentHeight);
-        Rectangle iconBounds = new(bounds.X + 4, contentTop, iconSize, iconSize);
+        Rectangle iconBounds = new(bounds.X + contentInset, contentTop, iconSize, iconSize);
         if (item is not null)
         {
             float scale = Math.Clamp((iconSize - 3) / 64f, 0.3f, 0.7f);
@@ -498,7 +538,7 @@ internal sealed partial class CompanionPanelMenu
         }
 
         int detailsX = iconBounds.Right + 3;
-        int detailsWidth = Math.Max(1, bounds.Right - detailsX - 3);
+        int detailsWidth = Math.Max(1, bounds.Right - detailsX - contentInset);
         string name = item?.DisplayName
             ?? this.translate(hasPersistedItem ? "companion.equipment.unavailable" : "companion.equipment.empty", null);
         Utility.drawTextWithShadow(
@@ -537,36 +577,48 @@ internal sealed partial class CompanionPanelMenu
         {
             int x = area.X + i * (width + gap);
             Rectangle chip = new(x, area.Y, i == count - 1 ? area.Right - x : width, area.Height);
-            this.DrawFlatPanel(b, chip, new Color(244, 230, 202), new Color(143, 103, 64), 1);
+            Color accent = i switch
+            {
+                0 => AccentGreen,
+                1 => AccentBlue,
+                _ => AccentGold
+            };
+            this.DrawMenuCard(b, chip, HeaderCardColor, accent);
             Utility.drawTextWithShadow(
                 b,
-                FitText(lines[i], Game1.tinyFont, chip.Width - 12),
+                FitText(lines[i], Game1.tinyFont, Math.Max(1, chip.Width - 24)),
                 Game1.tinyFont,
-                new Vector2(chip.X + 6, chip.Y + Math.Max(3, (chip.Height - Game1.tinyFont.LineSpacing) / 2)),
+                new Vector2(chip.X + 17, chip.Y + Math.Max(3, (chip.Height - Game1.tinyFont.LineSpacing) / 2)),
                 MutedTextColor);
         }
     }
 
     private void DrawLocationCard(SpriteBatch b, CompanionPanelMapInfo info, Rectangle area)
     {
-        this.DrawFlatPanel(b, area, new Color(237, 227, 207), new Color(143, 103, 64), 1);
+        Color statusColor = this.GetMapStatusColor(info.StatusKey);
+        this.DrawMenuCard(b, area, RowColor, statusColor);
         string status = this.translate(info.StatusKey, null);
-        Utility.drawTextWithShadow(b, FitText(status, Game1.tinyFont, area.Width - 16), Game1.tinyFont, new Vector2(area.X + 8, area.Y + 7), TextColor);
+        Utility.drawTextWithShadow(
+            b,
+            FitText(status, Game1.tinyFont, Math.Max(1, area.Width - 30)),
+            Game1.tinyFont,
+            new Vector2(area.X + 17, area.Y + 7),
+            TextColor);
 
         int lineY = area.Bottom - 20;
-        int startX = area.X + 12;
+        int startX = area.X + 18;
         int endX = area.Right - 12;
         b.Draw(Game1.staminaRect, new Rectangle(startX, lineY, Math.Max(1, endX - startX), 2), Color.Black * 0.18f);
         b.Draw(Game1.staminaRect, new Rectangle(startX - 3, lineY - 3, 8, 8), AccentBlue);
         int npcX = info.SameLocation
             ? Math.Clamp(startX + (info.NpcX - info.OwnerX) * 5, startX, endX - 6)
             : endX - 6;
-        b.Draw(Game1.staminaRect, new Rectangle(npcX, lineY - 3, 8, 8), this.GetMapStatusColor(info.StatusKey));
+        b.Draw(Game1.staminaRect, new Rectangle(npcX, lineY - 3, 8, 8), statusColor);
     }
 
     private void DrawTargetPreview(SpriteBatch b, SquadMemberState member, Rectangle bounds)
     {
-        this.DrawFlatPanel(b, bounds, new Color(242, 230, 204), new Color(137, 99, 62), 1);
+        this.DrawMenuCard(b, bounds, RowColor, AccentBlue);
         string text = !string.IsNullOrWhiteSpace(member.PreviewTargetKey) && member.PreviewTargetX >= 0 && member.PreviewTargetY >= 0
             ? this.translate("companion.preview.target", new
             {
@@ -582,9 +634,9 @@ internal sealed partial class CompanionPanelMenu
             });
         Utility.drawTextWithShadow(
             b,
-            FitText(text, Game1.tinyFont, bounds.Width - 16),
+            FitText(text, Game1.tinyFont, Math.Max(1, bounds.Width - 30)),
             Game1.tinyFont,
-            new Vector2(bounds.X + 8, bounds.Y + Math.Max(4, (bounds.Height - Game1.tinyFont.LineSpacing) / 2)),
+            new Vector2(bounds.X + 17, bounds.Y + Math.Max(4, (bounds.Height - Game1.tinyFont.LineSpacing) / 2)),
             MutedTextColor);
     }
 
@@ -592,16 +644,21 @@ internal sealed partial class CompanionPanelMenu
     {
         Point mouse = new(Game1.getMouseX(), Game1.getMouseY());
         Color fill = active ? ButtonActive : bounds.Contains(mouse) ? RowHoverColor : ButtonIdle;
-        this.DrawFlatPanel(b, bounds, fill, active ? AccentGreen : SurfaceBorder, 2);
+        if (active && bounds.Contains(mouse))
+            fill = Color.Lerp(fill, Color.White, 0.14f);
+        if (bounds.Height < 30)
+            this.DrawFlatPanel(b, bounds, fill, active ? AccentGreen : SurfaceBorder, 1);
+        else
+            this.DrawTexturedPanel(b, bounds, fill);
         Rectangle indicator = new(bounds.X + 7, bounds.Center.Y - 6, 5, 12);
-        b.Draw(Game1.staminaRect, indicator, active ? AccentGreen : Color.Black * 0.22f);
+        b.Draw(Game1.staminaRect, indicator, active ? Color.White : Color.Black * 0.22f);
         string text = FitText(label, Game1.tinyFont, bounds.Width - 24);
         Utility.drawTextWithShadow(
             b,
             text,
             Game1.tinyFont,
             new Vector2(bounds.X + 17, bounds.Y + Math.Max(3, (bounds.Height - Game1.tinyFont.LineSpacing) / 2)),
-            TextColor);
+            active ? Color.White : TextColor);
         this.directiveButtons.Add((bounds, directive));
     }
 
@@ -816,15 +873,15 @@ internal sealed partial class CompanionPanelMenu
             int resourcesX = stateBadge.Right + 7;
             if (inner.Right - resourcesX >= 34)
             {
-                string resources = FitText(costAndPoints, Game1.tinyFont, inner.Right - resourcesX, PanelMetaTextScale);
-                Vector2 resourcesSize = MeasureScaledText(resources, Game1.tinyFont, PanelMetaTextScale);
+                string resources = FitText(costAndPoints, Game1.tinyFont, inner.Right - resourcesX, PanelTextScale);
+                Vector2 resourcesSize = MeasureScaledText(resources, Game1.tinyFont, PanelTextScale);
                 DrawPanelText(
                     b,
                     resources,
                     Game1.tinyFont,
                     new Vector2(resourcesX, stateBadge.Center.Y - resourcesSize.Y / 2f),
                     MutedTextColor,
-                    PanelMetaTextScale);
+                    PanelTextScale);
             }
             y = stateBadge.Bottom + 8;
         }

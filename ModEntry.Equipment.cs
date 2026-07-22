@@ -268,9 +268,17 @@ public sealed partial class ModEntry
             {
                 Specialty = area.Specialty,
                 LocationName = area.LocationName,
+                RegionKind = area.RegionKind,
                 CenterX = area.CenterX,
                 CenterY = area.CenterY,
-                Radius = CompanionWorkAreaPolicy.NormalizeRadius(area.Radius)
+                Radius = area.RegionKind == CompanionWorkRegionKind.Circle
+                    ? CompanionWorkAreaPolicy.NormalizeRadius(area.Radius)
+                    : area.Radius,
+                MinX = area.MinX,
+                MinY = area.MinY,
+                Size = area.RegionKind == CompanionWorkRegionKind.DelimitedSquare
+                    ? CompanionWorkAreaPolicy.NormalizeSquareSize(area.Size)
+                    : area.Size
             })
             .GroupBy(area => area.Specialty)
             .Select(group => group.Last())

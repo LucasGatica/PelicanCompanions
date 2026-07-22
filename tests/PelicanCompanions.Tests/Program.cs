@@ -26,6 +26,10 @@ internal static class Program
         new("CompanionWorkAreaPolicy usa geometria circular com borda inclusiva", CompanionWorkAreaPolicyUsesCircularInclusiveGeometry),
         new("CompanionWorkAreaPolicy aplica padding sem encolher a area", CompanionWorkAreaPolicyAppliesNonNegativePadding),
         new("CompanionWorkAreaPolicy limita raios entre tres e vinte", CompanionWorkAreaPolicyNormalizesRadiusBounds),
+        new("Regioes de trabalho preservam discriminador e circulo legado", CompanionWorkRegionsPreserveDiscriminatorAndLegacyCircle),
+        new("CompanionWorkAreaPolicy usa quadrado half-open com padding", CompanionWorkAreaPolicyUsesHalfOpenSquareWithPadding),
+        new("CompanionWorkAreaPolicy valida tamanho e encaixe do quadrado", CompanionWorkAreaPolicyValidatesSquareSizeAndMapBounds),
+        new("CompanionWorkAreaPolicy limita area livre pelas dimensoes do mapa", CompanionWorkAreaPolicyBoundsFarmWideByMapDimensions),
         new("Enums de trabalho preservam valores e anexam rega", CompanionWorkEnumsPreserveStableValues),
         new("CompanionWorkAreaPolicy restringe tarefas por especialidade", CompanionWorkAreaPolicyRestrictsTasksBySpecialty),
         new("CompanionWorkAreaPolicy valida estado persistido ativo", CompanionWorkAreaPolicyValidatesPersistedState),
@@ -34,7 +38,7 @@ internal static class Program
         new("CompanionRoutinePolicy ativa edicoes e reserva a rotina da autonomia", CompanionRoutinePolicyActivatesEditsAndSuppressesAutonomy),
         new("CompanionRoutinePolicy respeita execucao unica e revisao", CompanionRoutinePolicyTracksExecutionByRevision),
         new("CompanionRoutinePolicy aplica atalho 06-18 e presets unicos", CompanionRoutinePolicyAppliesShiftAndUniquePresets),
-        new("CompanionRoutinePolicy codifica edicao CAS sem dados operacionais", CompanionRoutinePolicyEncodesCasConfigurationOnly),
+        new("CompanionRoutinePolicy codifica presets no CAS v2 e aceita v1", CompanionRoutinePolicyEncodesVersionedCasConfiguration),
         new("CompanionStateCopy preserva diretiva e area de rega", CompanionStateCopyPreservesWateringWorkState),
         new("FishingWaterBodyPolicy descobre componente e margens estaveis", FishingWaterBodyPolicyDiscoversStableComponentAndShore),
         new("FishingWaterBodyPolicy falha fechado em entrada invalida ou truncada", FishingWaterBodyPolicyFailsClosedForInvalidOrTruncatedDiscovery),
@@ -599,6 +603,218 @@ internal static class Program
         Assert.False(CompanionWorkAreaPolicy.Contains(0, 0, 99, 21, 0), "limite normalizado superior");
     }
 
+    private static void CompanionWorkRegionsPreserveDiscriminatorAndLegacyCircle()
+    {
+        Assert.Equal(0, (int)CompanionWorkRegionKind.Circle, "circulo legado permanece no valor zero");
+        Assert.Equal(1, (int)CompanionWorkRegionKind.DelimitedSquare, "quadrado delimitado e anexado");
+        Assert.Equal(2, (int)CompanionWorkRegionKind.FarmWide, "area livre e anexada");
+        Assert.Equal(
+            CompanionWorkRegionKind.Circle,
+            new SquadMemberState().WorkAreaRegionKind,
+            "membro sem discriminador serializado continua circular");
+        Assert.Equal(
+            CompanionWorkRegionKind.Circle,
+            new CompanionRoutineAreaPreset().RegionKind,
+            "preset sem discriminador serializado continua circular");
+
+        (int X, int Y, int Padding)[] samples =
+        {
+            (10, 20, 0),
+            (13, 20, 0),
+            (12, 22, 0),
+            (13, 21, 0),
+            (14, 20, 1),
+            (14, 21, 1)
+        };
+        foreach ((int x, int y, int padding) in samples)
+        {
+            bool legacy = CompanionWorkAreaPolicy.Contains(10, 20, 3, x, y, padding);
+            bool discriminated = CompanionWorkAreaPolicy.ContainsRegion(
+                CompanionWorkRegionKind.Circle,
+                centerX: 10,
+                centerY: 20,
+                radius: 3,
+                minX: -1,
+                minY: -1,
+                size: 0,
+                tileX: x,
+                tileY: y,
+                mapWidth: 100,
+                mapHeight: 100,
+                padding: padding);
+            Assert.Equal(legacy, discriminated, $"circulo discriminado preserva ({x}, {y}) com padding {padding}");
+        }
+
+        Assert.False(
+            CompanionWorkAreaPolicy.IsRegionGeometryValid(
+                (CompanionWorkRegionKind)999,
+                centerX: 10,
+                centerY: 20,
+                radius: 3,
+                minX: -1,
+                minY: -1,
+                size: 0),
+            "discriminador desconhecido falha fechado");
+    }
+
+    private static void CompanionWorkAreaPolicyUsesHalfOpenSquareWithPadding()
+    {
+        const int minX = 10;
+        const int minY = 20;
+        const int size = 3;
+
+        Assert.True(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 10, 20), "canto superior esquerdo incluso");
+        Assert.True(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 12, 20), "canto superior direito incluso");
+        Assert.True(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 10, 22), "canto inferior esquerdo incluso");
+        Assert.True(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 12, 22), "canto inferior direito incluso");
+        Assert.False(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 9, 20), "borda esquerda e exclusiva fora do minimo");
+        Assert.False(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 13, 20), "borda direita half-open");
+        Assert.False(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 10, 19), "borda superior e exclusiva fora do minimo");
+        Assert.False(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 10, 23), "borda inferior half-open");
+
+        Assert.True(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 9, 19, padding: 1), "padding inclui canto externo superior esquerdo");
+        Assert.True(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 13, 23, padding: 1), "padding inclui canto externo inferior direito");
+        Assert.False(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 8, 20, padding: 1), "padding nao inclui segundo tile externo");
+        Assert.False(CompanionWorkAreaPolicy.ContainsSquare(minX, minY, size, 13, 20, padding: -1), "padding negativo equivale a zero");
+
+        Assert.True(
+            CompanionWorkAreaPolicy.ContainsRegion(
+                CompanionWorkRegionKind.DelimitedSquare,
+                centerX: -1,
+                centerY: -1,
+                radius: 0,
+                minX,
+                minY,
+                size,
+                tileX: 13,
+                tileY: 23,
+                mapWidth: 100,
+                mapHeight: 100,
+                padding: 1),
+            "dispatch delimitado aplica padding ao stand");
+        Assert.False(
+            CompanionWorkAreaPolicy.ContainsRegion(
+                CompanionWorkRegionKind.DelimitedSquare,
+                centerX: -1,
+                centerY: -1,
+                radius: 0,
+                minX: 0,
+                minY: 0,
+                size,
+                tileX: -1,
+                tileY: 0,
+                mapWidth: 100,
+                mapHeight: 100,
+                padding: 1),
+            "padding nunca autoriza stand fora das dimensoes do mapa");
+    }
+
+    private static void CompanionWorkAreaPolicyValidatesSquareSizeAndMapBounds()
+    {
+        Assert.Equal(3, CompanionWorkAreaPolicy.NormalizeSquareSize(int.MinValue), "tamanho abaixo do minimo");
+        Assert.Equal(3, CompanionWorkAreaPolicy.NormalizeSquareSize(3), "tamanho minimo preservado");
+        Assert.Equal(41, CompanionWorkAreaPolicy.NormalizeSquareSize(41), "tamanho maximo preservado");
+        Assert.Equal(41, CompanionWorkAreaPolicy.NormalizeSquareSize(int.MaxValue), "tamanho acima do maximo");
+        Assert.False(CompanionWorkAreaPolicy.IsSquareGeometryValid(0, 0, 2), "quadrado menor que tres e invalido");
+        Assert.True(CompanionWorkAreaPolicy.IsSquareGeometryValid(0, 0, 3), "quadrado de tamanho tres e valido");
+        Assert.True(CompanionWorkAreaPolicy.IsSquareGeometryValid(0, 0, 41), "quadrado de tamanho quarenta e um e valido");
+        Assert.False(CompanionWorkAreaPolicy.IsSquareGeometryValid(0, 0, 42), "quadrado maior que quarenta e um e invalido");
+        Assert.False(CompanionWorkAreaPolicy.IsSquareGeometryValid(-1, 0, 3), "origem X negativa e invalida");
+        Assert.False(CompanionWorkAreaPolicy.IsSquareGeometryValid(0, -1, 3), "origem Y negativa e invalida");
+
+        Assert.True(
+            CompanionWorkAreaPolicy.IsDelimitedSquareInsideMap(9, 4, 41, mapWidth: 50, mapHeight: 45),
+            "borda direita e inferior podem coincidir com o limite half-open do mapa");
+        Assert.False(
+            CompanionWorkAreaPolicy.IsDelimitedSquareInsideMap(10, 4, 41, mapWidth: 50, mapHeight: 45),
+            "quadrado um tile alem da largura e rejeitado");
+        Assert.False(
+            CompanionWorkAreaPolicy.IsDelimitedSquareInsideMap(9, 5, 41, mapWidth: 50, mapHeight: 45),
+            "quadrado um tile alem da altura e rejeitado");
+        Assert.False(
+            CompanionWorkAreaPolicy.IsDelimitedSquareInsideMap(0, 0, 3, mapWidth: 0, mapHeight: 45),
+            "mapa sem largura e invalido");
+        Assert.False(
+            CompanionWorkAreaPolicy.IsDelimitedSquareInsideMap(int.MaxValue, 0, 3, int.MaxValue, 45),
+            "soma da origem usa aritmetica segura");
+        Assert.False(
+            CompanionWorkAreaPolicy.ContainsRegion(
+                CompanionWorkRegionKind.DelimitedSquare,
+                centerX: -1,
+                centerY: -1,
+                radius: 0,
+                minX: 10,
+                minY: 4,
+                size: 41,
+                tileX: 10,
+                tileY: 4,
+                mapWidth: 50,
+                mapHeight: 45),
+            "regiao que nao cabe inteira no mapa falha fechada mesmo para tile interno");
+    }
+
+    private static void CompanionWorkAreaPolicyBoundsFarmWideByMapDimensions()
+    {
+        Assert.True(CompanionWorkAreaPolicy.ContainsFarmWide(80, 65, 0, 0), "origem do mapa inclusa");
+        Assert.True(CompanionWorkAreaPolicy.ContainsFarmWide(80, 65, 79, 64), "ultimo tile do mapa incluso");
+        Assert.False(CompanionWorkAreaPolicy.ContainsFarmWide(80, 65, -1, 0), "tile antes da origem excluido");
+        Assert.False(CompanionWorkAreaPolicy.ContainsFarmWide(80, 65, 80, 64), "largura e limite half-open");
+        Assert.False(CompanionWorkAreaPolicy.ContainsFarmWide(80, 65, 79, 65), "altura e limite half-open");
+        Assert.False(CompanionWorkAreaPolicy.ContainsFarmWide(0, 65, 0, 0), "dimensoes nao positivas falham fechadas");
+
+        Assert.True(
+            CompanionWorkAreaPolicy.ContainsRegion(
+                CompanionWorkRegionKind.FarmWide,
+                centerX: -1,
+                centerY: -1,
+                radius: 0,
+                minX: -1,
+                minY: -1,
+                size: 0,
+                tileX: 79,
+                tileY: 64,
+                mapWidth: 80,
+                mapHeight: 65,
+                padding: 50),
+            "area livre ignora geometria local e padding, mas usa as dimensoes");
+        Assert.False(
+            CompanionWorkAreaPolicy.ContainsRegion(
+                CompanionWorkRegionKind.FarmWide,
+                centerX: -1,
+                centerY: -1,
+                radius: 0,
+                minX: -1,
+                minY: -1,
+                size: 0,
+                tileX: 80,
+                tileY: 64,
+                mapWidth: 80,
+                mapHeight: 65),
+            "dispatch da area livre tambem exclui o limite direito");
+        Assert.True(
+            CompanionWorkAreaPolicy.IsRoutineRegionValid(
+                CompanionWorkRegionKind.FarmWide,
+                "Farm",
+                centerX: -1,
+                centerY: -1,
+                radius: 0,
+                minX: -1,
+                minY: -1,
+                size: 0),
+            "preset livre exige somente uma location valida");
+        Assert.False(
+            CompanionWorkAreaPolicy.IsRoutineRegionValid(
+                CompanionWorkRegionKind.FarmWide,
+                " ",
+                centerX: -1,
+                centerY: -1,
+                radius: 0,
+                minX: -1,
+                minY: -1,
+                size: 0),
+            "preset livre sem location falha fechado");
+    }
+
     private static void CompanionWorkEnumsPreserveStableValues()
     {
         Assert.Equal(0, (int)CompanionMode.Following, "modo seguir legado");
@@ -938,7 +1154,7 @@ internal static class Program
         Assert.Equal("Forest", CompanionRoutinePolicy.GetAreaPreset(routine, CompanionWorkSpecialty.Wood)?.LocationName, "preset mais recente vence");
     }
 
-    private static void CompanionRoutinePolicyEncodesCasConfigurationOnly()
+    private static void CompanionRoutinePolicyEncodesVersionedCasConfiguration()
     {
         CompanionRoutineState routine = new()
         {
@@ -952,9 +1168,25 @@ internal static class Program
                 new()
                 {
                     Specialty = CompanionWorkSpecialty.Mining,
-                    LocationName = "Mine",
-                    CenterX = 10,
-                    CenterY = 20,
+                    RegionKind = CompanionWorkRegionKind.DelimitedSquare,
+                    LocationName = "Fazenda Sao Joao",
+                    MinX = 10,
+                    MinY = 20,
+                    Size = 11
+                },
+                new()
+                {
+                    Specialty = CompanionWorkSpecialty.Watering,
+                    RegionKind = CompanionWorkRegionKind.FarmWide,
+                    LocationName = "Farm"
+                },
+                new()
+                {
+                    Specialty = CompanionWorkSpecialty.Wood,
+                    RegionKind = CompanionWorkRegionKind.Circle,
+                    LocationName = "Forest",
+                    CenterX = 30,
+                    CenterY = 40,
                     Radius = 5
                 }
             }
@@ -963,20 +1195,55 @@ internal static class Program
         string token = CompanionRoutinePolicy.CreateStateToken(routine);
         string encoded = CompanionRoutinePolicy.Encode(routine);
 
-        Assert.True(CompanionRoutinePolicy.TryDecode(encoded, out CompanionRoutineState decoded), "payload valido");
+        Assert.True(CompanionRoutinePolicy.HasAreaConfigurationPayload(encoded), "payload v2 anuncia configuracao de areas");
+        Assert.True(CompanionRoutinePolicy.TryDecode(encoded, out CompanionRoutineState decoded), "payload v2 valido");
         Assert.True(decoded.Enabled, "enabled no payload");
         Assert.False(decoded.RepeatDaily, "repeat no payload");
         Assert.Equal(CompanionRoutineCompletionBehavior.Wait, decoded.CompletionBehavior, "conclusao no payload");
-        Assert.Equal(0, decoded.AreaPresets.Count, "preset permanece host-side");
+        Assert.Equal(3, decoded.AreaPresets.Count, "payload v2 preserva todos os presets por especialidade");
+        CompanionRoutineAreaPreset? square = CompanionRoutinePolicy.GetAreaPreset(decoded, CompanionWorkSpecialty.Mining);
+        Assert.NotNull(square, "preset quadrado decodificado");
+        Assert.Equal(CompanionWorkRegionKind.DelimitedSquare, square!.RegionKind, "discriminador quadrado no payload");
+        Assert.Equal("Fazenda Sao Joao", square.LocationName, "location quadrada no payload");
+        Assert.Equal(10, square.MinX, "min X quadrado no payload");
+        Assert.Equal(20, square.MinY, "min Y quadrado no payload");
+        Assert.Equal(11, square.Size, "tamanho quadrado no payload");
+        CompanionRoutineAreaPreset? farmWide = CompanionRoutinePolicy.GetAreaPreset(decoded, CompanionWorkSpecialty.Watering);
+        Assert.NotNull(farmWide, "preset livre decodificado");
+        Assert.Equal(CompanionWorkRegionKind.FarmWide, farmWide!.RegionKind, "discriminador livre no payload");
+        Assert.Equal("Farm", farmWide.LocationName, "location livre no payload");
+        CompanionRoutineAreaPreset? circle = CompanionRoutinePolicy.GetAreaPreset(decoded, CompanionWorkSpecialty.Wood);
+        Assert.NotNull(circle, "preset circular decodificado");
+        Assert.Equal(CompanionWorkRegionKind.Circle, circle!.RegionKind, "discriminador circular no payload");
+        Assert.Equal(30, circle.CenterX, "centro X circular no payload");
+        Assert.Equal(40, circle.CenterY, "centro Y circular no payload");
+        Assert.Equal(5, circle.Radius, "raio circular no payload");
         Assert.Equal(-1, decoded.ScheduledDayIndex, "dia e definido pelo host");
-        Assert.NotEqual(token, CompanionRoutinePolicy.CreateStateToken(new CompanionRoutineState
-        {
-            Enabled = routine.Enabled,
-            RepeatDaily = routine.RepeatDaily,
-            Revision = routine.Revision + 1,
-            CompletionBehavior = routine.CompletionBehavior,
-            Hours = CompanionRoutinePolicy.NormalizeHours(routine.Hours).ToList()
-        }), "revisao participa do token CAS");
+        Assert.Equal(0L, decoded.Revision, "revisao operacional nao e aceita do payload");
+
+        CompanionRoutineState areaEdit = CompanionOperationsStateCopy.CloneRoutine(routine);
+        areaEdit.AreaPresets.Single(area => area.Specialty == CompanionWorkSpecialty.Mining).Size = 13;
+        Assert.NotEqual(token, CompanionRoutinePolicy.CreateStateToken(areaEdit), "preset participa do token CAS v2");
+        CompanionRoutineState revisionEdit = CompanionOperationsStateCopy.CloneRoutine(routine);
+        revisionEdit.Revision++;
+        Assert.NotEqual(token, CompanionRoutinePolicy.CreateStateToken(revisionEdit), "revisao participa do token CAS");
+
+        string legacyActivities = string.Join(',', Enumerable.Range(0, CompanionRoutinePolicy.HourCount)
+            .Select(index => index == 2
+                ? ((int)CompanionRoutineActivity.Water).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : ((int)CompanionRoutineActivity.Follow).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        string legacyV1 = string.Join('|',
+            "1",
+            "0",
+            ((int)CompanionRoutineCompletionBehavior.VanillaRoutine).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            legacyActivities);
+        Assert.False(CompanionRoutinePolicy.HasAreaConfigurationPayload(legacyV1), "payload v1 nao anuncia presets");
+        Assert.True(CompanionRoutinePolicy.TryDecode(legacyV1, out CompanionRoutineState legacy), "payload legado v1 continua aceito");
+        Assert.True(legacy.Enabled, "enabled legado preservado");
+        Assert.False(legacy.RepeatDaily, "repeat legado preservado");
+        Assert.Equal(CompanionRoutineCompletionBehavior.VanillaRoutine, legacy.CompletionBehavior, "conclusao legada preservada");
+        Assert.Equal(CompanionRoutineActivity.Water, legacy.Hours[2].Activity, "grade legada preservada");
+        Assert.Equal(0, legacy.AreaPresets.Count, "payload v1 nasce sem presets");
     }
 
     private static void CompanionStateCopyPreservesWateringWorkState()
@@ -989,9 +1256,10 @@ internal static class Program
             WorkAreaActive = true,
             WorkAreaOrderId = "water-order",
             WorkAreaLocationName = "Farm",
-            WorkAreaCenterX = 8,
-            WorkAreaCenterY = 9,
-            WorkAreaRadius = 7,
+            WorkAreaRegionKind = CompanionWorkRegionKind.DelimitedSquare,
+            WorkAreaMinX = 8,
+            WorkAreaMinY = 9,
+            WorkAreaSize = 11,
             WorkAreaSpecialty = CompanionWorkSpecialty.Watering
         };
 
@@ -1001,6 +1269,10 @@ internal static class Program
         Assert.Equal(CompanionWorkSpecialty.Watering, clone.PreferredWorkSpecialty, "preferencia regar clonada");
         Assert.True(clone.WorkAreaActive, "area ativa clonada");
         Assert.Equal("water-order", clone.WorkAreaOrderId, "ordem de rega clonada");
+        Assert.Equal(CompanionWorkRegionKind.DelimitedSquare, clone.WorkAreaRegionKind, "discriminador da area clonado");
+        Assert.Equal(8, clone.WorkAreaMinX, "min X da area clonado");
+        Assert.Equal(9, clone.WorkAreaMinY, "min Y da area clonado");
+        Assert.Equal(11, clone.WorkAreaSize, "tamanho da area clonado");
         Assert.Equal(CompanionWorkSpecialty.Watering, clone.WorkAreaSpecialty, "especialidade da area clonada");
     }
 
@@ -2011,6 +2283,18 @@ internal static class Program
                 {
                     new() { Hour = 9, Activity = CompanionRoutineActivity.Mine }
                 },
+                AreaPresets = new List<CompanionRoutineAreaPreset>
+                {
+                    new()
+                    {
+                        Specialty = CompanionWorkSpecialty.Mining,
+                        RegionKind = CompanionWorkRegionKind.DelimitedSquare,
+                        LocationName = "Farm",
+                        MinX = 14,
+                        MinY = 15,
+                        Size = 17
+                    }
+                },
                 Execution = new CompanionRoutineExecutionState { AppliedDayIndex = 12 }
             },
             ChestDestination = new CompanionChestDestinationState
@@ -2026,12 +2310,20 @@ internal static class Program
         source.Equipment.Pickaxe!.ToolUpgradeLevel = 1;
         source.Equipment.Pickaxe.ModData["example/tool"] = "changed";
         source.Routine.Hours[0].Activity = CompanionRoutineActivity.Wait;
+        source.Routine.AreaPresets[0].RegionKind = CompanionWorkRegionKind.FarmWide;
+        source.Routine.AreaPresets[0].MinX = 99;
+        source.Routine.AreaPresets[0].MinY = 98;
+        source.Routine.AreaPresets[0].Size = 3;
         source.Routine.Execution.AppliedDayIndex = 99;
         source.ChestDestination!.LocationName = "Changed";
 
         Assert.Equal(3, clone.Equipment.Pickaxe?.ToolUpgradeLevel, "upgrade destacado");
         Assert.Equal("original", clone.Equipment.Pickaxe?.ModData["example/tool"], "ModData destacado");
         Assert.Equal(CompanionRoutineActivity.Mine, clone.Routine.Hours[0].Activity, "hora destacada");
+        Assert.Equal(CompanionWorkRegionKind.DelimitedSquare, clone.Routine.AreaPresets[0].RegionKind, "discriminador de preset destacado");
+        Assert.Equal(14, clone.Routine.AreaPresets[0].MinX, "min X de preset destacado");
+        Assert.Equal(15, clone.Routine.AreaPresets[0].MinY, "min Y de preset destacado");
+        Assert.Equal(17, clone.Routine.AreaPresets[0].Size, "tamanho de preset destacado");
         Assert.Equal(12, clone.Routine.Execution.AppliedDayIndex, "execucao destacada");
         Assert.Equal("Farm", clone.ChestDestination?.LocationName, "destino destacado");
     }

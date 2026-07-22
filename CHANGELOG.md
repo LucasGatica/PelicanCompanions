@@ -4,6 +4,31 @@ All notable Pelican Companions changes are documented here.
 
 ## Unreleased
 
+### Companion panel visual redesign
+
+- Refreshed the F9 companion panel with the visual language shared by AliveNPCs
+  and Beach Episode: the native warm-yellow Stardew parchment, a centered
+  title/subtitle, status-accented cards, gold tabs with green selection, and
+  semantic green or coral action buttons.
+- Rebalanced type sizes and control spacing throughout the panel. The routine
+  editor now uses concise activity labels and a 5-by-4 hourly grid when vertical
+  room is available, while retaining its dense fallback for compact viewports.
+- Increased the hierarchy of hours, levels, counters, and progression totals
+  without enlarging surrounding labels. Dense routine cells now prioritize a
+  readable hour instead of squeezing the hour and activity into one tiny line.
+- Responsive and compact layouts still preserve every tab and action, including
+  mouse, keyboard, and controller focus/navigation; the subtitle appears only
+  when the viewport has room for the expanded header.
+
+### Chest destination experience
+
+- Reworked the chest destination panel with native Stardew parchment, a clear
+  instruction header, stronger hover/selection states, readable pagination, and
+  distinct indicators for explicit, inherited, and other-chest assignments.
+- Compact pagination now also protects low-height viewports from unusably short
+  rows. Farmhand assignment controls remain visibly locked while the host is
+  confirming a newly identified chest, preventing accidental duplicate intents.
+
 ### Permanent NPC progression profiles
 
 - XP, level, unspent points, unlocked skills, and recent-loot history now live
@@ -41,13 +66,21 @@ All notable Pelican Companions changes are documented here.
   so a newly filled grid can no longer save successfully while remaining
   silently inert. An active routine also owns the companion before generic
   configured autonomy, keeping Follow blocks and Follow completion in control.
-- A scheduled work block without a remembered area now waits and retries after
-  the player marks that specialty instead of being permanently completed for
-  the current block. If an older save had already completed that block for the
-  missing preset, marking its area resets the stale completion once.
+- Water, Wood, Mine, and Clear now each have an independent work scope in the
+  routine editor. Free Area covers the entire main farm; Delimited Area opens a
+  construction-style farm view for placing an exact square from 3 × 3 through
+  41 × 41 tiles, clamped to vanilla or custom farm-map borders.
+- The area picker supports mouse, keyboard, and controller camera/cursor input,
+  size controls, confirm, and cancel. Returning restores the previous location,
+  farmer, HUD, and viewport as well as the same panel draft.
+- A scheduled work block without a scope now remains paused and retries until
+  the player explicitly chooses Free Area or Delimited Area (or supplies a
+  compatible circular manual preset). It never silently becomes farm-wide. If
+  an older save had already completed that block for the missing preset,
+  defining its area resets the stale completion once.
 - Temporary manual tasks and areas now return to the already-applied Follow,
   Wait, original-routine, or completion state when they end. Remembered work
-  areas also respect a later radius reduction, and disabled task modes report
+  circles also respect a later radius reduction, and disabled task modes report
   that pause instead of incorrectly claiming that a tool is missing.
 - Added a fifth Routine tab with twenty hourly cells from 06:00 through 01:59.
   Each cell can Follow, Wait, use the NPC's original routine, Water, cut Wood,
@@ -56,13 +89,16 @@ All notable Pelican Companions changes are documented here.
 - Routines can repeat daily or run only on the saved day. The host persists the
   applied day/block/revision key, so a contiguous work block applies once and a
   completed area does not restart every ten minutes or after reloading.
-- Manually marking an area remembers one owner/NPC-scoped preset per work
-  specialty. Scheduled work can return to that map and circle independently of
-  the owner's current map. Missing presets and disabled task modes remain
-  paused for retry, while exhausted areas use the configured completion behavior.
+- Manual wheel areas remain circular. Schema 14 preserves existing circles by
+  default when old JSON has no region discriminator, and those presets stay
+  circular until explicitly replaced in the editor. A later manual circle does
+  not overwrite an explicit Free/Delimited choice. Missing presets and disabled
+  task modes remain paused for retry, while exhausted areas use the configured
+  completion behavior.
 - Routine edits are one host-authoritative compare-and-swap payload. Concurrent
-  multiplayer edits are rejected instead of overwriting a newer grid, while
-  host-owned area presets and execution state are never accepted from clients.
+  multiplayer edits are rejected instead of overwriting a newer grid. The host
+  validates the main-farm identity and square bounds before accepting a scope,
+  and execution state is never accepted from clients.
 - Added `OriginalRoutine` as a real companion mode. It releases the mod's
   schedule locks and behavior patches while active, then safely reacquires
   control when a later block switches back to Follow, Wait, or scheduled work.

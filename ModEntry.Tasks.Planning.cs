@@ -83,6 +83,12 @@ public sealed partial class ModEntry
         }
 
         GameLocation location = fixedAreaLocation ?? owner.currentLocation;
+        int radius = fixedArea
+            ? this.GetWorkAreaSearchRadius(member, location)
+            : this.GetCompanionWorkRadius(member);
+        Func<Vector2, bool>? containsTarget = fixedArea
+            ? tile => this.IsTileInsideWorkAreaRegion(member, location, tile)
+            : null;
         if (npc.currentLocation != location)
         {
             if (fixedArea)
@@ -108,10 +114,11 @@ public sealed partial class ModEntry
             if (!this.HasMatchingWorkAreaTarget(
                     location,
                     this.GetWorkAreaCenter(member),
-                    member.WorkAreaRadius,
+                    radius,
                     member.WorkAreaSpecialty,
                     includeReserved: true,
-                    respectConfiguredModes: false))
+                    respectConfiguredModes: false,
+                    containsTarget: containsTarget))
             {
                 this.CompleteCompanionWorkArea(member, npc);
                 return false;
@@ -125,7 +132,6 @@ public sealed partial class ModEntry
             return false;
         }
 
-        int radius = fixedArea ? member.WorkAreaRadius : this.GetCompanionWorkRadius(member);
         bool requestedWood = (fixedArea
                 ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Lumbering)
                 : member.SearchWood || member.ClearArea)
@@ -154,7 +160,8 @@ public sealed partial class ModEntry
             includeMining,
             includeUsableWatering,
             fixedArea ? this.GetWorkAreaCenter(member) : null,
-            allowStandOutsideRadius: fixedArea);
+            allowStandOutsideRadius: fixedArea,
+            containsTarget: containsTarget);
         WorkTarget? missingEquipmentTarget = target is null
             ? this.FindBestWorkTarget(
                 member,
@@ -166,7 +173,8 @@ public sealed partial class ModEntry
                 requestedMining && !hasPickaxe,
                 includeWatering && !hasWateringCan,
                 searchCenter: fixedArea ? this.GetWorkAreaCenter(member) : null,
-                allowStandOutsideRadius: fixedArea)
+                allowStandOutsideRadius: fixedArea,
+                containsTarget: containsTarget)
             : null;
         string? missingEquipmentFailure = missingEquipmentTarget is WorkTarget missingTarget
             ? this.GetRequiredEquipmentFailureKey(member, missingTarget.Kind)
@@ -191,33 +199,37 @@ public sealed partial class ModEntry
                 bool hasAnyRemainingTarget = this.HasMatchingWorkAreaTarget(
                     location,
                     this.GetWorkAreaCenter(member),
-                    member.WorkAreaRadius,
+                    radius,
                     member.WorkAreaSpecialty,
                     includeReserved: true,
-                    respectConfiguredModes: false);
+                    respectConfiguredModes: false,
+                    containsTarget: containsTarget);
                 bool hasEnabledRemainingTarget = this.HasMatchingWorkAreaTarget(
                     location,
                     this.GetWorkAreaCenter(member),
-                    member.WorkAreaRadius,
+                    radius,
                     member.WorkAreaSpecialty,
                     includeReserved: true,
-                    respectConfiguredModes: true);
+                    respectConfiguredModes: true,
+                    containsTarget: containsTarget);
                 bool hasCompatibleRemainingTarget = this.HasMatchingWorkAreaTargetForMember(
                     member,
                     location,
                     this.GetWorkAreaCenter(member),
-                    member.WorkAreaRadius,
+                    radius,
                     member.WorkAreaSpecialty,
                     includeReserved: true,
-                    respectConfiguredModes: false);
+                    respectConfiguredModes: false,
+                    containsTarget: containsTarget);
                 bool hasEnabledCompatibleRemainingTarget = this.HasMatchingWorkAreaTargetForMember(
                     member,
                     location,
                     this.GetWorkAreaCenter(member),
-                    member.WorkAreaRadius,
+                    radius,
                     member.WorkAreaSpecialty,
                     includeReserved: true,
-                    respectConfiguredModes: true);
+                    respectConfiguredModes: true,
+                    containsTarget: containsTarget);
                 if (!hasAnyRemainingTarget)
                 {
                     this.CompleteCompanionWorkArea(member, npc);
@@ -237,8 +249,9 @@ public sealed partial class ModEntry
                                 member,
                                 location,
                                 this.GetWorkAreaCenter(member),
-                                member.WorkAreaRadius,
-                                member.WorkAreaSpecialty));
+                                radius,
+                                member.WorkAreaSpecialty,
+                                containsTarget));
                 }
                 else if (!hasEnabledCompatibleRemainingTarget)
                 {
@@ -374,7 +387,8 @@ public sealed partial class ModEntry
         bool includeMining,
         bool includeWatering,
         Vector2? searchCenter = null,
-        bool allowStandOutsideRadius = false)
+        bool allowStandOutsideRadius = false,
+        Func<Vector2, bool>? containsTarget = null)
     {
         if (!includeWood && !includeMining && !includeWatering)
             return null;
@@ -387,7 +401,7 @@ public sealed partial class ModEntry
         {
             Vector2 tile = NormalizeTile(rawTile);
             float playerDistance = Vector2.Distance(ownerTile, tile);
-            if (playerDistance > radius)
+            if (playerDistance > radius || containsTarget?.Invoke(tile) == false)
                 return;
 
             if (this.IsTargetReserved(location, tile))
@@ -528,6 +542,10 @@ public sealed partial class ModEntry
             member.WorkAreaCenterX,
             member.WorkAreaCenterY,
             member.WorkAreaRadius,
+            member.WorkAreaRegionKind,
+            member.WorkAreaMinX,
+            member.WorkAreaMinY,
+            member.WorkAreaSize,
             member.WorkAreaSpecialty,
             tasksEnabled,
             blocked,
@@ -640,7 +658,12 @@ public sealed partial class ModEntry
             return new TargetPreview(false, "", -1, -1, reason);
         }
 
-        int radius = fixedArea ? member.WorkAreaRadius : this.GetCompanionWorkRadius(member);
+        int radius = fixedArea
+            ? this.GetWorkAreaSearchRadius(member, location)
+            : this.GetCompanionWorkRadius(member);
+        Func<Vector2, bool>? containsTarget = fixedArea
+            ? tile => this.IsTileInsideWorkAreaRegion(member, location, tile)
+            : null;
         WorkTarget? target = this.FindBestWorkTarget(
             member,
             npc,
@@ -651,7 +674,8 @@ public sealed partial class ModEntry
             includeMining,
             includeWatering,
             fixedArea ? this.GetWorkAreaCenter(member) : null,
-            allowStandOutsideRadius: fixedArea);
+            allowStandOutsideRadius: fixedArea,
+            containsTarget: containsTarget);
         if (target is null)
         {
             WorkTarget? missingEquipmentTarget = this.FindBestWorkTarget(
@@ -664,7 +688,8 @@ public sealed partial class ModEntry
                 requestedMining && !hasPickaxe,
                 requestedWatering && !hasWateringCan,
                 searchCenter: fixedArea ? this.GetWorkAreaCenter(member) : null,
-                allowStandOutsideRadius: fixedArea);
+                allowStandOutsideRadius: fixedArea,
+                containsTarget: containsTarget);
             string reason = missingEquipmentTarget is WorkTarget missingTarget
                 ? this.GetRequiredEquipmentFailureKey(member, missingTarget.Kind)
                 : "companion.preview.no_target";

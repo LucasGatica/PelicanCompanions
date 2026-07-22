@@ -49,9 +49,13 @@ internal sealed class CompanionRoutineAreaPreset
 {
     public CompanionWorkSpecialty Specialty { get; set; } = CompanionWorkSpecialty.ClearArea;
     public string LocationName { get; set; } = "";
+    public CompanionWorkRegionKind RegionKind { get; set; } = CompanionWorkRegionKind.Circle;
     public int CenterX { get; set; } = -1;
     public int CenterY { get; set; } = -1;
     public int Radius { get; set; } = 8;
+    public int MinX { get; set; } = -1;
+    public int MinY { get; set; } = -1;
+    public int Size { get; set; }
 }
 
 internal sealed class CompanionRoutineState
@@ -244,9 +248,13 @@ internal static class CompanionOperationsStateCopy
         {
             Specialty = source.Specialty,
             LocationName = source.LocationName,
+            RegionKind = source.RegionKind,
             CenterX = source.CenterX,
             CenterY = source.CenterY,
-            Radius = source.Radius
+            Radius = source.Radius,
+            MinX = source.MinX,
+            MinY = source.MinY,
+            Size = source.Size
         };
     }
 

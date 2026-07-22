@@ -18,9 +18,14 @@ public sealed partial class ModEntry
     private const int ChestDestinationPanelPadding = 10;
     private const int ChestDestinationTitleHeight = 34;
     private const int ChestDestinationButtonHeight = 32;
+    private const int ChestDestinationMinimumButtonHeight = 24;
     private const int ChestDestinationButtonGap = 5;
     private const int CompactChestDestinationPanelWidth = 208;
     private const int CompactChestDestinationPageSize = 2;
+    private const float ChestDestinationTitleTextScale = 0.70f;
+    private const float ChestDestinationBodyTextScale = 0.62f;
+    private const float ChestDestinationMetaTextScale = 0.50f;
+    private const float ChestDestinationNumberTextScale = 0.72f;
     private const float ChestSelectionMaximumDistance = 4f;
     private const int ChestIdentityHandshakeTimeoutTicks = 600;
 
@@ -38,6 +43,14 @@ public sealed partial class ModEntry
         NextPage
     }
 
+    private enum ChestDestinationDisplayState
+    {
+        Neutral,
+        ExplicitHere,
+        InheritedHere,
+        OverrideElsewhere
+    }
+
     private readonly record struct ChestMenuContext(
         ItemGrabMenu Menu,
         Chest Chest,
@@ -51,7 +64,8 @@ public sealed partial class ModEntry
         string Label,
         Rectangle Bounds,
         bool Active,
-        bool Enabled);
+        bool Enabled,
+        ChestDestinationDisplayState DisplayState);
 
     private readonly record struct ChestDestinationLayout(
         Rectangle Panel,
@@ -99,7 +113,7 @@ public sealed partial class ModEntry
 
         List<SquadMemberState> companions = this.GetLocalChestDestinationMembers();
         ChestDestinationLayout layout = this.GetChestDestinationLayout(context, companions);
-        this.DrawChestDestinationPanel(e.SpriteBatch, layout);
+        this.DrawChestDestinationPanel(e.SpriteBatch, layout, context.Menu);
         context.Menu.drawMouse(e.SpriteBatch);
     }
 
@@ -146,6 +160,13 @@ public sealed partial class ModEntry
             int previousPage = this.compactChestDestinationPage;
             this.compactChestDestinationPage = Math.Clamp(previousPage + delta, 0, pageCount - 1);
             Game1.playSound(this.compactChestDestinationPage == previousPage ? "cancel" : "shiny4");
+            return true;
+        }
+
+        if (this.pendingChestDestinationHandshake is not null
+            && ReferenceEquals(this.pendingChestDestinationHandshake.Menu, context.Menu))
+        {
+            Game1.playSound("cancel");
             return true;
         }
 
@@ -369,14 +390,15 @@ public sealed partial class ModEntry
         bool useTwoCompanionColumns = singleColumnHeight > maximumPanelHeight && companions.Count > 1;
         int rowCount = 2 + (useTwoCompanionColumns ? (companions.Count + 1) / 2 : companions.Count);
         int rowGap = singleColumnHeight <= maximumPanelHeight ? ChestDestinationButtonGap : 2;
-        int availableRowHeight = Math.Max(
-            12,
-            (maximumPanelHeight
-                - ChestDestinationPanelPadding * 2
-                - ChestDestinationTitleHeight
-                - Math.Max(0, rowCount - 1) * rowGap)
-            / Math.Max(1, rowCount));
-        int rowHeight = Math.Clamp(availableRowHeight, 12, ChestDestinationButtonHeight);
+        int availableRowHeight = (maximumPanelHeight
+            - ChestDestinationPanelPadding * 2
+            - ChestDestinationTitleHeight
+            - Math.Max(0, rowCount - 1) * rowGap)
+            / Math.Max(1, rowCount);
+        if (availableRowHeight < ChestDestinationMinimumButtonHeight)
+            return this.GetCompactChestDestinationLayout(context, companions);
+
+        int rowHeight = Math.Min(availableRowHeight, ChestDestinationButtonHeight);
         int panelHeight = ChestDestinationPanelPadding * 2
             + ChestDestinationTitleHeight
             + rowCount * rowHeight
@@ -409,6 +431,7 @@ public sealed partial class ModEntry
             .Any(pair => DestinationMatchesChest(
                 pair.Value.ChestDestination,
                 context.ChestId));
+        bool nothingPointsHere = !defaultPointsHere && !anyIndividualPointsHere;
 
         List<ChestDestinationButton> buttons = new(buttonCount);
         buttons.Add(new ChestDestinationButton(
@@ -416,8 +439,9 @@ public sealed partial class ModEntry
             "",
             this.Tr("chest_destination.none"),
             new Rectangle(contentX, buttonY, contentWidth, rowHeight),
-            !defaultPointsHere && !anyIndividualPointsHere,
-            Enabled: true));
+            nothingPointsHere,
+            Enabled: true,
+            DisplayState: nothingPointsHere ? ChestDestinationDisplayState.ExplicitHere : ChestDestinationDisplayState.Neutral));
         buttonY += rowHeight + rowGap;
 
         buttons.Add(new ChestDestinationButton(
@@ -426,7 +450,8 @@ public sealed partial class ModEntry
             this.Tr("chest_destination.all"),
             new Rectangle(contentX, buttonY, contentWidth, rowHeight),
             defaultPointsHere,
-            Enabled: true));
+            Enabled: true,
+            DisplayState: defaultPointsHere ? ChestDestinationDisplayState.ExplicitHere : ChestDestinationDisplayState.Neutral));
         buttonY += rowHeight + rowGap;
 
         int companionIndex = 0;
@@ -436,6 +461,13 @@ public sealed partial class ModEntry
             bool active = DestinationMatchesChest(
                 profile?.ChestDestination,
                 context.ChestId);
+            ChestDestinationDisplayState displayState = active
+                ? ChestDestinationDisplayState.ExplicitHere
+                : profile?.ChestDestination is not null
+                    ? ChestDestinationDisplayState.OverrideElsewhere
+                    : defaultPointsHere
+                        ? ChestDestinationDisplayState.InheritedHere
+                        : ChestDestinationDisplayState.Neutral;
             int column = useTwoCompanionColumns ? companionIndex % 2 : 0;
             int row = useTwoCompanionColumns ? companionIndex / 2 : companionIndex;
             int columnGap = useTwoCompanionColumns ? rowGap : 0;
@@ -451,7 +483,8 @@ public sealed partial class ModEntry
                 member.DisplayName,
                 bounds,
                 active,
-                Enabled: true));
+                Enabled: true,
+                DisplayState: displayState));
             companionIndex++;
         }
 
@@ -477,6 +510,7 @@ public sealed partial class ModEntry
             1,
             (companions.Count + CompactChestDestinationPageSize - 1) / CompactChestDestinationPageSize);
         this.compactChestDestinationPage = Math.Clamp(this.compactChestDestinationPage, 0, pageCount - 1);
+        bool showNavigation = pageCount > 1;
         List<SquadMemberState> pageMembers = companions
             .Skip(this.compactChestDestinationPage * CompactChestDestinationPageSize)
             .Take(CompactChestDestinationPageSize)
@@ -484,7 +518,10 @@ public sealed partial class ModEntry
 
         int viewportWidth = Math.Max(1, Game1.uiViewport.Width);
         int viewportHeight = Math.Max(1, Game1.uiViewport.Height);
-        int rowCount = 2 + pageMembers.Count; // shared row, companion rows, navigation row
+        int companionRowSlots = showNavigation
+            ? CompactChestDestinationPageSize
+            : pageMembers.Count;
+        int rowCount = 1 + companionRowSlots + (showNavigation ? 1 : 0);
         int horizontalMargin = Math.Min(
             ChestDestinationPanelMargin,
             Math.Max(0, (viewportWidth - 3) / 2));
@@ -498,7 +535,7 @@ public sealed partial class ModEntry
                 viewportWidth - horizontalMargin * 2));
         int maximumPanelHeight = Math.Max(1, viewportHeight - verticalMargin * 2);
 
-        int padding = Math.Min(6, Math.Max(0, (maximumPanelHeight - rowCount - 1) / 8));
+        int padding = Math.Min(10, Math.Max(0, (maximumPanelHeight - rowCount - 1) / 8));
         padding = Math.Min(padding, Math.Max(0, (panelWidth - 3) / 2));
         int gap = Math.Min(
             3,
@@ -514,7 +551,7 @@ public sealed partial class ModEntry
                 - padding * 2
                 - titleHeight
                 - gap * Math.Max(0, rowCount - 1));
-        int rowHeight = Math.Min(22, Math.Max(1, availableRowsHeight / Math.Max(1, rowCount)));
+        int rowHeight = Math.Min(26, Math.Max(1, availableRowsHeight / Math.Max(1, rowCount)));
         int panelHeight = Math.Min(
             maximumPanelHeight,
             padding * 2
@@ -523,6 +560,13 @@ public sealed partial class ModEntry
                 + gap * Math.Max(0, rowCount - 1));
 
         int x = horizontalMargin;
+        int menuLeft = context.Menu.xPositionOnScreen;
+        int menuRight = menuLeft + context.Menu.width;
+        if (menuRight + ChestDestinationPanelMargin + panelWidth <= viewportWidth - horizontalMargin)
+            x = menuRight + ChestDestinationPanelMargin;
+        else if (menuLeft - ChestDestinationPanelMargin - panelWidth >= horizontalMargin)
+            x = menuLeft - ChestDestinationPanelMargin - panelWidth;
+        x = Math.Clamp(x, horizontalMargin, Math.Max(horizontalMargin, viewportWidth - panelWidth - horizontalMargin));
         int maximumY = Math.Max(verticalMargin, viewportHeight - panelHeight - verticalMargin);
         int y = Math.Clamp(context.Menu.yPositionOnScreen, verticalMargin, maximumY);
         Rectangle panel = new(x, y, panelWidth, panelHeight);
@@ -539,6 +583,7 @@ public sealed partial class ModEntry
         bool anyIndividualPointsHere = this.operationalProfiles
             .Where(pair => pair.Key.OwnerId == ownerId)
             .Any(pair => DestinationMatchesChest(pair.Value.ChestDestination, context.ChestId));
+        bool nothingPointsHere = !defaultPointsHere && !anyIndividualPointsHere;
 
         int sharedGap = Math.Min(gap, Math.Max(0, contentWidth - 2));
         int sharedWidth = Math.Max(1, (contentWidth - sharedGap) / 2);
@@ -547,145 +592,637 @@ public sealed partial class ModEntry
             new ChestDestinationButton(
                 ChestDestinationSelection.None,
                 "",
-                this.Tr("chest_destination.none"),
+                this.Tr("chest_destination.none_short"),
                 new Rectangle(contentX, buttonY, sharedWidth, rowHeight),
-                !defaultPointsHere && !anyIndividualPointsHere,
-                Enabled: true),
+                nothingPointsHere,
+                Enabled: true,
+                DisplayState: nothingPointsHere ? ChestDestinationDisplayState.ExplicitHere : ChestDestinationDisplayState.Neutral),
             new ChestDestinationButton(
                 ChestDestinationSelection.All,
                 "",
-                this.Tr("chest_destination.all"),
+                this.Tr("chest_destination.all_short"),
                 new Rectangle(
                     contentX + sharedWidth + sharedGap,
                     buttonY,
                     Math.Max(1, contentWidth - sharedWidth - sharedGap),
-                    rowHeight),
+                rowHeight),
                 defaultPointsHere,
-                Enabled: true)
+                Enabled: true,
+                DisplayState: defaultPointsHere ? ChestDestinationDisplayState.ExplicitHere : ChestDestinationDisplayState.Neutral)
         };
         buttonY += rowHeight + gap;
 
         foreach (SquadMemberState member in pageMembers)
         {
             this.TryGetOperationalProfile(ownerId, member.NpcName, out CompanionOperationalProfileState? profile);
+            bool active = DestinationMatchesChest(profile?.ChestDestination, context.ChestId);
+            ChestDestinationDisplayState displayState = active
+                ? ChestDestinationDisplayState.ExplicitHere
+                : profile?.ChestDestination is not null
+                    ? ChestDestinationDisplayState.OverrideElsewhere
+                    : defaultPointsHere
+                        ? ChestDestinationDisplayState.InheritedHere
+                        : ChestDestinationDisplayState.Neutral;
             buttons.Add(new ChestDestinationButton(
                 ChestDestinationSelection.Companion,
                 member.NpcName,
                 member.DisplayName,
                 new Rectangle(contentX, buttonY, contentWidth, rowHeight),
-                DestinationMatchesChest(profile?.ChestDestination, context.ChestId),
-                Enabled: true));
+                active,
+                Enabled: true,
+                DisplayState: displayState));
             buttonY += rowHeight + gap;
         }
 
-        int navigationGap = Math.Min(gap, Math.Max(0, (contentWidth - 3) / 2));
-        int navigationWidth = Math.Max(1, (contentWidth - navigationGap * 2) / 3);
-        int pageNumber = this.compactChestDestinationPage + 1;
-        buttons.Add(new ChestDestinationButton(
-            ChestDestinationSelection.PreviousPage,
-            "",
-            this.Tr("chest_destination.previous"),
-            new Rectangle(contentX, buttonY, navigationWidth, rowHeight),
-            Active: false,
-            Enabled: this.compactChestDestinationPage > 0));
-        buttons.Add(new ChestDestinationButton(
-            ChestDestinationSelection.PageIndicator,
-            "",
-            this.Tr("chest_destination.page", new { current = pageNumber, total = pageCount }),
-            new Rectangle(contentX + navigationWidth + navigationGap, buttonY, navigationWidth, rowHeight),
-            Active: false,
-            Enabled: false));
-        int nextX = contentX + (navigationWidth + navigationGap) * 2;
-        buttons.Add(new ChestDestinationButton(
-            ChestDestinationSelection.NextPage,
-            "",
-            this.Tr("chest_destination.next"),
-            new Rectangle(nextX, buttonY, Math.Max(1, contentX + contentWidth - nextX), rowHeight),
-            Active: false,
-            Enabled: this.compactChestDestinationPage < pageCount - 1));
+        for (int emptyRow = pageMembers.Count; emptyRow < companionRowSlots; emptyRow++)
+            buttonY += rowHeight + gap;
+
+        if (showNavigation)
+        {
+            int navigationGap = Math.Min(gap, Math.Max(0, (contentWidth - 3) / 2));
+            int navigationWidth = Math.Max(1, (contentWidth - navigationGap * 2) / 3);
+            int pageNumber = this.compactChestDestinationPage + 1;
+            buttons.Add(new ChestDestinationButton(
+                ChestDestinationSelection.PreviousPage,
+                "",
+                this.Tr("chest_destination.previous"),
+                new Rectangle(contentX, buttonY, navigationWidth, rowHeight),
+                Active: false,
+                Enabled: this.compactChestDestinationPage > 0,
+                DisplayState: ChestDestinationDisplayState.Neutral));
+            buttons.Add(new ChestDestinationButton(
+                ChestDestinationSelection.PageIndicator,
+                "",
+                this.Tr("chest_destination.page", new { current = pageNumber, total = pageCount }),
+                new Rectangle(contentX + navigationWidth + navigationGap, buttonY, navigationWidth, rowHeight),
+                Active: false,
+                Enabled: false,
+                DisplayState: ChestDestinationDisplayState.Neutral));
+            int nextX = contentX + (navigationWidth + navigationGap) * 2;
+            buttons.Add(new ChestDestinationButton(
+                ChestDestinationSelection.NextPage,
+                "",
+                this.Tr("chest_destination.next"),
+                new Rectangle(nextX, buttonY, Math.Max(1, contentX + contentWidth - nextX), rowHeight),
+                Active: false,
+                Enabled: this.compactChestDestinationPage < pageCount - 1,
+                DisplayState: ChestDestinationDisplayState.Neutral));
+        }
 
         return new ChestDestinationLayout(panel, titleBounds, buttons, Compact: true);
     }
 
     private void DrawChestDestinationPanel(
         SpriteBatch spriteBatch,
-        ChestDestinationLayout layout)
+        ChestDestinationLayout layout,
+        ItemGrabMenu menu)
     {
         Rectangle panel = layout.Panel;
-        Color panelBorder = new(90, 62, 42);
-        Color panelFill = new(246, 226, 173);
-        Color buttonBorder = new(141, 103, 65);
-        Color buttonFill = new(235, 210, 156);
-        Color buttonHover = new(250, 232, 188);
-        Color buttonActive = new(181, 220, 173);
-        Color buttonDisabled = new(218, 204, 175);
-        Color textColor = new(63, 42, 31);
-        Color disabledTextColor = new(126, 110, 91);
+        Color textColor = new(91, 57, 36);
+        Color gold = new(245, 190, 70);
+        Color green = new(130, 172, 116);
         Point mouse = new(Game1.getMouseX(true), Game1.getMouseY(true));
+        PendingChestDestinationHandshake? pending = this.pendingChestDestinationHandshake;
+        bool interactionLocked = pending is not null && ReferenceEquals(pending.Menu, menu);
 
-        spriteBatch.Draw(Game1.staminaRect, new Rectangle(panel.X + 4, panel.Y + 5, panel.Width, panel.Height), Color.Black * 0.25f);
-        spriteBatch.Draw(Game1.staminaRect, panel, panelBorder);
+        if (panel.Width >= 40 && panel.Height >= 32)
+        {
+            IClickableMenu.drawTextureBox(
+                spriteBatch,
+                Game1.menuTexture,
+                new Rectangle(0, 256, 60, 60),
+                panel.X,
+                panel.Y,
+                panel.Width,
+                panel.Height,
+                Color.White);
+        }
+        else
+        {
+            DrawChestDestinationFlatPanel(
+                spriteBatch,
+                panel,
+                new Color(250, 221, 164),
+                new Color(91, 57, 36),
+                1);
+        }
+
+        Rectangle titleBounds = layout.TitleBounds;
+        int iconSize = Math.Clamp(titleBounds.Height - (layout.Compact ? 8 : 10), 10, 20);
+        Rectangle iconBounds = new(
+            titleBounds.X + 1,
+            titleBounds.Center.Y - iconSize / 2 - (layout.Compact ? 0 : 1),
+            iconSize,
+            iconSize);
+        DrawChestDestinationIcon(spriteBatch, iconBounds);
+
+        Rectangle titleTextBounds = new(
+            iconBounds.Right + 6,
+            titleBounds.Y,
+            Math.Max(1, titleBounds.Right - iconBounds.Right - 7),
+            titleBounds.Height);
+        string titleText = this.Tr(layout.Compact
+            ? "chest_destination.title_short"
+            : "chest_destination.title");
+        if (layout.Compact)
+        {
+            DrawCenteredChestDestinationText(
+                spriteBatch,
+                titleText,
+                Game1.tinyFont,
+                titleTextBounds,
+                textColor,
+                ChestDestinationTitleTextScale,
+                2,
+                2,
+                minimumScale: 0.56f);
+        }
+        else
+        {
+            Rectangle titleLine = new(titleTextBounds.X, titleTextBounds.Y, titleTextBounds.Width, 16);
+            DrawChestDestinationTextInBounds(
+                spriteBatch,
+                titleText,
+                Game1.tinyFont,
+                titleLine,
+                textColor,
+                ChestDestinationTitleTextScale,
+                0.56f,
+                centered: false);
+            string subtitle = this.Tr(interactionLocked
+                ? "chest_destination.pending"
+                : "chest_destination.subtitle");
+            Rectangle subtitleLine = new(
+                titleTextBounds.X,
+                titleTextBounds.Y + 16,
+                titleTextBounds.Width,
+                Math.Max(1, titleTextBounds.Height - 18));
+            DrawChestDestinationTextInBounds(
+                spriteBatch,
+                subtitle,
+                Game1.tinyFont,
+                subtitleLine,
+                interactionLocked ? new Color(145, 94, 32) : new Color(96, 88, 78),
+                ChestDestinationMetaTextScale,
+                0.42f,
+                centered: false);
+        }
+
+        int dividerY = titleBounds.Bottom - 3;
         spriteBatch.Draw(
             Game1.staminaRect,
-            new Rectangle(panel.X + 3, panel.Y + 3, panel.Width - 6, panel.Height - 6),
-            panelFill);
+            new Rectangle(titleBounds.X + 2, dividerY, Math.Max(1, titleBounds.Width - 4), 2),
+            gold * 0.72f);
+        spriteBatch.Draw(
+            Game1.staminaRect,
+            new Rectangle(titleBounds.Center.X - Math.Min(24, titleBounds.Width / 6), dividerY, Math.Min(48, titleBounds.Width / 3), 2),
+            green);
 
-        SpriteFont titleFont = layout.Compact ? Game1.tinyFont : Game1.smallFont;
-        string title = FitChestDestinationText(
-            this.Tr("chest_destination.title"),
-            titleFont,
-            layout.TitleBounds.Width);
-        Vector2 titleSize = titleFont.MeasureString(title);
-        Utility.drawTextWithShadow(
-            spriteBatch,
-            title,
-            titleFont,
-            new Vector2(
-                layout.TitleBounds.X,
-                layout.Compact
-                    ? layout.TitleBounds.Y + Math.Max(0f, (layout.TitleBounds.Height - titleSize.Y) / 2f)
-                    : layout.TitleBounds.Y - 1),
-            textColor);
-
+        bool companionSectionStarted = false;
         foreach (ChestDestinationButton button in layout.Buttons)
         {
-            bool hovered = button.Enabled && button.Bounds.Contains(mouse);
-            Color fill = !button.Enabled
-                ? buttonDisabled
-                : button.Active
-                    ? buttonActive
-                    : hovered
-                        ? buttonHover
-                        : buttonFill;
-            spriteBatch.Draw(Game1.staminaRect, button.Bounds, buttonBorder);
-            Rectangle inner = new(
-                button.Bounds.X + 2,
-                button.Bounds.Y + 2,
-                Math.Max(1, button.Bounds.Width - 4),
-                Math.Max(1, button.Bounds.Height - 4));
-            spriteBatch.Draw(Game1.staminaRect, inner, fill);
+            if (!companionSectionStarted && button.Selection == ChestDestinationSelection.Companion)
+            {
+                companionSectionStarted = true;
+                int sectionY = Math.Max(titleBounds.Bottom, button.Bounds.Y - 1);
+                spriteBatch.Draw(
+                    Game1.staminaRect,
+                    new Rectangle(panel.X + 14, sectionY, Math.Max(1, panel.Width - 28), 1),
+                    new Color(143, 103, 64) * 0.42f);
+            }
 
-            string label = FitChestDestinationText(button.Label, Game1.tinyFont, button.Bounds.Width - 20);
-            Vector2 size = Game1.tinyFont.MeasureString(label);
-            Utility.drawTextWithShadow(
+            bool assignmentButton = button.Selection is ChestDestinationSelection.None
+                or ChestDestinationSelection.All
+                or ChestDestinationSelection.Companion;
+            bool pendingButton = interactionLocked
+                && assignmentButton
+                && pending!.Selection == button.Selection
+                && string.Equals(pending.NpcName, button.NpcName, StringComparison.OrdinalIgnoreCase);
+            bool visuallyEnabled = button.Enabled && (!interactionLocked || !assignmentButton || pendingButton);
+            bool hovered = visuallyEnabled && button.Bounds.Contains(mouse);
+            this.DrawChestDestinationButton(
                 spriteBatch,
-                label,
-                Game1.tinyFont,
-                new Vector2(
-                    button.Bounds.X + Math.Max(8f, (button.Bounds.Width - size.X) / 2f),
-                    button.Bounds.Y + Math.Max(2f, (button.Bounds.Height - size.Y) / 2f)),
-                button.Enabled ? textColor : disabledTextColor);
+                button,
+                hovered,
+                visuallyEnabled,
+                pendingButton,
+                layout.Compact);
         }
     }
 
-    private static string FitChestDestinationText(string text, SpriteFont font, int maximumWidth)
+    private void DrawChestDestinationButton(
+        SpriteBatch spriteBatch,
+        ChestDestinationButton button,
+        bool hovered,
+        bool visuallyEnabled,
+        bool pending,
+        bool compact)
     {
-        if (font.MeasureString(text).X <= maximumWidth)
+        Color textColor = new(91, 57, 36);
+        Color mutedTextColor = new(112, 98, 82);
+        Color border = new(143, 103, 64);
+        Color fill = new(235, 210, 170);
+        bool navigation = button.Selection is ChestDestinationSelection.PreviousPage
+            or ChestDestinationSelection.NextPage;
+        bool pageIndicator = button.Selection == ChestDestinationSelection.PageIndicator;
+
+        if (pageIndicator)
+        {
+            DrawChestDestinationFlatPanel(
+                spriteBatch,
+                button.Bounds,
+                new Color(255, 238, 185),
+                new Color(181, 135, 61),
+                1);
+            DrawCenteredChestDestinationText(
+                spriteBatch,
+                button.Label,
+                Game1.tinyFont,
+                button.Bounds,
+                textColor,
+                ChestDestinationNumberTextScale,
+                3,
+                2,
+                minimumScale: 0.58f);
+            return;
+        }
+
+        if (pending)
+        {
+            fill = new Color(250, 215, 135);
+            border = new Color(181, 135, 61);
+        }
+        else if (!visuallyEnabled)
+        {
+            fill = new Color(215, 205, 185);
+            border = new Color(155, 139, 116);
+        }
+        else if (button.DisplayState == ChestDestinationDisplayState.ExplicitHere)
+        {
+            fill = new Color(48, 118, 70);
+            border = new Color(36, 88, 54);
+        }
+        else if (button.DisplayState == ChestDestinationDisplayState.InheritedHere)
+        {
+            fill = new Color(250, 222, 154);
+            border = new Color(199, 146, 52);
+        }
+        else if (button.DisplayState == ChestDestinationDisplayState.OverrideElsewhere)
+        {
+            fill = new Color(218, 216, 203);
+            border = new Color(105, 131, 145);
+        }
+        else if (hovered)
+        {
+            fill = new Color(255, 230, 190);
+            border = button.Selection == ChestDestinationSelection.None
+                ? new Color(198, 94, 82)
+                : new Color(181, 135, 61);
+        }
+
+        if (button.Bounds.Width >= 8 && button.Bounds.Height >= 8)
+        {
+            spriteBatch.Draw(
+                Game1.staminaRect,
+                new Rectangle(button.Bounds.X + 2, button.Bounds.Y + 2, button.Bounds.Width, button.Bounds.Height),
+                Color.Black * 0.16f);
+        }
+        DrawChestDestinationFlatPanel(spriteBatch, button.Bounds, fill, border, hovered ? 2 : 1);
+        if (button.Bounds.Width >= 8 && button.Bounds.Height >= 7)
+        {
+            spriteBatch.Draw(
+                Game1.staminaRect,
+                new Rectangle(button.Bounds.X + 3, button.Bounds.Y + 3, Math.Max(1, button.Bounds.Width - 6), 1),
+                Color.White * (button.DisplayState == ChestDestinationDisplayState.ExplicitHere ? 0.20f : 0.48f));
+        }
+
+        Color labelColor = pending
+            ? textColor
+            : button.DisplayState == ChestDestinationDisplayState.ExplicitHere && visuallyEnabled
+                ? Color.White
+                : visuallyEnabled ? textColor : mutedTextColor;
+        if (navigation)
+        {
+            DrawCenteredChestDestinationText(
+                spriteBatch,
+                button.Label,
+                Game1.tinyFont,
+                button.Bounds,
+                labelColor,
+                compact ? ChestDestinationBodyTextScale : ChestDestinationTitleTextScale,
+                6,
+                3,
+                minimumScale: 0.48f);
+            return;
+        }
+
+        int glyphSize = Math.Clamp(button.Bounds.Height - 12, 8, 14);
+        Rectangle glyph = new(
+            button.Bounds.X + 6,
+            button.Bounds.Center.Y - glyphSize / 2,
+            glyphSize,
+            glyphSize);
+        DrawChestDestinationStateGlyph(spriteBatch, glyph, button.DisplayState, pending, visuallyEnabled);
+
+        string stateLabel = button.DisplayState switch
+        {
+            ChestDestinationDisplayState.InheritedHere => this.Tr("chest_destination.inherited"),
+            ChestDestinationDisplayState.OverrideElsewhere => this.Tr("chest_destination.other"),
+            _ => ""
+        };
+        int rightPadding = 7;
+        int badgeWidth = 0;
+        Rectangle badge = new();
+        if (!string.IsNullOrEmpty(stateLabel) && button.Bounds.Width >= 118)
+        {
+            badgeWidth = Math.Min(
+                button.Bounds.Width / 2,
+                (int)Math.Ceiling(Game1.tinyFont.MeasureString(stateLabel).X * ChestDestinationMetaTextScale) + 10);
+            badge = new Rectangle(
+                button.Bounds.Right - badgeWidth - 5,
+                button.Bounds.Center.Y - Math.Min(16, button.Bounds.Height - 6) / 2,
+                badgeWidth,
+                Math.Min(16, button.Bounds.Height - 6));
+            Color badgeFill = button.DisplayState == ChestDestinationDisplayState.InheritedHere
+                ? new Color(245, 190, 70)
+                : new Color(177, 203, 214);
+            DrawChestDestinationFlatPanel(spriteBatch, badge, badgeFill, Color.Lerp(badgeFill, textColor, 0.35f), 1);
+            DrawCenteredChestDestinationText(
+                spriteBatch,
+                stateLabel,
+                Game1.tinyFont,
+                badge,
+                textColor,
+                ChestDestinationMetaTextScale,
+                5,
+                2,
+                minimumScale: 0.42f);
+            rightPadding += badgeWidth + 4;
+        }
+
+        Rectangle labelBounds = new(
+            glyph.Right + 6,
+            button.Bounds.Y,
+            Math.Max(1, button.Bounds.Right - rightPadding - glyph.Right - 6),
+            button.Bounds.Height);
+        DrawChestDestinationTextInBounds(
+            spriteBatch,
+            button.Label,
+            Game1.tinyFont,
+            labelBounds,
+            labelColor,
+            compact ? 0.58f : ChestDestinationBodyTextScale,
+            0.46f,
+            centered: false);
+    }
+
+    private static void DrawChestDestinationStateGlyph(
+        SpriteBatch spriteBatch,
+        Rectangle bounds,
+        ChestDestinationDisplayState state,
+        bool pending,
+        bool enabled)
+    {
+        Color ink = new(91, 57, 36);
+        if (pending)
+        {
+            DrawChestDestinationFlatPanel(spriteBatch, bounds, new Color(245, 190, 70), new Color(145, 94, 32), 1);
+            int dot = Math.Max(2, bounds.Width / 4);
+            spriteBatch.Draw(
+                Game1.staminaRect,
+                new Rectangle(bounds.Center.X - dot / 2, bounds.Center.Y - dot / 2, dot, dot),
+                ink);
+            return;
+        }
+
+        if (!enabled)
+        {
+            DrawChestDestinationFlatPanel(spriteBatch, bounds, new Color(205, 197, 180), new Color(145, 132, 112), 1);
+            return;
+        }
+
+        switch (state)
+        {
+            case ChestDestinationDisplayState.ExplicitHere:
+                DrawChestDestinationFlatPanel(spriteBatch, bounds, Color.White * 0.92f, Color.White, 1);
+                int stroke = Math.Max(1, bounds.Width / 7);
+                Color checkColor = new(48, 118, 70);
+                spriteBatch.Draw(
+                    Game1.staminaRect,
+                    new Rectangle(bounds.X + 2, bounds.Center.Y, stroke * 2, stroke),
+                    checkColor);
+                spriteBatch.Draw(
+                    Game1.staminaRect,
+                    new Rectangle(bounds.X + 2 + stroke, bounds.Center.Y + stroke, stroke * 2, stroke),
+                    checkColor);
+                for (int step = 0; step < 3; step++)
+                {
+                    spriteBatch.Draw(
+                        Game1.staminaRect,
+                        new Rectangle(
+                            bounds.Center.X - 1 + step * stroke,
+                            bounds.Center.Y - step * stroke,
+                            stroke * 2,
+                            stroke),
+                        checkColor);
+                }
+                break;
+            case ChestDestinationDisplayState.InheritedHere:
+                DrawChestDestinationFlatPanel(spriteBatch, bounds, new Color(245, 190, 70), new Color(181, 135, 61), 1);
+                int inheritedDot = Math.Max(1, bounds.Width / 6);
+                spriteBatch.Draw(
+                    Game1.staminaRect,
+                    new Rectangle(bounds.Center.X - inheritedDot / 2, bounds.Y + 2, inheritedDot, inheritedDot),
+                    ink);
+                spriteBatch.Draw(
+                    Game1.staminaRect,
+                    new Rectangle(bounds.X + 2, bounds.Center.Y, Math.Max(1, bounds.Width - 4), 1),
+                    ink);
+                spriteBatch.Draw(
+                    Game1.staminaRect,
+                    new Rectangle(bounds.X + 2, bounds.Center.Y + 2, inheritedDot, inheritedDot),
+                    ink);
+                spriteBatch.Draw(
+                    Game1.staminaRect,
+                    new Rectangle(bounds.Right - inheritedDot - 2, bounds.Center.Y + 2, inheritedDot, inheritedDot),
+                    ink);
+                break;
+            case ChestDestinationDisplayState.OverrideElsewhere:
+                DrawChestDestinationFlatPanel(spriteBatch, bounds, new Color(177, 203, 214), new Color(91, 126, 145), 1);
+                int arrowStroke = Math.Max(1, bounds.Width / 7);
+                spriteBatch.Draw(
+                    Game1.staminaRect,
+                    new Rectangle(bounds.X + 2, bounds.Center.Y - arrowStroke / 2, Math.Max(1, bounds.Width - 5), arrowStroke),
+                    ink);
+                for (int step = 0; step < 3; step++)
+                {
+                    int arrowX = bounds.Right - 3 - step * arrowStroke;
+                    int offsetY = step * arrowStroke;
+                    spriteBatch.Draw(
+                        Game1.staminaRect,
+                        new Rectangle(arrowX, bounds.Center.Y - offsetY, arrowStroke * 2, arrowStroke),
+                        ink);
+                    spriteBatch.Draw(
+                        Game1.staminaRect,
+                        new Rectangle(arrowX, bounds.Center.Y + offsetY, arrowStroke * 2, arrowStroke),
+                        ink);
+                }
+                break;
+            default:
+                DrawChestDestinationFlatPanel(spriteBatch, bounds, new Color(255, 239, 200), new Color(143, 103, 64), 1);
+                break;
+        }
+    }
+
+    private static void DrawChestDestinationIcon(SpriteBatch spriteBatch, Rectangle bounds)
+    {
+        Color outline = new(91, 57, 36);
+        Color wood = new(205, 126, 52);
+        Color lightWood = new(239, 168, 74);
+        spriteBatch.Draw(Game1.staminaRect, new Rectangle(bounds.X + 1, bounds.Y + 2, bounds.Width, bounds.Height), Color.Black * 0.18f);
+        DrawChestDestinationFlatPanel(spriteBatch, bounds, wood, outline, 1);
+        spriteBatch.Draw(
+            Game1.staminaRect,
+            new Rectangle(bounds.X + 2, bounds.Y + 2, Math.Max(1, bounds.Width - 4), Math.Max(2, bounds.Height / 3)),
+            lightWood);
+        spriteBatch.Draw(
+            Game1.staminaRect,
+            new Rectangle(bounds.X + 1, bounds.Y + Math.Max(3, bounds.Height / 3), Math.Max(1, bounds.Width - 2), 2),
+            outline);
+        int lockSize = Math.Clamp(bounds.Width / 4, 2, 5);
+        spriteBatch.Draw(
+            Game1.staminaRect,
+            new Rectangle(bounds.Center.X - lockSize / 2, bounds.Center.Y, lockSize, lockSize),
+            new Color(245, 190, 70));
+    }
+
+    private static void DrawChestDestinationFlatPanel(
+        SpriteBatch spriteBatch,
+        Rectangle bounds,
+        Color fill,
+        Color border,
+        int borderSize)
+    {
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+            return;
+        spriteBatch.Draw(Game1.staminaRect, bounds, border);
+        int maximumInset = Math.Min((bounds.Width - 1) / 2, (bounds.Height - 1) / 2);
+        if (maximumInset <= 0)
+            return;
+        int inset = Math.Clamp(borderSize, 1, maximumInset);
+        Rectangle inner = new(
+            bounds.X + inset,
+            bounds.Y + inset,
+            Math.Max(1, bounds.Width - inset * 2),
+            Math.Max(1, bounds.Height - inset * 2));
+        spriteBatch.Draw(Game1.staminaRect, inner, fill);
+    }
+
+    private static void DrawChestDestinationTextInBounds(
+        SpriteBatch spriteBatch,
+        string text,
+        SpriteFont font,
+        Rectangle bounds,
+        Color color,
+        float preferredScale,
+        float minimumScale,
+        bool centered)
+    {
+        float scale = GetChestDestinationTextScale(
+            text,
+            font,
+            preferredScale,
+            bounds.Width,
+            bounds.Height,
+            minimumScale);
+        string fitted = FitChestDestinationText(text, font, bounds.Width, scale);
+        Vector2 size = font.MeasureString(fitted) * scale;
+        float x = centered ? bounds.Center.X - size.X / 2f : bounds.X;
+        float y = bounds.Center.Y - size.Y / 2f;
+        DrawChestDestinationText(spriteBatch, fitted, font, new Vector2(x, y), color, scale);
+    }
+
+    private static void DrawCenteredChestDestinationText(
+        SpriteBatch spriteBatch,
+        string text,
+        SpriteFont font,
+        Rectangle bounds,
+        Color color,
+        float preferredScale,
+        int horizontalPadding,
+        int verticalPadding,
+        float minimumScale)
+    {
+        Rectangle inner = new(
+            bounds.X + horizontalPadding / 2,
+            bounds.Y + verticalPadding / 2,
+            Math.Max(1, bounds.Width - horizontalPadding),
+            Math.Max(1, bounds.Height - verticalPadding));
+        DrawChestDestinationTextInBounds(
+            spriteBatch,
+            text,
+            font,
+            inner,
+            color,
+            preferredScale,
+            minimumScale,
+            centered: true);
+    }
+
+    private static void DrawChestDestinationText(
+        SpriteBatch spriteBatch,
+        string text,
+        SpriteFont font,
+        Vector2 position,
+        Color color,
+        float scale)
+    {
+        if (string.IsNullOrEmpty(text) || scale <= 0f)
+            return;
+        Vector2 snapped = new(MathF.Round(position.X), MathF.Round(position.Y));
+        spriteBatch.DrawString(
+            font,
+            text,
+            snapped + Vector2.One,
+            Color.Black * 0.24f,
+            0f,
+            Vector2.Zero,
+            scale,
+            SpriteEffects.None,
+            0f);
+        spriteBatch.DrawString(font, text, snapped, color, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+    }
+
+    private static float GetChestDestinationTextScale(
+        string text,
+        SpriteFont font,
+        float preferredScale,
+        int maximumWidth,
+        int maximumHeight,
+        float minimumScale)
+    {
+        if (maximumWidth <= 0 || maximumHeight <= 0 || preferredScale <= 0f)
+            return 0f;
+        Vector2 natural = font.MeasureString(text);
+        float widthScale = natural.X <= 0f ? preferredScale : maximumWidth / natural.X;
+        float heightScale = natural.Y <= 0f ? preferredScale : maximumHeight / natural.Y;
+        float widthConstrained = Math.Min(
+            preferredScale,
+            Math.Max(Math.Min(preferredScale, minimumScale), widthScale));
+        return Math.Max(0f, Math.Min(heightScale, widthConstrained));
+    }
+
+    private static string FitChestDestinationText(string text, SpriteFont font, int maximumWidth, float scale)
+    {
+        if (string.IsNullOrEmpty(text) || maximumWidth <= 0 || scale <= 0f)
+            return "";
+        float unscaledWidth = maximumWidth / scale;
+        if (font.MeasureString(text).X <= unscaledWidth)
             return text;
 
         const string ellipsis = "…";
         string trimmed = text;
-        while (trimmed.Length > 0 && font.MeasureString(trimmed + ellipsis).X > maximumWidth)
+        while (trimmed.Length > 0 && font.MeasureString(trimmed + ellipsis).X > unscaledWidth)
             trimmed = trimmed[..^1];
         return trimmed.Length == 0 ? ellipsis : trimmed + ellipsis;
     }

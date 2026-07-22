@@ -13,42 +13,68 @@ internal sealed partial class CompanionPanelMenu
         if (bounds.Width <= 0 || bounds.Height <= 0)
             return;
         bool hovered = bounds.Contains(Game1.getMouseX(), Game1.getMouseY());
-        Color fill = danger ? new Color(231, 191, 176) : active ? ButtonActive : ButtonIdle;
-        if (hovered)
-            fill = Color.Lerp(fill, Color.White, 0.22f);
+        Color fill = danger
+            ? ButtonDanger
+            : active ? ButtonActive : hovered ? RowHoverColor : ButtonIdle;
+        if (hovered && (danger || active))
+            fill = Color.Lerp(fill, Color.White, 0.14f);
+
         Color border = danger ? DangerColor : active ? AccentGreen : SurfaceBorder;
-        this.DrawFlatPanel(b, bounds, fill, border, hovered ? 2 : 1);
-        DrawCenteredPanelText(b, text, Game1.tinyFont, bounds, TextColor, PanelTextScale, 12, 6);
+        if (bounds.Height < 36 || bounds.Width < 40)
+            this.DrawFlatPanel(b, bounds, fill, border, 1);
+        else
+            this.DrawTexturedPanel(b, bounds, fill);
+        Color labelColor = danger || active ? Color.White : TextColor;
+        float preferredScale = bounds.Height >= 24 ? PanelTextScale : PanelCompactTextScale;
+        int horizontalPadding = bounds.Height < 24 ? 4 : 14;
+        int verticalPadding = bounds.Height < 24 ? 2 : 8;
+        DrawCenteredPanelText(
+            b,
+            text,
+            Game1.tinyFont,
+            bounds,
+            labelColor,
+            preferredScale,
+            horizontalPadding,
+            verticalPadding,
+            minimumScale: 0.44f);
     }
 
     private void DrawTabButton(SpriteBatch b, Rectangle bounds, string text, bool active, string? badgeText = null, Color? badgeColor = null)
     {
         bool hovered = bounds.Contains(Game1.getMouseX(), Game1.getMouseY());
-        Color fill = active ? new Color(204, 226, 238) : hovered ? RowHoverColor : ButtonIdle;
-        this.DrawFlatPanel(b, bounds, fill, active ? AccentBlue : SurfaceBorder, active ? 2 : 1);
+        Color fill = active ? TabActiveColor : hovered ? RowHoverColor : TabIdleColor;
+        if (bounds.Height < 30)
+            this.DrawFlatPanel(b, bounds, fill, active ? AccentGreen : SurfaceBorder, 1);
+        else
+            this.DrawTexturedPanel(b, bounds, fill);
         if (active)
-            b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 5, bounds.Bottom - 4, Math.Max(1, bounds.Width - 10), 3), AccentBlue);
+            b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 8, bounds.Bottom - 5, Math.Max(1, bounds.Width - 16), 3), AccentGreen);
+        else if (hovered)
+            b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 8, bounds.Bottom - 5, Math.Max(1, bounds.Width - 16), 3), AccentGold);
 
         Rectangle contentBounds = new(bounds.X, bounds.Y, bounds.Width, Math.Max(1, bounds.Height - 5));
         int badgeSize = string.IsNullOrWhiteSpace(badgeText)
             ? 0
             : Math.Clamp(contentBounds.Height - 4, 14, 22);
         int labelWidth = Math.Max(1, bounds.Width - 10 - (badgeSize > 0 ? badgeSize + 5 : 0));
+        SpriteFont labelFont = Game1.tinyFont;
+        float preferredLabelScale = PanelTextScale;
         float labelScale = GetTextScaleForBox(
             text,
-            Game1.tinyFont,
-            PanelTextScale,
+            labelFont,
+            preferredLabelScale,
             labelWidth,
             contentBounds.Height - 6,
             minimumScale: 0.48f);
-        string label = FitText(text, Game1.tinyFont, labelWidth, labelScale);
-        Vector2 size = MeasureScaledText(label, Game1.tinyFont, labelScale);
+        string label = FitText(text, labelFont, labelWidth, labelScale);
+        Vector2 size = MeasureScaledText(label, labelFont, labelScale);
         float contentWidth = size.X + (badgeSize > 0 ? badgeSize + 5 : 0);
         float labelX = bounds.X + Math.Max(5f, (bounds.Width - contentWidth) / 2f);
         DrawPanelText(
             b,
             label,
-            Game1.tinyFont,
+            labelFont,
             new Vector2(labelX, contentBounds.Y + Math.Max(2f, (contentBounds.Height - size.Y) / 2f)),
             TextColor,
             labelScale);
@@ -62,7 +88,16 @@ internal sealed partial class CompanionPanelMenu
                 badgeSize);
             Color badgeFill = badgeColor ?? AccentBlue;
             this.DrawFlatPanel(b, badge, badgeFill, Color.Lerp(badgeFill, WindowBorder, 0.35f), 1);
-            DrawCenteredPanelText(b, badgeText!, Game1.tinyFont, badge, Color.White, PanelMetaTextScale, 3, 3);
+            DrawCenteredPanelText(
+                b,
+                badgeText!,
+                Game1.tinyFont,
+                badge,
+                TextColor,
+                PanelNumericTextScale,
+                3,
+                2,
+                minimumScale: 0.56f);
         }
     }
 
@@ -72,12 +107,64 @@ internal sealed partial class CompanionPanelMenu
         DrawCenteredPanelText(b, text, Game1.tinyFont, bounds, TextColor, PanelMetaTextScale, 10, 5);
     }
 
-    private void DrawPanel(SpriteBatch b, Rectangle bounds, Color fill, Color border)
+    private void DrawPanel(SpriteBatch b, Rectangle bounds, Color tint)
     {
         if (bounds.Width <= 0 || bounds.Height <= 0)
             return;
-        drawTextureBox(b, Game1.menuTexture, new Rectangle(0, 256, 60, 60), bounds.X, bounds.Y, bounds.Width, bounds.Height, border);
-        b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 5, bounds.Y + 5, Math.Max(1, bounds.Width - 10), Math.Max(1, bounds.Height - 10)), fill);
+        this.DrawTexturedPanel(b, bounds, tint);
+    }
+
+    private void DrawTexturedPanel(SpriteBatch b, Rectangle bounds, Color tint)
+    {
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+            return;
+        if (bounds.Width < 40 || bounds.Height < 32)
+        {
+            this.DrawFlatPanel(
+                b,
+                bounds,
+                tint,
+                Color.Lerp(tint, WindowBorder, 0.38f),
+                1);
+            return;
+        }
+        drawTextureBox(
+            b,
+            Game1.menuTexture,
+            new Rectangle(0, 256, 60, 60),
+            bounds.X,
+            bounds.Y,
+            bounds.Width,
+            bounds.Height,
+            tint);
+    }
+
+    private void DrawMenuCard(SpriteBatch b, Rectangle bounds, Color tint, Color accent)
+    {
+        if (bounds.Height < 36 || bounds.Width < 64)
+        {
+            this.DrawFlatPanel(b, bounds, tint, accent, 1);
+            return;
+        }
+        this.DrawTexturedPanel(b, bounds, tint);
+        if (bounds.Width < 18 || bounds.Height < 18)
+            return;
+        b.Draw(
+            Game1.staminaRect,
+            new Rectangle(bounds.X + 7, bounds.Y + 9, 4, Math.Max(1, bounds.Height - 18)),
+            accent);
+    }
+
+    private void DrawHeaderDivider(SpriteBatch b, int y)
+    {
+        int dividerWidth = Math.Clamp(this.width - 120, 96, 460);
+        int dividerX = this.xPositionOnScreen + (this.width - dividerWidth) / 2;
+        b.Draw(Game1.staminaRect, new Rectangle(dividerX, y, dividerWidth, 2), AccentGold * 0.72f);
+        int centerWidth = Math.Min(64, dividerWidth / 3);
+        b.Draw(
+            Game1.staminaRect,
+            new Rectangle(this.xPositionOnScreen + (this.width - centerWidth) / 2, y, centerWidth, 2),
+            AccentGreen);
     }
 
     private void DrawFlatPanel(SpriteBatch b, Rectangle bounds, Color fill, Color border, int borderSize)
@@ -138,7 +225,7 @@ internal sealed partial class CompanionPanelMenu
         y = Math.Clamp(y, 8, Math.Max(8, Game1.uiViewport.Height - height - 8));
 
         Rectangle panel = new(x, y, width, height);
-        this.DrawFlatPanel(b, panel, new Color(250, 240, 219), WindowBorder, 2);
+        this.DrawTexturedPanel(b, panel, SurfaceTextureTint);
         int lineY = panel.Y + padding;
         for (int index = 0; index < lines.Count; index++)
         {
@@ -200,7 +287,7 @@ internal sealed partial class CompanionPanelMenu
         this.DrawFlatPanel(b, bounds, new Color(102, 77, 60), new Color(70, 48, 34), 1);
         int fillWidth = (int)((bounds.Width - 2) * progress);
         if (fillWidth > 0)
-            b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 1, bounds.Y + 1, fillWidth, Math.Max(1, bounds.Height - 2)), AccentBlue);
+            b.Draw(Game1.staminaRect, new Rectangle(bounds.X + 1, bounds.Y + 1, fillWidth, Math.Max(1, bounds.Height - 2)), AccentGreen);
     }
 
     private void RebuildFocusTargets()
@@ -338,11 +425,16 @@ internal sealed partial class CompanionPanelMenu
         if (this.focusedControlIndex < 0 || this.focusedControlIndex >= this.focusTargets.Count)
             return;
         Rectangle bounds = this.focusTargets[this.focusedControlIndex];
-        Color color = Color.White * 0.95f;
-        b.Draw(Game1.staminaRect, new Rectangle(bounds.X - 2, bounds.Y - 2, bounds.Width + 4, 2), color);
-        b.Draw(Game1.staminaRect, new Rectangle(bounds.X - 2, bounds.Bottom, bounds.Width + 4, 2), color);
-        b.Draw(Game1.staminaRect, new Rectangle(bounds.X - 2, bounds.Y, 2, bounds.Height), color);
-        b.Draw(Game1.staminaRect, new Rectangle(bounds.Right, bounds.Y, 2, bounds.Height), color);
+        int inset = Math.Min(5, Math.Max(1, bounds.Width / 4));
+        int thickness = bounds.Height < 20 ? 1 : 2;
+        b.Draw(
+            Game1.staminaRect,
+            new Rectangle(
+                bounds.X + inset,
+                bounds.Bottom - thickness,
+                Math.Max(1, bounds.Width - inset * 2),
+                thickness),
+            AccentGold);
     }
 
     private void CycleTab(int delta)

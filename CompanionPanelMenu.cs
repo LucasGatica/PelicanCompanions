@@ -13,36 +13,47 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private const int WindowMargin = 16;
     private const int WindowMaxWidth = 1180;
     private const int WindowMaxHeight = 780;
-    private const int TitleBarHeight = 50;
+    private const int TitleBarHeight = 56;
+    private const int BrandedTitleBarHeight = 92;
     private const int CompactViewportHeight = 540;
+    private const int BrandedHeaderMinHeight = 620;
     private const int ExpandedMemberLayoutMinHeight = 600;
     private const int ContentGap = 10;
-    private const int WideRosterWidth = 242;
+    private const int WideRosterWidth = 268;
     private const int MemberRowHeight = 70;
     private const int MemberRowGap = 6;
     private const int MemberScrollPadding = 5;
     private const int PortraitRetryTicks = 600;
-    private const float PanelTitleTextScale = 0.82f;
-    private const float PanelHeadingTextScale = 0.78f;
-    private const float PanelTextScale = 0.72f;
-    private const float PanelMetaTextScale = 0.64f;
-    private const float PanelCompactTextScale = 0.58f;
+    private const float PanelTitleTextScale = 0.74f;
+    private const float PanelHeadingTextScale = 0.68f;
+    private const float PanelTextScale = 0.62f;
+    private const float PanelMetaTextScale = 0.55f;
+    private const float PanelCompactTextScale = 0.50f;
+    private const float PanelNumericTextScale = 0.70f;
+    private const float PanelCompactNumericTextScale = 0.60f;
 
-    private static readonly Color WindowColor = new(239, 216, 180);
-    private static readonly Color WindowBorder = new(76, 49, 31);
-    private static readonly Color SurfaceColor = new(252, 240, 216);
-    private static readonly Color SurfaceBorder = new(117, 82, 53);
-    private static readonly Color RowColor = new(247, 235, 210);
-    private static readonly Color RowHoverColor = new(255, 247, 226);
-    private static readonly Color SelectedRowColor = new(216, 235, 207);
-    private static readonly Color AccentGreen = new(48, 112, 81);
-    private static readonly Color AccentBlue = new(64, 121, 177);
-    private static readonly Color AccentGold = new(207, 153, 62);
-    private static readonly Color DangerColor = new(170, 76, 62);
-    private static readonly Color ButtonIdle = new(233, 218, 188);
-    private static readonly Color ButtonActive = new(199, 228, 198);
-    private static readonly Color TextColor = new(69, 45, 29);
-    private static readonly Color MutedTextColor = new(101, 76, 55);
+    // Shared visual language with AliveNPCs and Beach Episode: vanilla menu
+    // frames, warm paper/sand surfaces, brown ink, and green/gold accents.
+    // White is a neutral texture tint; the menu texture supplies the yellow paper.
+    private static readonly Color WindowTextureTint = Color.White;
+    private static readonly Color WindowBorder = new(91, 57, 36);
+    private static readonly Color SurfaceTextureTint = Color.White;
+    private static readonly Color SurfaceBorder = new(143, 103, 64);
+    private static readonly Color RowColor = new(236, 228, 210);
+    private static readonly Color RowHoverColor = new(255, 230, 190);
+    private static readonly Color SelectedRowColor = new(232, 246, 218);
+    private static readonly Color HeaderCardColor = new(255, 238, 185);
+    private static readonly Color TabIdleColor = new(215, 199, 170);
+    private static readonly Color TabActiveColor = new(250, 215, 135);
+    private static readonly Color AccentGreen = new(130, 172, 116);
+    private static readonly Color AccentBlue = new(70, 136, 191);
+    private static readonly Color AccentGold = new(245, 190, 70);
+    private static readonly Color DangerColor = new(198, 94, 82);
+    private static readonly Color ButtonIdle = new(235, 210, 170);
+    private static readonly Color ButtonActive = new(48, 118, 70);
+    private static readonly Color ButtonDanger = new(200, 100, 80);
+    private static readonly Color TextColor = new(91, 57, 36);
+    private static readonly Color MutedTextColor = new(96, 88, 78);
     private static readonly CompanionEquipmentSlot[] EquipmentSlotOrder =
     {
         CompanionEquipmentSlot.Axe,
@@ -568,38 +579,93 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     {
         this.ResetFrameGeometry();
         b.Draw(Game1.fadeToBlackRect, new Rectangle(0, 0, Game1.uiViewport.Width, Game1.uiViewport.Height), Color.Black * 0.72f);
-        this.DrawPanel(b, new Rectangle(this.xPositionOnScreen, this.yPositionOnScreen, this.width, this.height), WindowColor, WindowBorder);
+        this.DrawPanel(b, new Rectangle(this.xPositionOnScreen, this.yPositionOnScreen, this.width, this.height), WindowTextureTint);
 
         bool shortViewport = this.height < CompactViewportHeight;
-        SpriteFont titleFont = shortViewport ? Game1.tinyFont : Game1.smallFont;
-        float titleScale = shortViewport ? PanelHeadingTextScale : PanelTitleTextScale;
+        bool brandedHeader = !shortViewport
+            && this.height >= BrandedHeaderMinHeight
+            && this.width >= 520;
+        int effectiveTitleBarHeight = shortViewport
+            ? 40
+            : brandedHeader ? BrandedTitleBarHeight : TitleBarHeight;
+        SpriteFont titleFont = brandedHeader
+            ? Game1.dialogueFont
+            : shortViewport ? Game1.tinyFont : Game1.smallFont;
+        float preferredTitleScale = brandedHeader
+            ? PanelTitleTextScale
+            : shortViewport ? PanelHeadingTextScale : PanelTitleTextScale;
         string title = this.translate("companion.panel.title", null);
+        int titleWidth = Math.Max(1, this.width - 120);
+        float titleScale = GetTextScaleForBox(
+            title,
+            titleFont,
+            preferredTitleScale,
+            titleWidth,
+            brandedHeader ? 42 : effectiveTitleBarHeight - 16,
+            minimumScale: brandedHeader ? 0.54f : PanelCompactTextScale);
+        string fittedTitle = FitText(title, titleFont, titleWidth, titleScale);
+        Vector2 titleSize = MeasureScaledText(fittedTitle, titleFont, titleScale);
         DrawPanelText(
             b,
-            FitText(title, titleFont, Math.Max(1, this.width - 120), titleScale),
+            fittedTitle,
             titleFont,
-            new Vector2(this.xPositionOnScreen + 20, this.yPositionOnScreen + (shortViewport ? 10 : 14)),
+            new Vector2(
+                this.xPositionOnScreen + (this.width - titleSize.X) / 2f,
+                this.yPositionOnScreen + (brandedHeader ? 12 : shortViewport ? 9 : 13)),
             TextColor,
             titleScale,
             shadow: true);
-        this.DrawButton(b, this.closeButton, "X", false, danger: false);
+
+        if (brandedHeader)
+        {
+            string subtitle = this.translate("companion.panel.subtitle", null);
+            float subtitleScale = GetTextScaleForBox(
+                subtitle,
+                Game1.smallFont,
+                PanelTextScale,
+                Math.Max(1, this.width - 120),
+                24,
+                minimumScale: PanelMetaTextScale);
+            string fittedSubtitle = FitText(subtitle, Game1.smallFont, Math.Max(1, this.width - 120), subtitleScale);
+            Vector2 subtitleSize = MeasureScaledText(fittedSubtitle, Game1.smallFont, subtitleScale);
+            DrawPanelText(
+                b,
+                fittedSubtitle,
+                Game1.smallFont,
+                new Vector2(
+                    this.xPositionOnScreen + (this.width - subtitleSize.X) / 2f,
+                    this.yPositionOnScreen + 52),
+                MutedTextColor,
+                subtitleScale,
+                shadow: true);
+            this.DrawHeaderDivider(b, this.yPositionOnScreen + 80);
+        }
+        else if (!shortViewport)
+        {
+            this.DrawHeaderDivider(b, this.yPositionOnScreen + effectiveTitleBarHeight - 7);
+        }
+
+        this.DrawButton(b, this.closeButton, "X", false, danger: true);
 
         List<SquadMemberState> members = this.getMembers().ToList();
         if (members.Count == 0)
         {
             Rectangle empty = new(
                 this.xPositionOnScreen + 18,
-                this.yPositionOnScreen + TitleBarHeight + 6,
+                this.yPositionOnScreen + effectiveTitleBarHeight + 6,
                 Math.Max(1, this.width - 36),
-                Math.Max(1, this.height - TitleBarHeight - 24));
-            this.DrawPanel(b, empty, SurfaceColor, SurfaceBorder);
-            DrawPanelText(
+                Math.Max(1, this.height - effectiveTitleBarHeight - 24));
+            this.DrawPanel(b, empty, SurfaceTextureTint);
+            DrawCenteredPanelText(
                 b,
-                FitText(this.translate("companion.panel.empty", null), Game1.smallFont, empty.Width - 30, PanelTextScale),
+                this.translate("companion.panel.empty", null),
                 Game1.smallFont,
-                new Vector2(empty.X + 16, empty.Y + 20),
+                empty,
                 MutedTextColor,
-                PanelTextScale);
+                PanelTextScale,
+                30,
+                20,
+                minimumScale: PanelMetaTextScale);
             this.RebuildFocusTargets();
             this.DrawFocus(b);
             this.drawMouse(b);
@@ -608,7 +674,6 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
 
         this.EnsureSelection(members);
         this.wideLayout = this.width >= 780 && this.height >= 440;
-        int effectiveTitleBarHeight = shortViewport ? 40 : TitleBarHeight;
         int contentTop = this.yPositionOnScreen + effectiveTitleBarHeight + (shortViewport ? 3 : 6);
         int contentBottom = this.yPositionOnScreen + this.height - (shortViewport ? 6 : 16);
 
@@ -626,7 +691,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 contentTop,
                 Math.Max(1, this.xPositionOnScreen + this.width - 16 - roster.Right - ContentGap),
                 roster.Height);
-            this.DrawPanel(b, roster, SurfaceColor, SurfaceBorder);
+            this.DrawPanel(b, roster, SurfaceTextureTint);
             this.DrawWideMemberList(b, members, roster);
         }
         else
@@ -637,7 +702,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 contentTop,
                 Math.Max(1, this.width - 28),
                 selectorHeight);
-            this.DrawPanel(b, selector, SurfaceColor, SurfaceBorder);
+            this.DrawPanel(b, selector, SurfaceTextureTint);
             this.DrawNarrowMemberSelector(b, members, selector);
             int selectorGap = shortViewport ? 4 : 8;
             detailArea = new(
@@ -647,7 +712,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 Math.Max(1, contentBottom - selector.Bottom - selectorGap));
         }
 
-        this.DrawPanel(b, detailArea, SurfaceColor, SurfaceBorder);
+        this.DrawPanel(b, detailArea, SurfaceTextureTint);
         SquadMemberState? selected = this.GetSelectedMember(members);
         if (selected is not null)
             this.DrawSelectedMember(b, selected, detailArea);
@@ -787,15 +852,23 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
 
     private void DrawWideMemberList(SpriteBatch b, List<SquadMemberState> members, Rectangle area)
     {
-        DrawPanelText(
+        Rectangle heading = new(area.X + 14, area.Y + 7, Math.Max(1, area.Width - 28), 23);
+        DrawCenteredPanelText(
             b,
-            FitText(this.translate("companion.panel.member_list", null), Game1.tinyFont, area.Width - 28, PanelHeadingTextScale),
+            this.translate("companion.panel.member_list", null),
             Game1.tinyFont,
-            new Vector2(area.X + 14, area.Y + 9),
+            heading,
             TextColor,
-            PanelHeadingTextScale);
+            PanelHeadingTextScale,
+            6,
+            3,
+            minimumScale: PanelMetaTextScale);
+        b.Draw(
+            Game1.staminaRect,
+            new Rectangle(area.X + 18, area.Y + 32, Math.Max(1, area.Width - 36), 2),
+            AccentGold * 0.72f);
 
-        Rectangle rowsArea = new(area.X + 8, area.Y + 34, Math.Max(1, area.Width - 16), Math.Max(1, area.Height - 43));
+        Rectangle rowsArea = new(area.X + 8, area.Y + 38, Math.Max(1, area.Width - 16), Math.Max(1, area.Height - 47));
         this.memberListArea = rowsArea;
         int stride = MemberRowHeight + MemberRowGap;
         int visibleCount = this.GetVisibleMemberRowCount();
@@ -820,9 +893,13 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 break;
 
             bool selected = string.Equals(member.NpcName, this.selectedNpcName, StringComparison.OrdinalIgnoreCase);
-            this.DrawFlatPanel(b, row, selected ? SelectedRowColor : row.Contains(mouse) ? RowHoverColor : RowColor, selected ? AccentGreen : SurfaceBorder, 2);
-            b.Draw(Game1.staminaRect, new Rectangle(row.X + 2, row.Y + 8, 4, row.Height - 16), this.GetMemberStatusColor(member));
-            Rectangle portrait = new(row.X + 10, row.Y + 9, 52, 52);
+            Color statusAccent = this.GetMemberStatusColor(member);
+            this.DrawMenuCard(
+                b,
+                row,
+                selected ? SelectedRowColor : row.Contains(mouse) ? RowHoverColor : RowColor,
+                statusAccent);
+            Rectangle portrait = new(row.X + 16, row.Y + 9, 52, 52);
             this.DrawFlatPanel(b, portrait, Color.White, selected ? AccentGreen : SurfaceBorder, 1);
             this.DrawPortrait(b, this.getNpc(member.NpcName), portrait);
 
@@ -833,10 +910,10 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             float levelScale = GetTextScaleForBox(
                 levelLabel,
                 Game1.tinyFont,
-                PanelCompactTextScale,
+                PanelCompactNumericTextScale,
                 Math.Max(1, textWidth / 2),
                 nameLineHeight,
-                minimumScale: 0.5f);
+                minimumScale: 0.54f);
             string fittedLevelLabel = FitText(levelLabel, Game1.tinyFont, Math.Max(1, textWidth / 2), levelScale);
             Vector2 levelSize = MeasureScaledText(fittedLevelLabel, Game1.tinyFont, levelScale);
             int nameWidth = Math.Max(1, textWidth - (int)Math.Ceiling(levelSize.X) - 6);
@@ -852,7 +929,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 fittedLevelLabel,
                 Game1.tinyFont,
                 new Vector2(row.Right - 8 - levelSize.X, row.Y + 12 + Math.Max(0f, (nameLineHeight - levelSize.Y) / 2f)),
-                MutedTextColor,
+                TextColor,
                 levelScale);
             string rosterStatus = this.getStatusText(member);
             float rosterStatusScale = GetTextScaleForBox(
@@ -890,7 +967,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         int selectedIndex = members.FindIndex(p => string.Equals(p.NpcName, selected.NpcName, StringComparison.OrdinalIgnoreCase));
         int portraitSize = Math.Clamp(area.Height - 12, 28, 48);
         Rectangle portrait = new(this.previousMemberButton.Right + 8, area.Center.Y - portraitSize / 2, portraitSize, portraitSize);
-        this.DrawFlatPanel(b, portrait, Color.White, AccentGreen, 1);
+        this.DrawFlatPanel(b, portrait, Color.White, this.GetMemberStatusColor(selected), 1);
         this.DrawPortrait(b, this.getNpc(selected.NpcName), portrait);
 
         int textX = portrait.Right + 8;
@@ -927,11 +1004,11 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             PanelTextScale);
         DrawPanelText(
             b,
-            FitText(status, Game1.tinyFont, textWidth, PanelMetaTextScale),
+            FitText(status, Game1.tinyFont, textWidth, PanelCompactNumericTextScale),
             Game1.tinyFont,
             new Vector2(textX, area.Y + 9 + selectorNameHeight + 4),
             MutedTextColor,
-            PanelMetaTextScale);
+            PanelCompactNumericTextScale);
     }
 
     private void DrawSelectedMember(SpriteBatch b, SquadMemberState member, Rectangle area)
@@ -954,11 +1031,11 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             int headerHeight = area.Height >= 390 ? 78 : area.Height >= 250 ? 58 : 40;
             Rectangle header = new(area.X + inset, area.Y + 8, usableWidth, Math.Max(1, Math.Min(headerHeight, area.Height - 12)));
             this.DrawMemberHeader(b, member, header);
-            tabHeight = area.Height >= 220 ? 34 : 27;
+            tabHeight = area.Height >= 460 ? 40 : area.Height >= 220 ? 34 : 27;
             tabY = header.Bottom + 6;
         }
 
-        int tabGap = area.Width >= 420 ? 5 : 2;
+        int tabGap = area.Width >= 700 ? 8 : area.Width >= 420 ? 5 : 2;
         PanelTab[] tabs = { PanelTab.Overview, PanelTab.Work, PanelTab.Skills, PanelTab.Inventory, PanelTab.Routine };
         int tabWidth = Math.Max(1, (usableWidth - tabGap * (tabs.Length - 1)) / tabs.Length);
         for (int i = 0; i < tabs.Length; i++)
@@ -1007,17 +1084,21 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
 
     private void DrawMemberHeader(SpriteBatch b, SquadMemberState member, Rectangle area)
     {
-        int portraitSize = Math.Clamp(area.Height - 8, 26, 66);
-        Rectangle portrait = new(area.X, area.Center.Y - portraitSize / 2, portraitSize, portraitSize);
+        Color statusAccent = this.GetMemberStatusColor(member);
+        this.DrawMenuCard(b, area, HeaderCardColor, statusAccent);
+
+        int portraitSize = Math.Clamp(area.Height - 14, 24, 62);
+        Rectangle portrait = new(area.X + 16, area.Center.Y - portraitSize / 2, portraitSize, portraitSize);
         this.DrawFlatPanel(b, portrait, Color.White, SurfaceBorder, 1);
         this.DrawPortrait(b, this.getNpc(member.NpcName), portrait);
 
         int textX = portrait.Right + 10;
-        int textWidth = Math.Max(1, area.Right - textX);
-        float nameScale = area.Height >= 70 ? PanelTitleTextScale : PanelTextScale;
+        int textWidth = Math.Max(1, area.Right - textX - 12);
+        float nameScale = area.Height >= 70 ? PanelHeadingTextScale : PanelTextScale;
         float statusScale = area.Height >= 70 ? PanelTextScale : PanelMetaTextScale;
+        int textTop = area.Y + 8;
         int textBottom = area.Height >= 54 ? area.Bottom - 15 : area.Bottom - 2;
-        int availableTextHeight = Math.Max(1, textBottom - (area.Y + 2));
+        int availableTextHeight = Math.Max(1, textBottom - textTop);
         float desiredTextHeight = Game1.smallFont.LineSpacing * nameScale
             + 3f
             + Game1.tinyFont.LineSpacing * statusScale;
@@ -1032,7 +1113,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             b,
             FitText(member.DisplayName, Game1.smallFont, textWidth, nameScale),
             Game1.smallFont,
-            new Vector2(textX, area.Y + 2),
+            new Vector2(textX, textTop),
             TextColor,
             nameScale);
         string status = this.translate("companion.panel.header_status", new
@@ -1044,7 +1125,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             b,
             FitText(status, Game1.tinyFont, textWidth, statusScale),
             Game1.tinyFont,
-            new Vector2(textX, area.Y + 2 + nameLineHeight + 3),
+            new Vector2(textX, textTop + nameLineHeight + 3),
             MutedTextColor,
             statusScale);
 

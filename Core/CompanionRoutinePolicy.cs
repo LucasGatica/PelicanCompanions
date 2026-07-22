@@ -14,6 +14,8 @@ internal static class CompanionRoutinePolicy
     public const int FirstHour = 6;
     public const int LastHour = 25;
     public const int HourCount = LastHour - FirstHour + 1;
+    private const string ConfigurationPayloadVersion = "2";
+    private const int MaximumEncodedLocationNameBytes = 1024;
 
     public static IReadOnlyList<CompanionRoutineHourState> NormalizeHours(
         IEnumerable<CompanionRoutineHourState>? incoming)
@@ -145,10 +147,15 @@ internal static class CompanionRoutinePolicy
     {
         return area is not null
             && Enum.IsDefined(area.Specialty)
-            && !string.IsNullOrWhiteSpace(area.LocationName)
-            && area.CenterX >= 0
-            && area.CenterY >= 0
-            && area.Radius is >= CompanionWorkAreaPolicy.MinimumRadius and <= CompanionWorkAreaPolicy.MaximumRadius;
+            && CompanionWorkAreaPolicy.IsRoutineRegionValid(
+                area.RegionKind,
+                area.LocationName,
+                area.CenterX,
+                area.CenterY,
+                area.Radius,
+                area.MinX,
+                area.MinY,
+                area.Size);
     }
 
     public static IReadOnlyList<CompanionRoutineAreaPreset> NormalizeAreaPresets(
@@ -163,10 +170,14 @@ internal static class CompanionRoutinePolicy
             selected[area!.Specialty] = new CompanionRoutineAreaPreset
             {
                 Specialty = area.Specialty,
+                RegionKind = area.RegionKind,
                 LocationName = area.LocationName,
                 CenterX = area.CenterX,
                 CenterY = area.CenterY,
-                Radius = area.Radius
+                Radius = area.Radius,
+                MinX = area.MinX,
+                MinY = area.MinY,
+                Size = area.Size
             };
         }
 
@@ -196,12 +207,26 @@ internal static class CompanionRoutinePolicy
         normalized.Add(new CompanionRoutineAreaPreset
         {
             Specialty = preset.Specialty,
+            RegionKind = preset.RegionKind,
             LocationName = preset.LocationName,
             CenterX = preset.CenterX,
             CenterY = preset.CenterY,
-            Radius = preset.Radius
+            Radius = preset.Radius,
+            MinX = preset.MinX,
+            MinY = preset.MinY,
+            Size = preset.Size
         });
         routine.AreaPresets = normalized.OrderBy(area => area.Specialty).ToList();
+    }
+
+    public static void RemoveAreaPreset(
+        CompanionRoutineState routine,
+        CompanionWorkSpecialty specialty)
+    {
+        ArgumentNullException.ThrowIfNull(routine);
+        routine.AreaPresets = NormalizeAreaPresets(routine.AreaPresets)
+            .Where(area => area.Specialty != specialty)
+            .ToList();
     }
 
     public static void ApplyWorkUntilSixPm(
@@ -246,28 +271,37 @@ internal static class CompanionRoutinePolicy
         routine ??= new CompanionRoutineState();
         IReadOnlyList<CompanionRoutineHourState> normalized = NormalizeHours(routine.Hours);
         string activities = string.Join(',', normalized.Select(hour => ((int)hour.Activity).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        string areas = string.Join(';', NormalizeAreaPresets(routine.AreaPresets).Select(EncodeAreaPreset));
         return string.Join('|',
+            ConfigurationPayloadVersion,
             routine.Enabled ? "1" : "0",
             routine.RepeatDaily ? "1" : "0",
             ((int)(Enum.IsDefined(routine.CompletionBehavior)
                 ? routine.CompletionBehavior
                 : CompanionRoutineCompletionBehavior.Follow)).ToString(System.Globalization.CultureInfo.InvariantCulture),
-            activities);
+            activities,
+            areas);
     }
 
     public static bool TryDecode(string? encoded, out CompanionRoutineState routine)
     {
         routine = new CompanionRoutineState();
         string[] parts = (encoded ?? "").Split('|');
-        if (parts.Length != 4 || parts[0] is not ("0" or "1") || parts[1] is not ("0" or "1"))
+        bool legacyPayload = parts.Length == 4;
+        int offset = legacyPayload ? 0 : 1;
+        if ((!legacyPayload && (parts.Length != 6 || parts[0] != ConfigurationPayloadVersion))
+            || parts[offset] is not ("0" or "1")
+            || parts[offset + 1] is not ("0" or "1"))
+        {
             return false;
-        if (!int.TryParse(parts[2], out int rawCompletion)
+        }
+        if (!int.TryParse(parts[offset + 2], out int rawCompletion)
             || !Enum.IsDefined(typeof(CompanionRoutineCompletionBehavior), rawCompletion))
         {
             return false;
         }
 
-        string[] rawActivities = parts[3].Split(',');
+        string[] rawActivities = parts[offset + 3].Split(',');
         if (rawActivities.Length != HourCount)
             return false;
         List<CompanionRoutineHourState> hours = new(HourCount);
@@ -285,13 +319,105 @@ internal static class CompanionRoutinePolicy
             });
         }
 
+        List<CompanionRoutineAreaPreset> areas = new();
+        if (!legacyPayload && !string.IsNullOrWhiteSpace(parts[5]))
+        {
+            string[] rawAreas = parts[5].Split(';');
+            if (rawAreas.Length > Enum.GetValues<CompanionWorkSpecialty>().Length)
+                return false;
+            foreach (string rawArea in rawAreas)
+            {
+                if (!TryDecodeAreaPreset(rawArea, out CompanionRoutineAreaPreset area))
+                    return false;
+                areas.Add(area);
+            }
+
+            areas = NormalizeAreaPresets(areas).ToList();
+            if (areas.Count != rawAreas.Length)
+                return false;
+        }
+
         routine = new CompanionRoutineState
         {
-            Enabled = parts[0] == "1",
-            RepeatDaily = parts[1] == "1",
+            Enabled = parts[offset] == "1",
+            RepeatDaily = parts[offset + 1] == "1",
             CompletionBehavior = (CompanionRoutineCompletionBehavior)rawCompletion,
-            Hours = hours
+            Hours = hours,
+            AreaPresets = areas
         };
+        return true;
+    }
+
+    public static bool HasAreaConfigurationPayload(string? encoded)
+    {
+        return (encoded ?? "").StartsWith(ConfigurationPayloadVersion + "|", StringComparison.Ordinal);
+    }
+
+    private static string EncodeAreaPreset(CompanionRoutineAreaPreset area)
+    {
+        string location = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(area.LocationName));
+        return string.Join(',',
+            ((int)area.Specialty).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ((int)area.RegionKind).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            location,
+            area.CenterX.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            area.CenterY.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            area.Radius.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            area.MinX.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            area.MinY.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            area.Size.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    private static bool TryDecodeAreaPreset(
+        string encoded,
+        out CompanionRoutineAreaPreset area)
+    {
+        area = new CompanionRoutineAreaPreset();
+        string[] parts = encoded.Split(',');
+        if (parts.Length != 9
+            || !int.TryParse(parts[0], out int rawSpecialty)
+            || !Enum.IsDefined(typeof(CompanionWorkSpecialty), rawSpecialty)
+            || !int.TryParse(parts[1], out int rawRegionKind)
+            || !Enum.IsDefined(typeof(CompanionWorkRegionKind), rawRegionKind)
+            || !int.TryParse(parts[3], out int centerX)
+            || !int.TryParse(parts[4], out int centerY)
+            || !int.TryParse(parts[5], out int radius)
+            || !int.TryParse(parts[6], out int minX)
+            || !int.TryParse(parts[7], out int minY)
+            || !int.TryParse(parts[8], out int size))
+        {
+            return false;
+        }
+
+        string locationName;
+        try
+        {
+            byte[] locationBytes = Convert.FromBase64String(parts[2]);
+            if (locationBytes.Length is 0 or > MaximumEncodedLocationNameBytes)
+                return false;
+            locationName = new System.Text.UTF8Encoding(false, true).GetString(locationBytes);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
+        CompanionRoutineAreaPreset decoded = new()
+        {
+            Specialty = (CompanionWorkSpecialty)rawSpecialty,
+            RegionKind = (CompanionWorkRegionKind)rawRegionKind,
+            LocationName = locationName,
+            CenterX = centerX,
+            CenterY = centerY,
+            Radius = radius,
+            MinX = minX,
+            MinY = minY,
+            Size = size
+        };
+        if (!IsValidAreaPreset(decoded))
+            return false;
+
+        area = decoded;
         return true;
     }
 

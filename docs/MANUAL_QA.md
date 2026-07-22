@@ -43,6 +43,11 @@ este roteiro antes de publicar uma nova versão.
   logística nascem sem alterar perfil permanente, cargo, áreas ou owner. Uma
   vara antiga no cargo deve migrar para o slot Fishing Rod; duplicatas devem ir
   para recovery/overflow, nunca permanecer misturadas ao loot.
+- Atualizar um save schema 13 para 14 contendo ordens e presets circulares de
+  rotina. Mesmo sem `RegionKind` no JSON antigo, mapa, centro e raio devem
+  continuar circulares até substituição explícita. Uma especialidade sem preset
+  deve continuar ausente e seu bloco pausado; a migração nunca pode criá-la como
+  Área livre. Salvar/recarregar novamente deve conservar os dois estados.
 - Repetir a migração com o content pack de uma ferramenta legado ausente e
   restaurá-lo depois: a ferramenta deve permanecer em recovery e voltar apenas
   ao inventário do owner original, nunca ao squad ou a outro farmer.
@@ -118,21 +123,53 @@ este roteiro antes de publicar uma nova versão.
 
 - Abrir `F9 > Rotina` em viewport normal/baixa, UI scale 100%/150% e controle.
   Confirmar cinco abas, vinte células 06h–01h, oito atividades, toggles de
-  ativação/repetição, conclusão, atalho 06–18 e salvamento alcançáveis.
+  ativação/repetição, conclusão, Área livre, Área delimitada, atalho 06–18 e
+  salvamento alcançáveis. Com Follow, Wait, Rotina original ou Depositar
+  selecionado, os dois controles de área devem ficar inativos e explicar que é
+  preciso selecionar Regar, Madeira, Minerar ou Limpar.
 - Partindo de `Rotina inativa`, pintar uma célula e repetir com `Turno 06–18`.
   Cada edição deve mudar o draft para `Rotina ativa`; salvar e fechar o painel
   deve aplicar imediatamente o bloco da hora atual.
-- Marcar manualmente uma área de Water, Wood, Mining e Clear para o mesmo NPC;
-  cada especialidade deve manter seu próprio preset. Trocar de mapa e chegar ao
-  bloco correspondente deve levar o NPC ao círculo salvo sem mover o owner.
+- Para o mesmo NPC, escolher Área livre em Regar/Minerar e quadrados diferentes
+  em Madeira/Limpar. Alternar a atividade selecionada deve mostrar o escopo
+  correspondente sem copiar a escolha entre especialidades.
+- Abrir Área delimitada enquanto owner e NPC estão fora da fazenda. A tela deve
+  fazer fade para a fazenda principal, ocultar HUD/farmer e mostrar o quadrado
+  sobre o mapa, sem custo, catálogo ou colocação de construção. Mover a câmera
+  com borda do mouse/teclas de movimento e mover o cursor com D-pad/analógico;
+  roda, `+`/`−` e LB/RB devem alterar o lado de um tile por vez.
+- No seletor, confirmar por clique no mapa/botão, Enter/Espaço e `A`. Deve voltar
+  ao mesmo painel, companion, aba, atividade e draft, restaurando location,
+  tile/facing, viewport, HUD e farmer. Reabrir antes de salvar deve começar no
+  quadrado confirmado e manter as demais edições do draft. Cancelar por botão,
+  clique direito, Escape/menu e `B`/Back deve fazer a mesma restauração sem
+  alterar o preset nem perder outras células não salvas; só Salvar rotina deve
+  persistir a escolha.
+- Testar lados 3 e 41, insistindo em `−`/`+` nos limites, e posicionar o cursor
+  nos quatro cantos. O quadrado deve permanecer inteiro no mapa. Preparar alvos
+  em `(minX,minY)` e `(minX+size-1,minY+size-1)`, que devem entrar, e imediatamente
+  antes/depois de cada borda, que devem ficar fora; apenas o stand adjacente do
+  NPC pode usar o padding de um tile. Repetir numa fazenda customizada, inclusive
+  quando sua menor dimensão limitar o máximo abaixo de 41.
+- Com Área livre, colocar alvos compatíveis perto dos quatro extremos e bem além
+  de raio 20. Todos devem ser elegíveis na fazenda principal. Alvos na estufa,
+  sheds, interiores, Fazenda da Ilha e outros mapas não pertencem a esse escopo.
 - Agendar trabalho sem preset, com área vazia, task toggle desligado e modo da
-  especialidade Disabled. Sem preset deve aguardar; marcar a área ainda no mesmo
+  especialidade Disabled. Sem preset deve aguardar sem buscar por toda a fazenda;
+  escolher explicitamente Área livre ou confirmar Área delimitada ainda no mesmo
   bloco deve iniciá-lo. Área sem targets aplica a conclusão uma vez; toggle/modo
   desligado deve pausar e identificar `tasks disabled`, não ferramenta ausente,
   e retomar quando reativado, sem loop de warp.
-- Salvar um preset com raio 20, reduzir `CompanionWorkRadius` para 3 e deixar o
-  próximo bloco/reload recriá-lo. A área ativa deve usar raio 3; aumentar a
-  configuração não deve fazer uma área já ativa crescer sozinha.
+- Carregar um preset circular de schema 13 e também criar uma área pela roda
+  manual. Ambos devem continuar círculos: tile exatamente no raio entra e a
+  diagonal do quadrado envolvente fica fora. Abrir/salvar a rotina sem trocar o
+  escopo não pode convertê-los; escolher Área livre ou confirmar Área delimitada
+  substitui apenas a especialidade selecionada. Uma nova área manual não pode
+  sobrescrever depois essa escolha explícita.
+- Num preset circular legado com raio 20, reduzir `CompanionWorkRadius` para 3 e
+  deixar o próximo bloco/reload recriá-lo. A área ativa deve usar raio 3;
+  aumentar a configuração não deve fazê-la crescer sozinha. Área livre e Área
+  delimitada não devem ser reduzidas por essa opção de raio.
 - Enquanto um bloco sem preset aguarda, iniciar quick work, tarefa contextual e
   uma área manual de outra especialidade. O refresh horário não pode apagá-los;
   ao terminar o override, a rotina deve voltar ao retry, ou assumir no próximo
@@ -154,6 +191,11 @@ este roteiro antes de publicar uma nova versão.
 - No host e farmhand, abrir o mesmo NPC, editar grades divergentes e salvar em
   ordem invertida. Só o primeiro token CAS deve ser aceito; o segundo recebe
   conflito e não pode apagar presets, revisão ou conclusão do host.
+- Repetir o CAS fazendo o farmhand escolher Área livre e Área delimitada. O host
+  deve aceitar apenas o preset ainda atual, revalidar que `FarmWide` aponta para
+  a fazenda principal e que o quadrado cabe no mapa customizado, e replicar o
+  mesmo escopo/limites aos demais clientes. Desconectar/reconectar e
+  salvar/recarregar no host deve preservar a escolha por especialidade.
 - Agendar Depositar com baú vazio, parcial, cheio, bloqueado e ausente. O bloco
   deve repetir enquanto houver cargo depositável e concluir sem drop quando
   tudo couber. Slots de ferramenta são ignorados; ferramenta legada deve ter
@@ -161,19 +203,28 @@ este roteiro antes de publicar uma nova versão.
 
 ## Baús de destino
 
-- Abrir um baú normal colocado no mundo e confirmar o painel lateral com
-  Nenhum, Todos e cada companion do jogador. Quando não houver 236 px livres à
+- Abrir um baú normal colocado no mundo e confirmar o painel lateral em
+  pergaminho vanilla com `Não usar este baú`, `Padrão do grupo` e cada companion
+  do jogador. A seleção explícita deve usar verde/check; companions herdando o
+  default devem mostrar `Padrão` em dourado, e overrides para outro destino,
+  `Outro baú` em azul/cinza, sem alterar a semântica do clique individual.
+  Quando não houver 236 px livres à
   esquerda ou à direita do `ItemGrabMenu` (incluindo viewport 426x240), confirmar
   o overlay compacto com no máximo dois companions por página e Ant./Próx.
-  limitados corretamente na primeira/última página. Testar 1/3/12 companions,
+  exibidos somente quando houver mais de uma página e limitados corretamente na
+  primeira/última; o indicador `atual/total` deve permanecer numericamente
+  legível, e a última página deve manter a mesma altura das demais. O fallback
+  compacto também deve entrar
+  quando a altura faria as linhas laterais ficarem menores que 24 px. Testar 1/3/12 companions,
   viewport baixa e UI scale 150%: painel e botões devem ficar dentro da viewport;
   cliques em botões, navegação, indicador ou área vazia do overlay nunca podem
   fechar/interagir com os slots vanilla abaixo. O painel é mouse-only nesta
   versão e não deve roubar D-pad/A do menu vanilla.
-- Marcar Todos depois que alguns companions apontam para outros baús: os
+- Marcar `Padrão do grupo` depois que alguns companions apontam para outros baús: os
   overrides antigos devem ser limpos e todos devem usar o novo default. Depois,
   marcar um companion em outro baú e confirmar que somente esse override novo
-  precede o default; Nenhum deve remover todas as referências ao baú aberto.
+  precede o default; `Não usar este baú` deve remover todas as referências ao
+  baú aberto.
 - Confirmar que geladeira, presente, Junimo/global, special chest e baú que não
   esteja colocado em `location.Objects` não exibem nem aceitam a atribuição.
 - Atribuir um baú, movê-lo para outro tile e depois para um interior de celeiro/
@@ -188,6 +239,10 @@ este roteiro antes de publicar uma nova versão.
   o ACK. A fase 1 só pode criar/confirmar identidade; a atribuição deve esperar
   o GUID aparecer no mesmo objeto ainda aberto. ACK inválido/erro deve cancelar
   a pendência sem gerar um segundo timeout ou vincular o substituto.
+- Enquanto essa confirmação estiver pendente, o cabeçalho deve exibir
+  `Confirmando este baú...`, destacar a escolha em dourado e bloquear novos
+  cliques de atribuição; paginação ainda pode funcionar e os slots vanilla não
+  podem receber o clique por baixo.
 - Gerar loot com o baú vazio, quase cheio, cheio e bloqueado por outro menu.
   O baú deve ser tentado antes do inventário do NPC; qualquer remainder deve
   seguir companion, squad/player e mundo exatamente uma vez. Forçar exceção de
@@ -312,7 +367,8 @@ este roteiro antes de publicar uma nova versão.
 
 - Em chão vazio seguro, abrir `X > Trabalhar`, escolher Madeira, Mineração, Regar
   e Limpar área e, em cada caso, testar Mandar todos e um NPC específico. Não deve
-  existir uma etapa para escolher o raio. Madeira não pode escolher pedras,
+  existir uma etapa para escolher o raio nem os botões Área livre/Área delimitada:
+  esse fluxo manual continua sempre circular. Madeira não pode escolher pedras,
   Mineração não pode escolher árvores, Regar deve escolher apenas terra seca e
   Limpar deve processar madeira e mineração; modo
   correspondente desativado deve produzir feedback sem gravar uma ordem impossível.
@@ -502,6 +558,27 @@ este roteiro antes de publicar uma nova versão.
   lógicos aproximados de 512x288 e 426x240 (UI scale 125%/150%); confirmar
   comandos, diretivas, doze skills e slots visíveis/clicáveis, sem texto ou badge
   vazando para o ramo vizinho.
+- Nesses tamanhos, abrir o painel F9 e conferir o novo cabeçalho: título
+  centralizado, divisor dourado/verde e subtítulo traduzido somente no viewport
+  amplo que comporta o cabeçalho expandido. Em 800x600, split-screen e nos
+  viewports lógicos menores, o subtítulo deve sumir e o conteúdo deve recuperar
+  o espaço sem cortes nem deslocar o botão de fechar para fora da moldura.
+- Percorrer roster e todas as abas e confirmar o pergaminho amarelado nativo da
+  textura vanilla, sem preenchimento branco opaco, cards internos bem separados
+  e barras de estado coerentes em
+  cabeçalho, membros, resumo, localização, alvo e equipamentos. Nenhuma moldura
+  pode duplicar, vazar, cobrir texto ou reduzir a área clicável nos layouts
+  amplo, intermediário e compacto.
+- Conferir contraste de texto marrom, texto secundário, badges e acentos de
+  estado sobre fundos amarelado/dourado/verde, inclusive hover, seleção e estados
+  inativos. A aba ativa deve usar superfície dourada com marca verde; hover e o
+  foco por teclado/controle devem permanecer dourados, nítidos e distintos sem
+  mover o conteúdo ou esconder badges.
+- Em mouse, teclado e controle, validar hover e foco de todos os botões. Ações
+  ativas/afirmativas devem usar verde com rótulo branco, ações destrutivas e o
+  fechamento devem usar coral com rótulo branco, e botões neutros devem manter
+  contraste e realce de hover; cores, texto e hitbox precisam coincidir em todos
+  os tamanhos listados acima.
 - Na árvore de habilidades, conferir os quatro ramos, cada um progredindo da
   esquerda para a direita, e os conectores seguindo os pré-requisitos. No layout
   amplo, conferir também o progresso por ramo e o inspetor lateral persistente
@@ -515,6 +592,12 @@ este roteiro antes de publicar uma nova versão.
   roster em duas linhas, nome/status do membro, cinco abas, nomes dos ramos,
   badge de estado e todas as linhas do inspetor devem permanecer dentro de seus
   retângulos. Sombras não podem produzir texto duplicado ou sangrar nas bordas.
+- Na aba Rotina em 1180x780, confirmar vinte horários em uma grade 5x4, com hora
+  proeminente e atividade centralizada, oito ações abreviadas sem reticências e
+  espaçamento uniforme entre controles. Nos viewports compactos, os vinte
+  horários devem continuar visíveis e clicáveis na grade densa de fallback; em
+  células menores que 29 px, mostrar somente `06h`–`01h` em tamanho legível, com
+  a atividade comunicada pela cor da célula e pelo tooltip.
 - Em 512x288 e 426x240, as abas devem trocar para seus rótulos localizados
   curtos (`Geral`, `Tarefas`, `Hab.`, `Itens`, `Plano` em PT-BR), sem colidir com badges
   ou com o sublinhado da aba ativa.

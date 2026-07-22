@@ -310,7 +310,7 @@ public sealed partial class ModEntry
         }
 
         int standRadius = task.UsesFixedWorkArea
-            ? member.WorkAreaRadius + 1
+            ? this.GetWorkAreaSearchRadius(member, location) + 1
             : MaxCompanionDistanceTiles;
         if (!this.TryResolveTaskStandTile(location, targetTile, npc, member, task, standRadius, out Vector2 standTile))
         {
@@ -593,7 +593,7 @@ public sealed partial class ModEntry
         ResetCompanionMovementSpeed(npc);
 
         int workRadius = task.UsesFixedWorkArea
-            ? member.WorkAreaRadius + 1
+            ? this.GetWorkAreaSearchRadius(member, location) + 1
             : Math.Max(MaxCompanionDistanceTiles, task.WorkRadius);
         if (!this.TryResolveTaskStandTile(location, task.TargetTile, npc, member, task, workRadius, out Vector2 standTile))
         {
@@ -705,7 +705,7 @@ public sealed partial class ModEntry
         ResetCompanionMovementSpeed(npc);
 
         int workRadius = task.UsesFixedWorkArea
-            ? member.WorkAreaRadius + 1
+            ? this.GetWorkAreaSearchRadius(member, location) + 1
             : Math.Max(MaxCompanionDistanceTiles, task.WorkRadius);
         if (!this.TryResolveTaskStandTile(location, task.TargetTile, npc, member, task, workRadius, out Vector2 standTile))
         {

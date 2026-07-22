@@ -24,9 +24,13 @@ public sealed partial class ModEntry
             member.WorkAreaActive,
             member.WorkAreaOrderId,
             member.WorkAreaLocationName,
+            member.WorkAreaRegionKind,
             member.WorkAreaCenterX,
             member.WorkAreaCenterY,
             member.WorkAreaRadius,
+            member.WorkAreaMinX,
+            member.WorkAreaMinY,
+            member.WorkAreaSize,
             member.WorkAreaSpecialty);
     }
 
@@ -68,6 +72,43 @@ public sealed partial class ModEntry
         return NormalizeTile(new Vector2(member.WorkAreaCenterX, member.WorkAreaCenterY));
     }
 
+    private int GetWorkAreaSearchRadius(SquadMemberState member, GameLocation location)
+    {
+        return member.WorkAreaRegionKind switch
+        {
+            CompanionWorkRegionKind.DelimitedSquare => Math.Max(1, member.WorkAreaSize * 2 + 1),
+            CompanionWorkRegionKind.FarmWide => location.Map is not null && location.Map.Layers.Count > 0
+                ? Math.Max(1, location.Map.Layers[0].LayerWidth + location.Map.Layers[0].LayerHeight)
+                : CompanionWorkAreaPolicy.MaximumRadius,
+            _ => member.WorkAreaRadius
+        };
+    }
+
+    private bool IsTileInsideWorkAreaRegion(
+        SquadMemberState member,
+        GameLocation location,
+        Vector2 rawTile,
+        int padding = 0)
+    {
+        if (location.Map is null || location.Map.Layers.Count == 0)
+            return false;
+
+        Vector2 tile = NormalizeTile(rawTile);
+        return CompanionWorkAreaPolicy.ContainsRegion(
+            member.WorkAreaRegionKind,
+            member.WorkAreaCenterX,
+            member.WorkAreaCenterY,
+            member.WorkAreaRadius,
+            member.WorkAreaMinX,
+            member.WorkAreaMinY,
+            member.WorkAreaSize,
+            (int)tile.X,
+            (int)tile.Y,
+            location.Map.Layers[0].LayerWidth,
+            location.Map.Layers[0].LayerHeight,
+            padding);
+    }
+
     private bool HasPendingWorkAreaRecovery(SquadMemberState member)
     {
         return this.workAreaPositionRecoveryNeeded.Contains(member.NpcName)
@@ -81,6 +122,9 @@ public sealed partial class ModEntry
         bool changed = false;
         foreach (SquadMemberState member in this.members.Values.Where(this.HasActiveWorkArea).ToList())
         {
+            if (member.WorkAreaRegionKind != CompanionWorkRegionKind.Circle)
+                continue;
+
             // Preserve the exact boundary of an existing saved order when the
             // host raises the setting; only clamp orders which now exceed it.
             if (member.WorkAreaRadius <= maximumRadius)
@@ -261,6 +305,10 @@ public sealed partial class ModEntry
             member.WorkAreaCenterX = (int)center.X;
             member.WorkAreaCenterY = (int)center.Y;
             member.WorkAreaRadius = radius;
+            member.WorkAreaRegionKind = CompanionWorkRegionKind.Circle;
+            member.WorkAreaMinX = -1;
+            member.WorkAreaMinY = -1;
+            member.WorkAreaSize = 0;
             member.WorkAreaSpecialty = specialty;
             member.PreferredWorkSpecialty = specialty;
             this.RememberRoutineAreaPreset(member);
@@ -299,14 +347,27 @@ public sealed partial class ModEntry
         int radius,
         CompanionWorkSpecialty specialty,
         bool includeReserved,
-        bool respectConfiguredModes = true)
+        bool respectConfiguredModes = true,
+        Func<Vector2, bool>? containsTarget = null)
     {
         center = NormalizeTile(center);
+        bool IsInside(Vector2 tile)
+        {
+            return containsTarget?.Invoke(tile) == true
+                || containsTarget is null
+                && CompanionWorkAreaPolicy.Contains(
+                    (int)center.X,
+                    (int)center.Y,
+                    radius,
+                    (int)tile.X,
+                    (int)tile.Y);
+        }
+
         bool allowsWood = CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Lumbering)
             && (!respectConfiguredModes
                 || this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled);
         if (allowsWood && location.terrainFeatures.Keys.Any(tile =>
-                CompanionWorkAreaPolicy.Contains((int)center.X, (int)center.Y, radius, (int)tile.X, (int)tile.Y)
+                IsInside(tile)
                 && this.IsValidWoodTarget(location, tile)
                 && (includeReserved || !this.IsTargetReserved(location, tile))))
         {
@@ -317,7 +378,7 @@ public sealed partial class ModEntry
             && (!respectConfiguredModes
                 || this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled);
         if (allowsMining && location.Objects.Keys.Any(tile =>
-                CompanionWorkAreaPolicy.Contains((int)center.X, (int)center.Y, radius, (int)tile.X, (int)tile.Y)
+                IsInside(tile)
                 && this.IsValidMiningTarget(location, tile)
                 && (includeReserved || !this.IsTargetReserved(location, tile))))
         {
@@ -328,7 +389,7 @@ public sealed partial class ModEntry
             && (!respectConfiguredModes
                 || this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled);
         return allowsWatering && this.GetWateringTargetTiles(location).Any(tile =>
-            CompanionWorkAreaPolicy.Contains((int)center.X, (int)center.Y, radius, (int)tile.X, (int)tile.Y)
+            IsInside(tile)
             && (includeReserved || !this.IsTargetReserved(location, tile)));
     }
 
@@ -339,7 +400,8 @@ public sealed partial class ModEntry
         int radius,
         CompanionWorkSpecialty specialty,
         bool includeReserved,
-        bool respectConfiguredModes = true)
+        bool respectConfiguredModes = true,
+        Func<Vector2, bool>? containsTarget = null)
     {
         if (CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Lumbering)
             && this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering)
@@ -349,7 +411,8 @@ public sealed partial class ModEntry
                 radius,
                 CompanionWorkSpecialty.Wood,
                 includeReserved,
-                respectConfiguredModes))
+                respectConfiguredModes,
+                containsTarget))
         {
             return true;
         }
@@ -362,7 +425,8 @@ public sealed partial class ModEntry
                 radius,
                 CompanionWorkSpecialty.Mining,
                 includeReserved,
-                respectConfiguredModes))
+                respectConfiguredModes,
+                containsTarget))
         {
             return true;
         }
@@ -375,7 +439,8 @@ public sealed partial class ModEntry
                 radius,
                 CompanionWorkSpecialty.Watering,
                 includeReserved,
-                respectConfiguredModes);
+                respectConfiguredModes,
+                containsTarget);
     }
 
     private string GetMissingWorkAreaEquipmentFailureKey(
@@ -383,7 +448,8 @@ public sealed partial class ModEntry
         GameLocation location,
         Vector2 center,
         int radius,
-        CompanionWorkSpecialty specialty)
+        CompanionWorkSpecialty specialty,
+        Func<Vector2, bool>? containsTarget = null)
     {
         if (CompanionWorkAreaPolicy.Allows(specialty, CompanionTaskKind.Lumbering)
             && !this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering)
@@ -393,7 +459,8 @@ public sealed partial class ModEntry
                 radius,
                 CompanionWorkSpecialty.Wood,
                 includeReserved: true,
-                respectConfiguredModes: true))
+                respectConfiguredModes: true,
+                containsTarget: containsTarget))
         {
             return "companion.task_failure.need_axe";
         }
@@ -406,7 +473,8 @@ public sealed partial class ModEntry
                 radius,
                 CompanionWorkSpecialty.Mining,
                 includeReserved: true,
-                respectConfiguredModes: true))
+                respectConfiguredModes: true,
+                containsTarget: containsTarget))
         {
             return "companion.task_failure.need_pickaxe";
         }
@@ -419,7 +487,8 @@ public sealed partial class ModEntry
                 radius,
                 CompanionWorkSpecialty.Watering,
                 includeReserved: true,
-                respectConfiguredModes: true))
+                respectConfiguredModes: true,
+                containsTarget: containsTarget))
         {
             return this.HasEmptyCompanionWateringCan(member)
                 ? "companion.task_failure.watering_can_empty"
@@ -431,15 +500,12 @@ public sealed partial class ModEntry
 
     private bool IsTaskInsideWorkArea(SquadMemberState member, CompanionTaskKind kind, string locationName, Vector2 tile)
     {
-        return this.HasActiveWorkArea(member)
+        GameLocation? location = Game1.getLocationFromName(locationName);
+        return location is not null
+            && this.HasActiveWorkArea(member)
             && string.Equals(member.WorkAreaLocationName, locationName, StringComparison.Ordinal)
             && CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, kind)
-            && CompanionWorkAreaPolicy.Contains(
-                member.WorkAreaCenterX,
-                member.WorkAreaCenterY,
-                member.WorkAreaRadius,
-                (int)NormalizeTile(tile).X,
-                (int)NormalizeTile(tile).Y);
+            && this.IsTileInsideWorkAreaRegion(member, location, tile);
     }
 
     private void ClearCompanionWorkArea(SquadMemberState member, bool cancelPendingAreaTask)
@@ -509,17 +575,45 @@ public sealed partial class ModEntry
                 && this.HasActiveWorkArea(member)
                 && string.Equals(member.WorkAreaLocationName, currentLocationName, StringComparison.Ordinal))
             .GroupBy(member => string.IsNullOrWhiteSpace(member.WorkAreaOrderId)
-                ? $"{member.WorkAreaCenterX}:{member.WorkAreaCenterY}:{member.WorkAreaRadius}:{member.WorkAreaSpecialty}"
+                ? $"{member.WorkAreaRegionKind}:{member.WorkAreaCenterX}:{member.WorkAreaCenterY}:{member.WorkAreaRadius}:{member.WorkAreaMinX}:{member.WorkAreaMinY}:{member.WorkAreaSize}:{member.WorkAreaSpecialty}"
                 : member.WorkAreaOrderId,
                 StringComparer.Ordinal)
             .Select(group => group.First()))
         {
-            this.DrawWorkAreaOutline(
-                b,
-                this.GetWorkAreaCenter(area),
-                area.WorkAreaRadius,
-                area.WorkAreaSpecialty,
-                alpha: area.Mode == CompanionMode.Waiting ? 0.13f : 0.2f);
+            float alpha = area.Mode == CompanionMode.Waiting ? 0.13f : 0.2f;
+            if (area.WorkAreaRegionKind == CompanionWorkRegionKind.DelimitedSquare)
+            {
+                this.DrawRectangularWorkAreaOutline(
+                    b,
+                    area.WorkAreaMinX,
+                    area.WorkAreaMinY,
+                    area.WorkAreaSize,
+                    area.WorkAreaSize,
+                    area.WorkAreaSpecialty,
+                    alpha);
+            }
+            else if (area.WorkAreaRegionKind == CompanionWorkRegionKind.FarmWide
+                && Game1.currentLocation.Map is not null
+                && Game1.currentLocation.Map.Layers.Count > 0)
+            {
+                this.DrawRectangularWorkAreaOutline(
+                    b,
+                    0,
+                    0,
+                    Game1.currentLocation.Map.Layers[0].LayerWidth,
+                    Game1.currentLocation.Map.Layers[0].LayerHeight,
+                    area.WorkAreaSpecialty,
+                    alpha);
+            }
+            else
+            {
+                this.DrawWorkAreaOutline(
+                    b,
+                    this.GetWorkAreaCenter(area),
+                    area.WorkAreaRadius,
+                    area.WorkAreaSpecialty,
+                    alpha);
+            }
         }
 
         if (!this.workAreaPreviews.TryGetValue(localOwnerId, out WorkAreaPreviewState preview))
@@ -591,5 +685,41 @@ public sealed partial class ModEntry
                 }
             }
         }
+    }
+
+    private void DrawRectangularWorkAreaOutline(
+        SpriteBatch b,
+        int minX,
+        int minY,
+        int width,
+        int height,
+        CompanionWorkSpecialty specialty,
+        float alpha)
+    {
+        if (minX < 0 || minY < 0 || width <= 0 || height <= 0)
+            return;
+
+        Color accent = specialty switch
+        {
+            CompanionWorkSpecialty.Wood => new Color(108, 166, 91),
+            CompanionWorkSpecialty.Mining => new Color(126, 139, 175),
+            CompanionWorkSpecialty.Watering => new Color(82, 158, 224),
+            _ => new Color(220, 166, 74)
+        };
+        accent *= Math.Clamp(alpha, 0f, 1f);
+
+        Vector2 screen = Game1.GlobalToLocal(
+            Game1.viewport,
+            new Vector2(minX * 64f, minY * 64f));
+        Rectangle bounds = new(
+            (int)screen.X,
+            (int)screen.Y,
+            checked(width * 64),
+            checked(height * 64));
+        const int border = 4;
+        b.Draw(Game1.staminaRect, new Rectangle(bounds.X, bounds.Y, bounds.Width, border), accent);
+        b.Draw(Game1.staminaRect, new Rectangle(bounds.X, bounds.Bottom - border, bounds.Width, border), accent);
+        b.Draw(Game1.staminaRect, new Rectangle(bounds.X, bounds.Y, border, bounds.Height), accent);
+        b.Draw(Game1.staminaRect, new Rectangle(bounds.Right - border, bounds.Y, border, bounds.Height), accent);
     }
 }

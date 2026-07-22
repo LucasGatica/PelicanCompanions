@@ -18,7 +18,7 @@ public sealed partial class ModEntry : Mod
     private const string SaveKey = "pelican-companions-state";
     private const int CompanionProfilesSaveVersion = 11;
     private const int OperationalProfilesSaveVersion = 13;
-    private const int CurrentSaveVersion = 13;
+    private const int CurrentSaveVersion = 14;
     private const string NpcConfigAssetKey = "Lucas.PelicanCompanions/NpcConfig";
     private const string MessageActionRequest = "CompanionActionRequest";
     private const string MessageStateRequest = "CompanionStateRequest";
@@ -179,6 +179,10 @@ public sealed partial class ModEntry : Mod
         int WorkAreaCenterX,
         int WorkAreaCenterY,
         int WorkAreaRadius,
+        CompanionWorkRegionKind WorkAreaRegionKind,
+        int WorkAreaMinX,
+        int WorkAreaMinY,
+        int WorkAreaSize,
         CompanionWorkSpecialty WorkAreaSpecialty,
         bool TasksEnabled,
         bool Blocked,

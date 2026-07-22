@@ -25,6 +25,8 @@ internal sealed partial class CompanionPanelMenu
     private Rectangle routineEnabledButton;
     private Rectangle routineRepeatButton;
     private Rectangle routineCompletionButton;
+    private Rectangle routineAreaFreeButton;
+    private Rectangle routineAreaDelimitedButton;
     private Rectangle routineQuickShiftButton;
     private Rectangle routineSaveButton;
     private CompanionRoutineActivity selectedRoutinePaintActivity = CompanionRoutineActivity.Clear;
@@ -36,6 +38,8 @@ internal sealed partial class CompanionPanelMenu
         this.routineEnabledButton = new Rectangle();
         this.routineRepeatButton = new Rectangle();
         this.routineCompletionButton = new Rectangle();
+        this.routineAreaFreeButton = new Rectangle();
+        this.routineAreaDelimitedButton = new Rectangle();
         this.routineQuickShiftButton = new Rectangle();
         this.routineSaveButton = new Rectangle();
     }
@@ -53,6 +57,10 @@ internal sealed partial class CompanionPanelMenu
             targets.Add(this.routineCompletionButton);
         targets.AddRange(this.routineActivityButtons.Select(button => button.Bounds));
         targets.AddRange(this.routineHourButtons.Select(button => button.Bounds));
+        if (this.routineAreaFreeButton.Width > 0)
+            targets.Add(this.routineAreaFreeButton);
+        if (this.routineAreaDelimitedButton.Width > 0)
+            targets.Add(this.routineAreaDelimitedButton);
         if (this.routineQuickShiftButton.Width > 0)
             targets.Add(this.routineQuickShiftButton);
         if (this.routineSaveButton.Width > 0)
@@ -126,6 +134,71 @@ internal sealed partial class CompanionPanelMenu
             return true;
         }
 
+        if (this.routineAreaFreeButton.Contains(x, y))
+        {
+            if (!CompanionRoutinePolicy.TryGetWorkSpecialty(
+                    this.selectedRoutinePaintActivity,
+                    out CompanionWorkSpecialty specialty))
+            {
+                Game1.playSound("cancel");
+                return true;
+            }
+
+            CompanionRoutinePolicy.UpsertAreaPreset(draft, new CompanionRoutineAreaPreset
+            {
+                Specialty = specialty,
+                RegionKind = CompanionWorkRegionKind.FarmWide,
+                LocationName = Game1.getFarm().NameOrUniqueName
+            });
+            this.routineFeedbackKeys.Remove(key);
+            Game1.playSound("drumkit6");
+            return true;
+        }
+
+        if (this.routineAreaDelimitedButton.Contains(x, y))
+        {
+            if (!CompanionRoutinePolicy.TryGetWorkSpecialty(
+                    this.selectedRoutinePaintActivity,
+                    out CompanionWorkSpecialty specialty))
+            {
+                Game1.playSound("cancel");
+                return true;
+            }
+
+            CompanionRoutineAreaPreset? initialArea = CompanionRoutinePolicy.GetAreaPreset(draft, specialty);
+            RoutineAreaSelectionPreset? initialSelection = initialArea?.RegionKind switch
+            {
+                CompanionWorkRegionKind.DelimitedSquare => new RoutineAreaSelectionPreset(
+                    initialArea.MinX,
+                    initialArea.MinY,
+                    initialArea.Size),
+                CompanionWorkRegionKind.Circle => new RoutineAreaSelectionPreset(
+                    initialArea.CenterX - initialArea.Radius,
+                    initialArea.CenterY - initialArea.Radius,
+                    initialArea.Radius * 2 + 1),
+                _ => null
+            };
+            Game1.activeClickableMenu = new RoutineAreaSelectionMenu(
+                this,
+                Game1.getFarm(),
+                initialSelection,
+                this.translate,
+                (minX, minY, size) =>
+                {
+                    CompanionRoutinePolicy.UpsertAreaPreset(draft, new CompanionRoutineAreaPreset
+                    {
+                        Specialty = specialty,
+                        RegionKind = CompanionWorkRegionKind.DelimitedSquare,
+                        LocationName = Game1.getFarm().NameOrUniqueName,
+                        MinX = minX,
+                        MinY = minY,
+                        Size = size
+                    });
+                    this.routineFeedbackKeys.Remove(key);
+                });
+            return true;
+        }
+
         foreach ((Rectangle bounds, CompanionRoutineActivity activity) in this.routineActivityButtons)
         {
             if (!bounds.Contains(x, y))
@@ -192,6 +265,20 @@ internal sealed partial class CompanionPanelMenu
             this.hoverText = this.translate("companion.routine.completion_hint", null);
             return;
         }
+        if (this.routineAreaFreeButton.Contains(x, y))
+        {
+            this.hoverText = CompanionRoutinePolicy.TryGetWorkSpecialty(this.selectedRoutinePaintActivity, out _)
+                ? this.translate("companion.routine.scope.free_hint", null)
+                : this.translate("companion.routine.scope.select_work_hint", null);
+            return;
+        }
+        if (this.routineAreaDelimitedButton.Contains(x, y))
+        {
+            this.hoverText = CompanionRoutinePolicy.TryGetWorkSpecialty(this.selectedRoutinePaintActivity, out _)
+                ? this.translate("companion.routine.scope.delimited_hint", null)
+                : this.translate("companion.routine.scope.select_work_hint", null);
+            return;
+        }
         if (this.routineQuickShiftButton.Contains(x, y))
         {
             this.hoverText = this.translate("companion.routine.quick_shift_hint", null);
@@ -251,7 +338,7 @@ internal sealed partial class CompanionPanelMenu
             return;
         }
 
-        int gap = area.Width >= 440 ? 5 : 3;
+        int gap = area.Width >= 700 ? 8 : area.Width >= 440 ? 6 : 3;
         int controlHeight = Math.Clamp(area.Height / 10, 23, 32);
         int controlWidth = Math.Max(1, (area.Width - gap * 2) / 3);
         this.routineEnabledButton = new Rectangle(area.X, area.Y, controlWidth, controlHeight);
@@ -299,7 +386,9 @@ internal sealed partial class CompanionPanelMenu
             CompanionRoutineActivity activity = RoutineActivities[index];
             bool hasRequiredArea = !CompanionRoutinePolicy.TryGetWorkSpecialty(activity, out CompanionWorkSpecialty specialty)
                 || CompanionRoutinePolicy.GetAreaPreset(draft, specialty) is not null;
-            string label = this.GetRoutineActivityLabel(activity, shortLabel: button.Width < 78);
+            string label = this.GetRoutineActivityLabel(
+                activity,
+                shortLabel: paletteColumns == RoutineActivities.Length || button.Width < 112);
             if (!hasRequiredArea)
                 label += " !";
             this.DrawRoutineActivityButton(b, button, label, activity == this.selectedRoutinePaintActivity, activity, hasRequiredArea);
@@ -307,13 +396,24 @@ internal sealed partial class CompanionPanelMenu
 
         int actionHeight = Math.Clamp(area.Height / 10, 23, 32);
         int actionTop = area.Bottom - actionHeight;
-        int actionWidth = Math.Max(1, (area.Width - gap) / 2);
-        this.routineQuickShiftButton = new Rectangle(area.X, actionTop, actionWidth, actionHeight);
+        int actionWidth = Math.Max(1, (area.Width - gap * 3) / 4);
+        this.routineAreaFreeButton = new Rectangle(area.X, actionTop, actionWidth, actionHeight);
+        this.routineAreaDelimitedButton = new Rectangle(
+            this.routineAreaFreeButton.Right + gap,
+            actionTop,
+            actionWidth,
+            actionHeight);
+        this.routineQuickShiftButton = new Rectangle(
+            this.routineAreaDelimitedButton.Right + gap,
+            actionTop,
+            actionWidth,
+            actionHeight);
         this.routineSaveButton = new Rectangle(
             this.routineQuickShiftButton.Right + gap,
             actionTop,
             Math.Max(1, area.Right - this.routineQuickShiftButton.Right - gap),
             actionHeight);
+        this.DrawRoutineAreaModeButtons(b, draft);
         this.DrawButton(b, this.routineQuickShiftButton, this.translate("companion.routine.quick_shift", null), false, danger: false);
         this.DrawButton(b, this.routineSaveButton, this.translate("companion.routine.save", null), true, danger: false);
 
@@ -409,8 +509,18 @@ internal sealed partial class CompanionPanelMenu
 
         int gridTop = paletteTop + paletteHeight + gap;
         int actionTop = gridTop + gridHeight + gap;
-        int actionWidth = Math.Max(1, (area.Width - gap) / 2);
-        this.routineQuickShiftButton = new Rectangle(area.X, actionTop, actionWidth, actionHeight);
+        int actionWidth = Math.Max(1, (area.Width - gap * 3) / 4);
+        this.routineAreaFreeButton = new Rectangle(area.X, actionTop, actionWidth, actionHeight);
+        this.routineAreaDelimitedButton = new Rectangle(
+            this.routineAreaFreeButton.Right + gap,
+            actionTop,
+            actionWidth,
+            actionHeight);
+        this.routineQuickShiftButton = new Rectangle(
+            this.routineAreaDelimitedButton.Right + gap,
+            actionTop,
+            actionWidth,
+            actionHeight);
         this.routineSaveButton = new Rectangle(
             this.routineQuickShiftButton.Right + gap,
             actionTop,
@@ -420,8 +530,45 @@ internal sealed partial class CompanionPanelMenu
         Rectangle grid = new(area.X, gridTop, area.Width, gridHeight);
         this.DrawRoutineGrid(b, draft, grid, gap, columnsOverride: area.Width >= 240 ? 10 : 5);
 
+        this.DrawRoutineAreaModeButtons(b, draft);
         this.DrawButton(b, this.routineQuickShiftButton, this.translate("companion.routine.quick_shift", null), false, danger: false);
         this.DrawButton(b, this.routineSaveButton, this.translate("companion.routine.save", null), true, danger: false);
+    }
+
+    private void DrawRoutineAreaModeButtons(SpriteBatch b, CompanionRoutineState draft)
+    {
+        bool workSelected = CompanionRoutinePolicy.TryGetWorkSpecialty(
+            this.selectedRoutinePaintActivity,
+            out CompanionWorkSpecialty specialty);
+        CompanionRoutineAreaPreset? preset = workSelected
+            ? CompanionRoutinePolicy.GetAreaPreset(draft, specialty)
+            : null;
+        bool free = preset?.RegionKind == CompanionWorkRegionKind.FarmWide;
+        bool delimited = preset is not null && !free;
+        bool shortLabel = this.routineAreaFreeButton.Width < 104;
+        this.DrawButton(
+            b,
+            this.routineAreaFreeButton,
+            this.translate(shortLabel
+                ? "companion.routine.scope.free.short"
+                : "companion.routine.scope.free", null),
+            free,
+            danger: false);
+        this.DrawButton(
+            b,
+            this.routineAreaDelimitedButton,
+            this.translate(shortLabel
+                ? "companion.routine.scope.delimited.short"
+                : "companion.routine.scope.delimited", null),
+            delimited,
+            danger: false);
+
+        if (workSelected)
+            return;
+
+        Color disabled = Color.Black * 0.18f;
+        b.Draw(Game1.staminaRect, this.routineAreaFreeButton, disabled);
+        b.Draw(Game1.staminaRect, this.routineAreaDelimitedButton, disabled);
     }
 
     private void DrawRoutineGrid(
@@ -431,7 +578,10 @@ internal sealed partial class CompanionPanelMenu
         int gap,
         int? columnsOverride = null)
     {
-        int columns = columnsOverride ?? (grid.Width >= 380 ? 10 : 5);
+        // A tall routine body reads better as four compact rows instead of two
+        // oversized strips. Keep the 10-column layout only when vertical room is
+        // scarce (notably the 426x240 compact viewport).
+        int columns = columnsOverride ?? (grid.Height >= 160 ? 5 : grid.Width >= 380 ? 10 : 5);
         int rows = (int)Math.Ceiling(CompanionRoutinePolicy.HourCount / (double)columns);
         int cellWidth = Math.Max(1, (grid.Width - gap * (columns - 1)) / columns);
         int cellHeight = Math.Max(1, (grid.Height - gap * (rows - 1)) / rows);
@@ -447,14 +597,80 @@ internal sealed partial class CompanionPanelMenu
             Rectangle cell = new(x, y, width, height);
             CompanionRoutineHourState hour = hours[index];
             Color accent = GetRoutineActivityColor(hour.Activity);
-            Color fill = Color.Lerp(new Color(238, 225, 200), accent, 0.18f);
+            Color fill = Color.Lerp(new Color(255, 242, 205), accent, 0.12f);
             if (cell.Contains(Game1.getMouseX(), Game1.getMouseY()))
                 fill = Color.Lerp(fill, Color.White, 0.25f);
             this.DrawFlatPanel(b, cell, fill, accent, hour.Activity == this.selectedRoutinePaintActivity ? 2 : 1);
             string hourText = FormatRoutineHour(hour.Hour);
             string activityText = this.GetRoutineActivityLabel(hour.Activity, shortLabel: true);
-            string text = cell.Height >= 29 ? $"{hourText}\n{activityText}" : $"{hourText} {activityText}";
-            DrawCenteredPanelText(b, text, Game1.tinyFont, cell, TextColor, PanelCompactTextScale, 3, 2);
+            if (cell.Height >= 44 && cell.Width >= 52)
+            {
+                DrawPanelText(
+                    b,
+                    FitText(hourText, Game1.tinyFont, Math.Max(1, cell.Width - 12), PanelNumericTextScale),
+                    Game1.tinyFont,
+                    new Vector2(cell.X + 7, cell.Y + 5),
+                    TextColor,
+                    PanelNumericTextScale);
+                Rectangle activityBounds = new(
+                    cell.X + 5,
+                    cell.Y + 18,
+                    Math.Max(1, cell.Width - 10),
+                    Math.Max(1, cell.Height - 23));
+                DrawCenteredPanelText(
+                    b,
+                    activityText,
+                    Game1.tinyFont,
+                    activityBounds,
+                    TextColor,
+                    PanelTextScale,
+                    4,
+                    3,
+                    minimumScale: 0.44f);
+            }
+            else if (cell.Height >= 29)
+            {
+                int hourHeight = Math.Max(12, cell.Height / 2);
+                Rectangle hourBounds = new(cell.X + 2, cell.Y + 1, Math.Max(1, cell.Width - 4), hourHeight);
+                Rectangle compactActivityBounds = new(
+                    cell.X + 2,
+                    hourBounds.Bottom - 1,
+                    Math.Max(1, cell.Width - 4),
+                    Math.Max(1, cell.Bottom - hourBounds.Bottom));
+                DrawCenteredPanelText(
+                    b,
+                    hourText,
+                    Game1.tinyFont,
+                    hourBounds,
+                    TextColor,
+                    PanelCompactNumericTextScale,
+                    2,
+                    1,
+                    minimumScale: 0.54f);
+                DrawCenteredPanelText(
+                    b,
+                    activityText,
+                    Game1.tinyFont,
+                    compactActivityBounds,
+                    MutedTextColor,
+                    PanelCompactTextScale,
+                    2,
+                    1,
+                    minimumScale: 0.42f);
+            }
+            else
+            {
+                DrawCenteredPanelText(
+                    b,
+                    hourText,
+                    Game1.tinyFont,
+                    cell,
+                    TextColor,
+                    PanelCompactNumericTextScale,
+                    2,
+                    1,
+                    minimumScale: 0.54f);
+            }
             this.routineHourButtons.Add((cell, hour.Hour));
         }
     }

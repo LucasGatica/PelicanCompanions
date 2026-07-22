@@ -111,7 +111,7 @@ public sealed partial class ModEntry
 
                 Vector2 desiredTile = restoreWaiting
                     ? NormalizeTile(new Vector2(member.WaitingTileX, member.WaitingTileY))
-                    : NormalizeTile(new Vector2(member.WorkAreaCenterX, member.WorkAreaCenterY));
+                    : GetPersistedWorkAreaRestoreTile(member, npc, location);
                 if (npc.currentLocation != location || NormalizeTile(npc.Tile) != desiredTile)
                 {
                     if (!this.PlaceNpc(npc, location, desiredTile))
@@ -168,6 +168,30 @@ public sealed partial class ModEntry
         }
     }
 
+    private static Vector2 GetPersistedWorkAreaRestoreTile(
+        SquadMemberState member,
+        NPC npc,
+        GameLocation location)
+    {
+        if (member.WorkAreaRegionKind == CompanionWorkRegionKind.DelimitedSquare)
+        {
+            int centerOffset = Math.Max(0, member.WorkAreaSize - 1) / 2;
+            return NormalizeTile(new Vector2(
+                member.WorkAreaMinX + centerOffset,
+                member.WorkAreaMinY + centerOffset));
+        }
+
+        if (member.WorkAreaRegionKind == CompanionWorkRegionKind.FarmWide
+            && npc.currentLocation == location)
+        {
+            return NormalizeTile(npc.Tile);
+        }
+
+        int fallbackX = Math.Max(0, member.WorkAreaCenterX);
+        int fallbackY = Math.Max(0, member.WorkAreaCenterY);
+        return NormalizeTile(new Vector2(fallbackX, fallbackY));
+    }
+
     private void ClearFollowState(string npcName)
     {
         this.controlledNpcLeases.RemoveWhere(npc => string.Equals(npc.Name, npcName, StringComparison.OrdinalIgnoreCase));
@@ -222,9 +246,13 @@ public sealed partial class ModEntry
                 member.WorkAreaActive,
                 member.WorkAreaOrderId,
                 member.WorkAreaLocationName,
+                member.WorkAreaRegionKind,
                 member.WorkAreaCenterX,
                 member.WorkAreaCenterY,
                 member.WorkAreaRadius,
+                member.WorkAreaMinX,
+                member.WorkAreaMinY,
+                member.WorkAreaSize,
                 member.WorkAreaSpecialty))
         {
             ClearPersistedWorkArea(member);
@@ -233,7 +261,7 @@ public sealed partial class ModEntry
         {
             if (!Enum.IsDefined(member.WorkAreaSpecialty))
                 member.WorkAreaSpecialty = CompanionWorkSpecialty.ClearArea;
-            member.WorkAreaRadius = CompanionWorkAreaPolicy.NormalizeRadius(member.WorkAreaRadius);
+            NormalizeInactivePersistedWorkArea(member);
         }
 
         if (!member.ClearArea)
@@ -1036,9 +1064,13 @@ public sealed partial class ModEntry
                 member.WorkAreaActive,
                 member.WorkAreaOrderId,
                 member.WorkAreaLocationName,
+                member.WorkAreaRegionKind,
                 member.WorkAreaCenterX,
                 member.WorkAreaCenterY,
                 member.WorkAreaRadius,
+                member.WorkAreaMinX,
+                member.WorkAreaMinY,
+                member.WorkAreaSize,
                 member.WorkAreaSpecialty))
         {
             ClearPersistedWorkArea(member);
@@ -1047,7 +1079,7 @@ public sealed partial class ModEntry
         {
             if (!Enum.IsDefined(member.WorkAreaSpecialty))
                 member.WorkAreaSpecialty = CompanionWorkSpecialty.ClearArea;
-            member.WorkAreaRadius = CompanionWorkAreaPolicy.NormalizeRadius(member.WorkAreaRadius);
+            NormalizeInactivePersistedWorkArea(member);
         }
 
         member.DisplayName ??= member.NpcName;
@@ -1093,10 +1125,39 @@ public sealed partial class ModEntry
         member.WorkAreaActive = false;
         member.WorkAreaOrderId = "";
         member.WorkAreaLocationName = "";
+        member.WorkAreaRegionKind = CompanionWorkRegionKind.Circle;
         member.WorkAreaCenterX = -1;
         member.WorkAreaCenterY = -1;
         member.WorkAreaRadius = 8;
+        member.WorkAreaMinX = -1;
+        member.WorkAreaMinY = -1;
+        member.WorkAreaSize = 0;
         member.WorkAreaSpecialty = CompanionWorkSpecialty.ClearArea;
+    }
+
+    private static void NormalizeInactivePersistedWorkArea(SquadMemberState member)
+    {
+        if (!Enum.IsDefined(member.WorkAreaRegionKind))
+            member.WorkAreaRegionKind = CompanionWorkRegionKind.Circle;
+
+        member.WorkAreaRadius = CompanionWorkAreaPolicy.NormalizeRadius(member.WorkAreaRadius);
+        if (member.WorkAreaRegionKind == CompanionWorkRegionKind.DelimitedSquare)
+        {
+            if (CompanionWorkAreaPolicy.IsSquareGeometryValid(
+                    member.WorkAreaMinX,
+                    member.WorkAreaMinY,
+                    member.WorkAreaSize))
+            {
+                member.WorkAreaSize = CompanionWorkAreaPolicy.NormalizeSquareSize(member.WorkAreaSize);
+                return;
+            }
+
+            member.WorkAreaRegionKind = CompanionWorkRegionKind.Circle;
+        }
+
+        member.WorkAreaMinX = -1;
+        member.WorkAreaMinY = -1;
+        member.WorkAreaSize = 0;
     }
 
     private bool IsCompanionProgressionEnabled()

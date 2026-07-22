@@ -27,8 +27,9 @@ de linhas em um único arquivo.
 | `ModEntry.ActionWheel.cs` | Input por mouse/teclado/controle, paginação e composição das ações contextuais. |
 | `ModEntry.ContextCommands.cs` | Classificação de recursos e atribuição contextual individual/em grupo. |
 | `ModEntry.GroundCommands.cs` | Validação de chão vazio e ordem transitória de deslocar e esperar. |
-| `ModEntry.WorkAreas.cs` | Ordens circulares persistentes de trabalho, preview, especialidade e conclusão. |
-| `ModEntry.Routines.cs` | Edição CAS, executor horário, presets de área, conclusão e modo de agenda original. |
+| `ModEntry.WorkAreas.cs` | Execução persistente das áreas de trabalho; a roda manual cria círculos, com preview, especialidade e conclusão. |
+| `ModEntry.Routines.cs` | Edição CAS, executor horário, escopos Free/Delimited, presets legados, conclusão e modo de agenda original. |
+| `RoutineAreaSelectionMenu.cs` | Visão da fazenda para posicionar e dimensionar o quadrado 3 × 3–41 × 41 de uma atividade da rotina. |
 | `ModEntry.WorkAnimations.cs` | Movimento visual de ferramenta/mão e feedback cosmético de sucesso/falha. |
 | `ModEntry.InventoryProgressionHud.cs` | Inventários, XP, loot e avisos. |
 | `ModEntry.Equipment.cs` | Quatro slots owner/NPC, migração de ferramentas e troca CAS/atômica pela toolbar. |
@@ -40,7 +41,7 @@ de linhas em um único arquivo.
 | `ModEntry.ConfigMenu.cs` | Integração com Generic Mod Config Menu e tradução. |
 | `Core/CommandReplayGuard.cs` | Janela limitada de idempotência por jogador. |
 | `Core/CompanionActionWheelHitTest.cs` | Hit-test puro de 1–6 setores, limites e separadores da roda. |
-| `Core/CompanionWorkAreaPolicy.cs` | Geometria circular, raio 3–20, especialidades e validação do estado salvo. |
+| `Core/CompanionWorkAreaPolicy.cs` | Geometria/validação de círculos, quadrados delimitados e mapa inteiro, incluindo raio 3–20 e lado 3–41. |
 | `Core/CompanionProfilePolicy.cs` | Criação, migração e vínculo do perfil permanente de progressão por NPC. |
 | `Core/CompanionEquipmentPolicy.cs` | Chave normalizada owner/NPC e limites de upgrade/água do regador. |
 | `Core/CompanionRoutinePolicy.cs` | Grade 06–25, codec CAS, blocos contíguos, idempotência e presets normalizados. |
@@ -143,20 +144,36 @@ o início do bloco contíguo, o dia e a revisão como chave persistida: Follow,
 Wait e agenda original são aplicados uma vez; trabalho concluído também grava a
 conclusão, impedindo reativação no mesmo bloco após tick ou reload. Uma edição
 da grade ativa o draft; o commit zera a execução, incrementa a revisão e
-preserva os presets que pertencem ao host. Enquanto estiver ativa, a rotina
-precede a autonomia configurada, embora uma diretiva manual explícita em
-andamento ainda possa assumir o membro até terminar ou o próximo bloco começar.
+submete a grade e os escopos ao mesmo CAS autoritativo. Enquanto estiver ativa,
+a rotina precede a autonomia configurada, embora uma diretiva manual explícita
+em andamento ainda possa assumir o membro até terminar ou o próximo bloco começar.
 Rotina sem repetição guarda o dia de ativação e é
 desabilitada no próximo `DayStarted`.
 
-Cada ordem manual de área atualiza somente o preset da sua especialidade. Ao
-ativar um bloco de trabalho, o host revalida location, alvo, modo/toggle e tile
-seguro antes de criar uma ordem `routine-*`; o raio materializado nunca supera
-o máximo configurado no host, mesmo se o preset for mais antigo. Preset ausente mantém o bloco em
-retry. A primeira tentativa reivindica dia/bloco/revisão, permitindo que um
-override explícito termine sem ser apagado pelo refresh; área exaurida aplica
-Follow, Wait ou agenda original. Quando o override acaba, o refresh compara o
-modo durável e restaura o estado passivo/conclusão somente se ele divergir.
+Cada uma das quatro atividades de trabalho mantém seu próprio preset. `FarmWide`
+implementa **Área livre** sobre a fazenda principal retornada por
+`Game1.getFarm()`; não inclui estufa, interiores, Ilha Gengibre ou outro mapa.
+`DelimitedSquare` implementa **Área delimitada** como um quadrado de lado 3–41,
+com mínimo inclusivo e máximo exclusivo, inteiramente contido nas dimensões do
+mapa da fazenda. A ausência de preset é um terceiro estado deliberado: mantém o
+bloco pausado em retry e nunca é convertida implicitamente para `FarmWide`.
+
+`RoutineAreaSelectionMenu` reproduz o fluxo de visão ampla da fazenda usado pela
+construção da Robin, sem herdar custos nem colocação de construções. Mouse,
+teclado e controle movem câmera/cursor; roda, `+`/`−` e LB/RB alteram o lado. O
+quadrado é limitado nas bordas inclusive em mapas de fazenda customizados.
+Confirmar grava o novo preset apenas no draft; cancelar não o altera. Nos dois
+casos, location, viewport, HUD, farmer e a mesma instância do painel são
+restaurados, preservando as demais edições ainda não salvas.
+
+Ao ativar um bloco de trabalho, o host revalida mapa, geometria, alvo,
+modo/toggle e tile seguro antes de criar uma ordem `routine-*`. Círculos antigos
+continuam limitados pelo máximo de raio configurado; quadrados e fazenda inteira
+conservam sua própria geometria. A primeira tentativa reivindica
+dia/bloco/revisão, permitindo que um override explícito termine sem ser apagado
+pelo refresh; área exaurida aplica Follow, Wait ou agenda original. Quando o
+override acaba, o refresh compara o modo durável e restaura o estado
+passivo/conclusão somente se ele divergir.
 `OriginalRoutine` mantém o member recrutado e os dados
 owner-scoped, mas o exclui de `CompanionBehaviorPatches` e dos locks periódicos
 até outro bloco readquirir o controle.
@@ -167,15 +184,19 @@ meio do trajeto não serializa uma intenção incompleta; no reload, o companion
 volta ao estado persistente verdadeiro de Following. Depois da chegada, porém,
 o estado Waiting e sua posição são persistidos normalmente entre reloads e dias.
 
-Uma área de trabalho é uma intenção persistente: `orderId`, mapa, centro, raio e
-especialidade sobrevivem a save/reload. A tarefa e a reserva do alvo atual não
-sobrevivem; elas são replanejadas no host dentro do mesmo círculo. Um Wait
-explícito pausa a ordem sem apagá-la, enquanto Follow, Recall, outra ordem direta
-ou conclusão limpa a área pelos fluxos autoritativos correspondentes.
-O fluxo da roda escolhe especialidade e um/todos os companions. Não existe uma
-etapa de raio: toda nova ordem usa automaticamente o máximo configurado e
-replicado pelo host. Uma ordem já salva mantém seu círculo original até ser
-substituída, embora continue sendo reduzida caso ultrapasse um novo máximo menor.
+Uma área de trabalho é uma intenção persistente: `orderId`, mapa, especialidade,
+`RegionKind` e a geometria correspondente sobrevivem a save/reload. A tarefa e
+a reserva do alvo atual não sobrevivem; elas são replanejadas no host dentro da
+mesma região. Um `Wait` explícito pausa a ordem sem apagá-la, enquanto Follow,
+Recall, outra ordem
+direta ou conclusão limpa a área pelos fluxos autoritativos correspondentes.
+O fluxo manual da roda escolhe especialidade e um/todos os companions. Não
+existe uma etapa de raio: toda nova ordem manual continua circular e usa
+automaticamente o máximo configurado e replicado pelo host. Ela pode preencher
+ou atualizar apenas um preset circular da rotina, sem sobrescrever uma escolha
+explícita `FarmWide`/`DelimitedSquare`. Uma ordem antiga mantém seu círculo até
+ser substituída, embora continue sendo reduzida caso ultrapasse um novo máximo
+menor.
 Um snapshot substitui o estado de gameplay do cliente, mas preserva previews e
 animações cosméticas em andamento.
 
@@ -196,7 +217,11 @@ Ao carregar um save, o mod:
 6. restaura apenas posições explicitamente salvas para `Waiting`/disconnect;
 7. readquire o controle de agenda dos companions disponíveis.
 
-O schema de save do ramo atual é `13`. `SavedItemStack` preserva `modData`,
+O schema de save do ramo atual é `14`. `CompanionWorkRegionKind.Circle = 0`
+mantém a compatibilidade com JSON antigo sem discriminador: presets e ordens de
+schema 13 continuam circulares exatamente como estavam até o jogador
+substituí-los. A migração também não cria Área livre para uma especialidade sem
+preset. `SavedItemStack` preserva `modData`,
 ID qualificado, quantidade, qualidade, cor, parent preservado e, quando é
 ferramenta, upgrade e água restante do regador. Saves com schema
 mais novo ou dados ambíguos não são carregados nem sobrescritos; o mod entra em
@@ -233,11 +258,13 @@ habilitados e membros elegíveis antes de persistir a ordem. Fala, emotes e
 animações de trabalho são mensagens cosméticas do host para os clientes;
 recebê-las nunca cria tarefa, altera o mundo ou muda o save.
 
-`SetRoutine` envia a configuração inteira e o SHA-256 do estado/revisão que o
-cliente leu. O host compara antes do commit, decodifica apenas grade/toggles/
-conclusão, preserva presets e execução operacionais, e rejeita uma edição stale.
-Assim duas telas nunca intercalam células nem sobrescrevem silenciosamente uma
-rotina mais nova.
+`SetRoutine` envia a configuração inteira, inclusive os presets de região, e o
+SHA-256 do estado/revisão que o cliente leu. O host compara antes do commit,
+revalida owner, fazenda principal, dimensões e limites do quadrado, nunca aceita
+estado de execução do cliente e rejeita uma edição stale. Payloads do codec
+antigo sem configuração de região preservam os presets correntes. Assim duas
+telas nunca intercalam células nem sobrescrevem silenciosamente uma rotina mais
+nova.
 
 Snapshots são preparados fora do estado visível: todas as entradas são
 validadas, clonadas, normalizadas e os itens são materializados antes do commit.

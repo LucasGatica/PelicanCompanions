@@ -74,9 +74,13 @@ internal sealed class SquadMemberState
     public bool WorkAreaActive { get; set; }
     public string WorkAreaOrderId { get; set; } = "";
     public string WorkAreaLocationName { get; set; } = "";
+    public CompanionWorkRegionKind WorkAreaRegionKind { get; set; } = CompanionWorkRegionKind.Circle;
     public int WorkAreaCenterX { get; set; } = -1;
     public int WorkAreaCenterY { get; set; } = -1;
     public int WorkAreaRadius { get; set; } = 8;
+    public int WorkAreaMinX { get; set; } = -1;
+    public int WorkAreaMinY { get; set; } = -1;
+    public int WorkAreaSize { get; set; }
     public CompanionWorkSpecialty WorkAreaSpecialty { get; set; } = CompanionWorkSpecialty.ClearArea;
     public string CurrentActivityKey { get; set; } = "companion.status.following";
     public string LastTaskResultKey { get; set; } = "";
@@ -380,6 +384,18 @@ internal enum CompanionWorkSpecialty
     Wood = 1,
     Mining = 2,
     Watering = 3
+}
+
+/// <summary>The persisted geometry used by a companion work order.</summary>
+/// <remarks>
+/// Circle must remain zero so work areas written before schema 14 retain their
+/// exact geometry when the new discriminator is absent from JSON.
+/// </remarks>
+internal enum CompanionWorkRegionKind
+{
+    Circle = 0,
+    DelimitedSquare = 1,
+    FarmWide = 2
 }
 
 internal sealed record CompanionSkillDefinition(
