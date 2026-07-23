@@ -4,6 +4,54 @@ All notable Pelican Companions changes are documented here.
 
 ## Unreleased
 
+### Direct inventory transfers and cargo filters
+
+- Added three-pane drag-and-drop transfers between the player, companion cargo,
+  and the exact nearby assigned chest. Mouse drag/release and controller
+  pick/destination input share the same host-authoritative request.
+- Source stack fingerprints, chest GUID/map/tile validation, mutex ownership,
+  source-first escrow, partial merge reconciliation, and rollback fallbacks keep
+  stale or concurrent multiplayer operations from losing or duplicating items.
+  Player/chest moves retain the original runtime instance; companion cargo
+  rejects tools and custom state it cannot faithfully serialize.
+- Added owner/NPC-persisted Store wood, Store minerals, and Keep food filters
+  for automatic/routine/bulk deposits. Explicit manual transfers ignore filters.
+- Compact viewports now keep all three panes usable with row paging via wheel,
+  keyboard, and controller instead of silently hiding later slots.
+
+### Team dashboard
+
+- Added a sixth Team tab with responsive, scrollable cards for each owned
+  companion: current map/activity/target, relevant tool, watering-can charge,
+  cargo capacity, and the current reason a worker is blocked.
+- Added owner-scoped Stop all, Deposit all, and Apply routines commands. Bulk
+  deposits respect each companion's assigned chest and filters, and acquire the
+  chest mutex before mutating its inventory.
+
+### Configurable smart assistance
+
+- Empty companion watering cans can now route to Stardew's canonical reachable
+  refill tiles, limited to the farm or any safe outdoor water, and then resume
+  the interrupted watering target.
+- Optional smart tool swap borrows a compatible tool from the owner's inventory
+  only when no usable tool is equipped. Optional smart deposit runs when cargo
+  is full or after each successful task, with Disabled modes for every
+  automation that could otherwise feel too hands-off.
+- New host rules, schema 15 operational filter state, config version 9
+  migration, status/failure text, English/PT-BR translations, and pure policy
+  regressions cover these behaviors.
+
+### Companion life and personality
+
+- Idle companions now perform bounded look, emote, jump, and shake actions from
+  their data profile; pets continue to honor the pet-expression setting.
+- Added delayed reactions to location/weather changes and fair nearby
+  companion-to-companion exchanges with owner/pair cooldowns. Cosmetic events
+  pause during tasks, movement, menus/events, and use ambient dialogue priority
+  so work feedback remains dominant.
+- Facing and expression payloads are host-authoritative and synchronized to
+  farmhands; all life-state timers are cleared between saves.
+
 ### Companion panel visual redesign
 
 - Refreshed the F9 companion panel with the visual language shared by AliveNPCs
@@ -37,7 +85,7 @@ All notable Pelican Companions changes are documented here.
   progression; recruiting that NPC again reattaches the same profile.
 - Schema 11 migrates progression from legacy active-member records into the
   permanent profile without carrying ownership, inventory, movement, or work
-  orders. These profiles remain in schema 13 saves and multiplayer snapshots
+  orders. These profiles remain in schema 15 saves and multiplayer snapshots
   even while their NPC is outside the squad.
 
 ### Owner-scoped companion equipment
@@ -48,7 +96,7 @@ All notable Pelican Companions changes are documented here.
   or chest routing.
 - Equipment is stored per owner/NPC pair and survives dismissal and
   re-recruitment without transferring to another farmer. Axe/pickaxe upgrades,
-  watering-can water, and safe tool `modData` round-trip through schema 13;
+  watering-can water, and safe tool `modData` round-trip through schema 15;
   legacy rods are migrated out of ordinary cargo.
 - Every equipment swap and watering charge also refreshes an owner-scoped
   checkpoint in `Farmer.modData`. Because it shares the vanilla inventory save
@@ -56,9 +104,9 @@ All notable Pelican Companions changes are documented here.
   duplicate a tool. Temporarily unavailable legacy tools remain recovery-bound
   to their original owner instead of becoming shared loot.
 - Lumbering, mining, watering, and fishing now require their corresponding
-  equipped tool. Watering consumes the equipped can's persisted water and stops
-  with a readable empty-can state until the player removes, refills, and
-  re-equips it.
+  equipped tool. Watering consumes the equipped can's persisted water; when
+  smart refill is disabled, the readable empty-can state still supports the
+  manual remove/refill/reequip flow.
 
 ### Hourly companion routines
 
@@ -66,10 +114,31 @@ All notable Pelican Companions changes are documented here.
   so a newly filled grid can no longer save successfully while remaining
   silently inert. An active routine also owns the companion before generic
   configured autonomy, keeping Follow blocks and Follow completion in control.
+- The `X` wheel over an owned companion now includes Follow Routine. It clears
+  quick work, recall, manual tasks, directives, and manual areas, then restores
+  the current scheduled block through the host. Completed work and deposit
+  blocks keep their idempotency and are not repeated by this command; the old
+  Follow action is now labeled Follow Player to make the distinction explicit.
 - Water, Wood, Mine, and Clear now each have an independent work scope in the
-  routine editor. Free Area covers the entire main farm; Delimited Area opens a
-  construction-style farm view for placing an exact square from 3 × 3 through
-  41 × 41 tiles, clamped to vanilla or custom farm-map borders.
+  routine editor. Free Area covers the entire map where the panel is open;
+  Delimited Area opens that map for placing an exact square from 3 × 3 through
+  41 × 41 tiles, clamped to vanilla or custom map borders.
+- Different routine activities can now use different locations. At a block
+  transition the host transfers the NPC to a safe non-warp tile inside the
+  saved region, so a Water block on the Farm can be followed by Wood in the
+  Forest without the owner accompanying the NPC.
+- Routine-owned fixed-area paths may use Stardew's off-screen path completion,
+  allowing remote scheduled work to continue on an unobserved map. Follow,
+  recall, move-to-wait, manual tasks, and manual areas keep their conservative
+  pause behavior and never gain that shortcut. A companion-felled tree is the
+  only terrain feature ticked explicitly off-screen, one normal tick at a time,
+  so its fall and existing drop-routing patch can finish without simulating the
+  whole map.
+- Opening an existing routine now focuses each NPC's current scheduled work (or
+  the next work activity still missing a scope), and the area controls name that
+  activity. Free Area can no longer be silently saved for Clear while the
+  current Water, Wood, or Mine block remains without an area. A grid with no
+  scheduled work keeps the area controls inactive until a specialty is chosen.
 - The area picker supports mouse, keyboard, and controller camera/cursor input,
   size controls, confirm, and cancel. Returning restores the previous location,
   farmer, HUD, and viewport as well as the same panel draft.
@@ -97,7 +166,9 @@ All notable Pelican Companions changes are documented here.
   completion behavior.
 - Routine edits are one host-authoritative compare-and-swap payload. Concurrent
   multiplayer edits are rejected instead of overwriting a newer grid. The host
-  validates the main-farm identity and square bounds before accepting a scope,
+  resolves every saved persistent location (including building interiors) and
+  validates its concrete map dimensions and region bounds before accepting a
+  scope; generated mine/volcano levels and temporary event maps are rejected,
   and execution state is never accepted from clients.
 - Added `OriginalRoutine` as a real companion mode. It releases the mod's
   schedule locks and behavior patches while active, then safely reacquires
@@ -141,7 +212,7 @@ All notable Pelican Companions changes are documented here.
 - Watering areas use the same host-authoritative save, multiplayer snapshot,
   target/stand reservations, blocked-area recovery, previews, and completion
   flow as Wood and Mining. This originally advanced the schema to 12; the
-  combined operational-profile schema below is now 13.
+  combined operational-profile schema below was 13 and is now 15.
 
 ### Directed companion fishing
 
@@ -172,7 +243,7 @@ All notable Pelican Companions changes are documented here.
 - Hat ownership is stored separately from recruitment and ordinary carried
   items, so dismiss, dismiss-all, schedule restoration, day changes, and
   save/reload leave the NPC wearing it. This originally advanced the schema to
-  10; the current combined schema is 13.
+  10; the current combined schema is 15.
 - Hat changes are host-authoritative in multiplayer; requests fingerprint both
   the selected toolbar hat and the cosmetic state shown by the client, while
   snapshots replicate the result. Missing custom hats remain preserved until
@@ -232,7 +303,7 @@ All notable Pelican Companions changes are documented here.
 - A truly exhausted area ends in Waiting with clear success feedback. The area
   intent survives save/reload while target, path, reservation, preview, and
   animation remain transient; this feature originally advanced the save schema
-  to 9 (the current schema is 13). Reloading with tasks disabled
+  to 9 (the current schema is 15). Reloading with tasks disabled
   preserves the paused state, and exhaustion still completes during placement
   recovery instead of retrying forever.
 

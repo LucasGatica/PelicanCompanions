@@ -401,6 +401,7 @@ public sealed partial class ModEntry
         this.DisableNpcSchedule(npc, stopCurrentRoute: true);
 
         member.Mode = CompanionMode.Waiting;
+        member.RoutinePausedByPlayer = true;
         this.ClearCompanionTarget(member);
         this.UpdateTargetPreview(member, new TargetPreview(false, "", -1, -1, "companion.preview.not_following"));
         this.SetCompanionActivity(member, "companion.status.waiting");
@@ -422,6 +423,7 @@ public sealed partial class ModEntry
 
         this.ClearFollowState(member.NpcName);
         member.Mode = CompanionMode.Following;
+        member.RoutinePausedByPlayer = false;
         member.WaitingLocationName = null;
         member.ParkedAtUtcTicks = 0;
         NPC? npc = this.GetNpcByName(member.NpcName);

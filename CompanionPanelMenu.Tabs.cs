@@ -63,17 +63,19 @@ internal sealed partial class CompanionPanelMenu
         }
 
         IReadOnlyList<string> lines = this.getDetailLines(member);
-        int lineHeight = 19;
+        int lineHeight = GetScaledLineHeight(Game1.tinyFont, PanelTextScale) + 2;
         int maxLines = Math.Max(1, detailContent.Height / lineHeight);
         int y = detailContent.Y + 1;
         foreach (string line in lines.Take(maxLines))
         {
-            Utility.drawTextWithShadow(
+            DrawPanelText(
                 b,
-                FitText(line, Game1.tinyFont, Math.Max(1, detailContent.Width - 3)),
+                FitText(line, Game1.tinyFont, Math.Max(1, detailContent.Width - 3), PanelTextScale),
                 Game1.tinyFont,
                 new Vector2(detailContent.X, y),
-                MutedTextColor);
+                MutedTextColor,
+                PanelTextScale,
+                shadow: true);
             y += lineHeight;
         }
 
@@ -115,12 +117,14 @@ internal sealed partial class CompanionPanelMenu
         int hintY = previewTop + previewHeight + 7;
         if (area.Bottom - hintY >= 18)
         {
-            Utility.drawTextWithShadow(
+            DrawPanelText(
                 b,
-                FitText(this.translate("companion.panel.work_hint", null), Game1.tinyFont, area.Width - 4),
+                FitText(this.translate("companion.panel.work_hint", null), Game1.tinyFont, area.Width - 4, PanelMetaTextScale),
                 Game1.tinyFont,
                 new Vector2(area.X + 2, hintY),
-                MutedTextColor);
+                MutedTextColor,
+                PanelMetaTextScale,
+                shadow: true);
         }
     }
 
@@ -338,142 +342,353 @@ internal sealed partial class CompanionPanelMenu
 
     private void DrawInventory(SpriteBatch b, SquadMemberState member, Rectangle area)
     {
-        // At the smallest supported split-screen viewport (426x240), the tab body
-        // is only about 82px tall. Keep the hat/actions in a shallow header and
-        // put all four equipment slots on one row; cargo remains available through
-        // Withdraw All without pushing any equipment hitbox outside the body.
-        bool ultraCompact = area.Height < 140;
-        int headerHeight = ultraCompact
-            ? Math.Min(Math.Max(1, area.Height - 4), Math.Clamp(area.Height / 3, 18, 28))
-            : Math.Clamp(area.Height / 7, 38, 48);
-        int hatSize = Math.Min(headerHeight, 48);
-        this.hatSlot = new Rectangle(area.X, area.Y, hatSize, hatSize);
-        this.DrawFlatPanel(b, this.hatSlot, new Color(235, 220, 193), AccentGold, 2);
-
-        Item? equippedHat = this.getEquippedHat(member);
-        if (equippedHat is not null)
+        CompanionInventoryWorkspace workspace = this.GetInventoryWorkspaceForPanel(member);
+        bool compact = area.Height < 260;
+        bool minimal = area.Height < 190;
+        int gap = compact ? 3 : 5;
+        int filterTop;
+        int filterRight = area.Right;
+        if (minimal)
         {
-            float hatScale = Math.Clamp((hatSize - 7) / 64f, 0.35f, 0.75f);
-            equippedHat.drawInMenu(b, new Vector2(this.hatSlot.X + 4, this.hatSlot.Y + 4), hatScale);
-        }
-        else if (this.hasEquippedHat(member))
-        {
-            DrawCenteredPanelText(b, "?", Game1.smallFont, this.hatSlot, MutedTextColor, PanelTextScale, 4, 4);
-        }
-
-        int buttonHeight = Math.Min(36, headerHeight);
-        int buttonWidth = Math.Min(160, Math.Max(76, area.Width / 3));
-        this.withdrawAllButton = new Rectangle(area.Right - buttonWidth, area.Y, buttonWidth, buttonHeight);
-        int labelX = this.hatSlot.Right + 8;
-        int labelWidth = Math.Max(1, this.withdrawAllButton.X - labelX - 8);
-        if (labelWidth >= 28)
-        {
-            string hatLabel = equippedHat is not null
-                ? this.translate("companion.hat.slot_equipped", new { hat = equippedHat.DisplayName })
-                : this.hasEquippedHat(member)
-                    ? this.translate("companion.hat.slot_unavailable", null)
-                    : this.translate("companion.hat.slot_empty", null);
-            Utility.drawTextWithShadow(
+            int compactControlHeight = Math.Clamp(area.Height / 4, 18, 24);
+            int controlCount = EquipmentSlotOrder.Length + 2;
+            int compactControlWidth = Math.Max(
+                1,
+                (area.Width - gap * (controlCount - 1)) / controlCount);
+            this.hatSlot = new Rectangle(
+                area.X,
+                area.Y,
+                compactControlWidth,
+                compactControlHeight);
+            this.DrawFlatPanel(
                 b,
-                FitText(hatLabel, Game1.tinyFont, labelWidth),
-                Game1.tinyFont,
-                new Vector2(labelX, area.Y + Math.Max(3, (headerHeight - Game1.tinyFont.LineSpacing) / 2)),
-                TextColor);
-        }
-        this.DrawButton(b, this.withdrawAllButton, this.translate("companion.inventory.withdraw_all", null), false, danger: false);
+                this.hatSlot,
+                new Color(235, 220, 193),
+                AccentGold,
+                1);
+            Item? equippedHat = this.getEquippedHat(member);
+            if (equippedHat is not null)
+            {
+                float hatScale = Math.Clamp(
+                    (compactControlHeight - 3) / 64f,
+                    0.18f,
+                    0.42f);
+                DrawItemCenteredInBounds(
+                    b,
+                    equippedHat,
+                    this.hatSlot,
+                    hatScale);
+            }
+            else
+            {
+                DrawCenteredPanelText(
+                    b,
+                    this.hasEquippedHat(member) ? "?" : "–",
+                    Game1.tinyFont,
+                    this.hatSlot,
+                    MutedTextColor,
+                    PanelMetaTextScale,
+                    2,
+                    1);
+            }
 
-        int equipmentGap = ultraCompact ? 3 : 5;
-        int equipmentTop;
-        if (ultraCompact)
-        {
-            equipmentTop = Math.Min(area.Bottom, area.Y + headerHeight + equipmentGap);
+            for (int index = 0; index < EquipmentSlotOrder.Length; index++)
+            {
+                int x = this.hatSlot.Right + gap
+                    + index * (compactControlWidth + gap);
+                this.DrawEquipmentSlot(
+                    b,
+                    member,
+                    EquipmentSlotOrder[index],
+                    new Rectangle(
+                        x,
+                        area.Y,
+                        compactControlWidth,
+                        compactControlHeight));
+            }
+
+            int withdrawX = area.X
+                + (controlCount - 1) * (compactControlWidth + gap);
+            this.withdrawAllButton = new Rectangle(
+                withdrawX,
+                area.Y,
+                Math.Max(1, area.Right - withdrawX),
+                compactControlHeight);
+            this.DrawButton(
+                b,
+                this.withdrawAllButton,
+                this.translate("companion.inventory.withdraw_all", null),
+                false,
+                danger: false);
+            filterTop = area.Y + compactControlHeight + gap;
+            filterRight = area.Right;
         }
         else
         {
-            int equipmentTitleY = area.Y + headerHeight + 4;
-            Utility.drawTextWithShadow(
+            int headerHeight = Math.Clamp(area.Height / 9, compact ? 22 : 34, 44);
+            int hatSize = Math.Min(headerHeight, 44);
+            this.hatSlot = new Rectangle(area.X, area.Y, hatSize, hatSize);
+            this.DrawFlatPanel(b, this.hatSlot, new Color(235, 220, 193), AccentGold, 2);
+
+            Item? equippedHat = this.getEquippedHat(member);
+            if (equippedHat is not null)
+            {
+                float hatScale = Math.Clamp((hatSize - 7) / 64f, 0.35f, 0.75f);
+                DrawItemCenteredInBounds(b, equippedHat, this.hatSlot, hatScale);
+            }
+            else if (this.hasEquippedHat(member))
+            {
+                DrawCenteredPanelText(b, "?", Game1.smallFont, this.hatSlot, MutedTextColor, PanelTextScale, 4, 4);
+            }
+
+            int buttonHeight = Math.Min(34, headerHeight);
+            int buttonWidth = Math.Min(150, Math.Max(70, area.Width / 4));
+            this.withdrawAllButton = new Rectangle(area.Right - buttonWidth, area.Y, buttonWidth, buttonHeight);
+            int labelX = this.hatSlot.Right + 8;
+            int labelWidth = Math.Max(1, this.withdrawAllButton.X - labelX - 8);
+            if (labelWidth >= 28)
+            {
+                string hatLabel = equippedHat is not null
+                    ? this.translate("companion.hat.slot_equipped", new { hat = equippedHat.DisplayName })
+                    : this.hasEquippedHat(member)
+                        ? this.translate("companion.hat.slot_unavailable", null)
+                        : this.translate("companion.hat.slot_empty", null);
+                int labelLineHeight = GetScaledLineHeight(Game1.tinyFont, PanelTextScale);
+                DrawPanelText(
+                    b,
+                    FitText(hatLabel, Game1.tinyFont, labelWidth, PanelTextScale),
+                    Game1.tinyFont,
+                    new Vector2(labelX, area.Y + Math.Max(3, (headerHeight - labelLineHeight) / 2)),
+                    TextColor,
+                    PanelTextScale,
+                    shadow: true);
+            }
+            this.DrawButton(
                 b,
-                FitText(this.translate("companion.equipment.title", null), Game1.tinyFont, area.Width),
-                Game1.tinyFont,
-                new Vector2(area.X, equipmentTitleY),
-                TextColor);
-            equipmentTop = equipmentTitleY + Game1.tinyFont.LineSpacing + 1;
+                this.withdrawAllButton,
+                this.translate("companion.inventory.withdraw_all", null),
+                false,
+                danger: false);
+
+            int equipmentTop = area.Y + headerHeight + gap;
+            int equipmentCardHeight = Math.Clamp(area.Height / 10, compact ? 22 : 34, 48);
+            int equipmentCardWidth = Math.Max(1, (area.Width - gap * 3) / 4);
+            int equipmentBottom = equipmentTop + equipmentCardHeight;
+            for (int index = 0; index < EquipmentSlotOrder.Length; index++)
+            {
+                int x = area.X + index * (equipmentCardWidth + gap);
+                Rectangle bounds = new(
+                    x,
+                    equipmentTop,
+                    index == EquipmentSlotOrder.Length - 1 ? Math.Max(1, area.Right - x) : equipmentCardWidth,
+                    equipmentCardHeight);
+                this.DrawEquipmentSlot(b, member, EquipmentSlotOrder[index], bounds);
+            }
+
+            filterTop = equipmentBottom + gap;
         }
 
-        int equipmentColumns = ultraCompact || area.Width >= 560 ? 4 : 2;
-        int equipmentRows = (int)Math.Ceiling(EquipmentSlotOrder.Length / (double)equipmentColumns);
-        int availableCardHeight = ultraCompact
-            ? Math.Max(1, (area.Bottom - equipmentTop - equipmentGap * (equipmentRows - 1)) / equipmentRows)
-            : Math.Max(
-                24,
-                (area.Bottom - 52 - equipmentTop - equipmentGap * (equipmentRows - 1)) / equipmentRows);
-        int equipmentCardHeight = ultraCompact
-            ? availableCardHeight
-            : Math.Min(area.Height >= 340 ? 58 : 46, availableCardHeight);
-        int equipmentCardWidth = Math.Max(1, (area.Width - equipmentGap * (equipmentColumns - 1)) / equipmentColumns);
-        int equipmentBottom = equipmentTop;
-        for (int index = 0; index < EquipmentSlotOrder.Length; index++)
+        int filterHeight = minimal
+            ? this.withdrawAllButton.Height
+            : Math.Clamp(area.Height / 12, 20, 30);
+        CompanionInventoryFilter[] filters =
         {
-            int column = index % equipmentColumns;
-            int row = index / equipmentColumns;
-            int x = area.X + column * (equipmentCardWidth + equipmentGap);
+            CompanionInventoryFilter.DepositWood,
+            CompanionInventoryFilter.DepositMinerals,
+            CompanionInventoryFilter.KeepFood
+        };
+        int filterAreaWidth = Math.Max(1, filterRight - area.X);
+        int filterWidth = Math.Max(1, (filterAreaWidth - gap * (filters.Length - 1)) / filters.Length);
+        for (int index = 0; index < filters.Length; index++)
+        {
+            int x = area.X + index * (filterWidth + gap);
             Rectangle bounds = new(
                 x,
-                equipmentTop + row * (equipmentCardHeight + equipmentGap),
-                column == equipmentColumns - 1 ? Math.Max(1, area.Right - x) : equipmentCardWidth,
-                equipmentCardHeight);
-            this.DrawEquipmentSlot(b, member, EquipmentSlotOrder[index], bounds);
-            equipmentBottom = Math.Max(equipmentBottom, bounds.Bottom);
+                filterTop,
+                index == filters.Length - 1 ? Math.Max(1, filterRight - x) : filterWidth,
+                filterHeight);
+            CompanionInventoryFilter filter = filters[index];
+            this.inventoryFilterButtons.Add((bounds, filter));
+            this.DrawButton(
+                b,
+                bounds,
+                this.translate(GetInventoryFilterTranslationKey(filter), null),
+                this.getInventoryFilter(member, filter),
+                danger: false);
         }
 
-        if (ultraCompact)
+        int panesTop = filterTop + filterHeight + gap;
+        if (panesTop >= area.Bottom - 12)
             return;
 
-        IReadOnlyList<Item> items = this.GetCachedInventoryItems(member);
-        Rectangle grid = new(area.X, equipmentBottom + 7, area.Width, Math.Max(1, area.Bottom - equipmentBottom - 7));
-        int gap = 6;
-        int columns = Math.Clamp(grid.Width / 54, 1, Math.Min(5, this.inventorySlots));
-        int inventoryRows = (int)Math.Ceiling(this.inventorySlots / (double)columns);
-        int slotByWidth = Math.Max(1, (grid.Width - gap * (columns - 1)) / columns);
-        int slotByHeight = Math.Max(1, (grid.Height - gap * (inventoryRows - 1)) / Math.Max(1, inventoryRows));
-        int slotSize = Math.Min(60, Math.Min(slotByWidth, slotByHeight));
-
-        for (int i = 0; i < this.inventorySlots; i++)
+        int paneCount = workspace.ChestAvailable ? 3 : 2;
+        int paneWidth = Math.Max(1, (area.Width - gap * (paneCount - 1)) / paneCount);
+        Rectangle playerPane = new(
+            area.X,
+            panesTop,
+            paneWidth,
+            Math.Max(1, area.Bottom - panesTop));
+        Rectangle companionPane = new(
+            playerPane.Right + gap,
+            panesTop,
+            paneCount == 2 ? Math.Max(1, area.Right - playerPane.Right - gap) : paneWidth,
+            playerPane.Height);
+        this.DrawInventoryPane(
+            b,
+            CompanionInventoryEndpoint.Player,
+            this.translate("companion.inventory.player", null),
+            workspace.PlayerItems,
+            Math.Max(12, workspace.PlayerItems.Count),
+            playerPane);
+        this.DrawInventoryPane(
+            b,
+            CompanionInventoryEndpoint.Companion,
+            member.DisplayName,
+            workspace.CompanionItems.Cast<Item?>().ToList(),
+            this.inventorySlots,
+            companionPane);
+        if (workspace.ChestAvailable)
         {
-            int col = i % columns;
-            int row = i / columns;
-            Rectangle slot = new(grid.X + col * (slotSize + gap), grid.Y + row * (slotSize + gap), slotSize, slotSize);
+            Rectangle chestPane = new(
+                companionPane.Right + gap,
+                panesTop,
+                Math.Max(1, area.Right - companionPane.Right - gap),
+                playerPane.Height);
+            this.DrawInventoryPane(
+                b,
+                CompanionInventoryEndpoint.Chest,
+                string.IsNullOrWhiteSpace(workspace.ChestDisplayName)
+                    ? this.translate("companion.inventory.chest", null)
+                    : workspace.ChestDisplayName,
+                workspace.ChestItems,
+                Math.Max(12, workspace.ChestItems.Count),
+                chestPane);
+        }
+    }
+
+    private void DrawInventoryPane(
+        SpriteBatch b,
+        CompanionInventoryEndpoint endpoint,
+        string title,
+        IReadOnlyList<Item?> items,
+        int capacity,
+        Rectangle bounds)
+    {
+        this.DrawMenuCard(b, bounds, RowColor, endpoint switch
+        {
+            CompanionInventoryEndpoint.Player => AccentBlue,
+            CompanionInventoryEndpoint.Companion => AccentGreen,
+            CompanionInventoryEndpoint.Chest => AccentGold,
+            _ => SurfaceBorder
+        });
+        this.inventoryPaneBounds.Add((bounds, endpoint));
+
+        int inset = bounds.Width < 100 ? 3 : 6;
+        int titleHeight = Math.Clamp(bounds.Height / 8, 14, 24);
+        Rectangle grid = new(
+            bounds.X + inset,
+            bounds.Y + titleHeight,
+            Math.Max(1, bounds.Width - inset * 2),
+            Math.Max(1, bounds.Height - titleHeight - inset));
+        int gap = grid.Width < 130 ? 2 : 3;
+        int totalSlots = Math.Max(1, capacity);
+        int columns = Math.Clamp(
+            (grid.Width + gap) / 34,
+            1,
+            endpoint == CompanionInventoryEndpoint.Companion ? 5 : 8);
+        int slotByWidth = Math.Max(
+            1,
+            (grid.Width - gap * (columns - 1)) / columns);
+        int preferredSlotSize = Math.Min(48, slotByWidth);
+        int rowTargetSize = Math.Max(12, Math.Min(36, preferredSlotSize));
+        int visibleRows = Math.Max(
+            1,
+            (grid.Height + gap) / (rowTargetSize + gap));
+        int slotByHeight = Math.Max(
+            1,
+            (grid.Height - gap * (visibleRows - 1)) / visibleRows);
+        int slotSize = Math.Max(
+            1,
+            Math.Min(preferredSlotSize, slotByHeight));
+        int visibleCapacity = Math.Max(1, columns * visibleRows);
+        int totalRows = (int)Math.Ceiling(totalSlots / (double)columns);
+        int maxStartRow = Math.Max(0, totalRows - visibleRows);
+        int maxOffset = maxStartRow * columns;
+        int offset = Math.Clamp(
+            this.inventoryPageOffsets.GetValueOrDefault(endpoint),
+            0,
+            maxOffset);
+        offset -= offset % columns;
+        this.inventoryPageOffsets[endpoint] = offset;
+        this.inventoryPanePages.Add(
+            new InventoryPanePageState(
+                bounds,
+                endpoint,
+                columns,
+                visibleCapacity,
+                totalSlots,
+                offset));
+
+        string pageTitle = maxOffset > 0
+            ? $"{title} · {offset + 1}–{Math.Min(totalSlots, offset + visibleCapacity)}/{totalSlots}"
+            : title;
+        DrawPanelText(
+            b,
+            FitText(pageTitle, Game1.tinyFont, Math.Max(1, bounds.Width - inset * 2), PanelTextScale),
+            Game1.tinyFont,
+            new Vector2(bounds.X + inset, bounds.Y + Math.Min(4, Math.Max(1, titleHeight / 4))),
+            TextColor,
+            PanelTextScale,
+            shadow: true);
+
+        int visibleSlots = Math.Min(visibleCapacity, totalSlots - offset);
+        for (int visibleIndex = 0; visibleIndex < visibleSlots; visibleIndex++)
+        {
+            int index = offset + visibleIndex;
+            int column = visibleIndex % columns;
+            int row = visibleIndex / columns;
+            Rectangle slot = new(
+                grid.X + column * (slotSize + gap),
+                grid.Y + row * (slotSize + gap),
+                slotSize,
+                slotSize);
             if (slot.Right > grid.Right || slot.Bottom > grid.Bottom)
                 continue;
-            this.DrawFlatPanel(b, slot, new Color(235, 220, 193), SurfaceBorder, 2);
-            this.inventorySlotsBounds.Add((slot, i));
-            if (i >= items.Count)
+
+            this.DrawFlatPanel(b, slot, new Color(235, 220, 193), SurfaceBorder, slotSize >= 24 ? 2 : 1);
+            Item? item = index < items.Count ? items[index] : null;
+            if (item is null)
                 continue;
 
-            Item item = items[i];
-            float scale = Math.Clamp((slotSize - 7) / 64f, 0.35f, 0.9f);
-            item.drawInMenu(b, new Vector2(slot.X + 4, slot.Y + 4), scale);
-            if (item.Stack > 1 && slotSize >= 32)
+            switch (endpoint)
+            {
+                case CompanionInventoryEndpoint.Player:
+                    this.playerInventorySlotsBounds.Add((slot, index));
+                    break;
+                case CompanionInventoryEndpoint.Companion:
+                    this.inventorySlotsBounds.Add((slot, index));
+                    break;
+                case CompanionInventoryEndpoint.Chest:
+                    this.chestInventorySlotsBounds.Add((slot, index));
+                    break;
+            }
+
+            float scale = Math.Clamp((slotSize - 5) / 64f, 0.18f, 0.75f);
+            DrawItemCenteredInBounds(b, item, slot, scale);
+            if (item.Stack > 1 && slotSize >= 20)
             {
                 string count = item.Stack.ToString();
-                Vector2 countSize = Game1.tinyFont.MeasureString(count);
-                Utility.drawTextWithShadow(
+                float countScale = slotSize < 28 ? PanelCompactTextScale : PanelCompactNumericTextScale;
+                Vector2 countSize = MeasureScaledText(count, Game1.tinyFont, countScale);
+                DrawPanelText(
                     b,
                     count,
                     Game1.tinyFont,
-                    new Vector2(slot.Right - countSize.X - 3, slot.Bottom - countSize.Y - 1),
-                    Color.White);
+                    new Vector2(slot.Right - countSize.X - 2, slot.Bottom - countSize.Y),
+                    Color.White,
+                    countScale,
+                    shadow: true);
             }
-        }
-
-        if (items.Count == 0 && grid.Height >= 55)
-        {
-            Utility.drawTextWithShadow(
-                b,
-                FitText(this.translate("companion.inventory.empty", null), Game1.tinyFont, grid.Width - 8),
-                Game1.tinyFont,
-                new Vector2(grid.X + 4, grid.Bottom - 22),
-                MutedTextColor);
         }
     }
 
@@ -505,16 +720,20 @@ internal sealed partial class CompanionPanelMenu
 
         int contentInset = texturedCard ? 8 : 4;
         string label = this.translate(GetEquipmentSlotTranslationKey(slot), null);
-        Utility.drawTextWithShadow(
+        float labelScale = texturedCard ? PanelTextScale : PanelMetaTextScale;
+        DrawPanelText(
             b,
-            FitText(label, Game1.tinyFont, Math.Max(1, bounds.Width - contentInset * 2)),
+            FitText(label, Game1.tinyFont, Math.Max(1, bounds.Width - contentInset * 2), labelScale),
             Game1.tinyFont,
             new Vector2(bounds.X + contentInset, bounds.Y + (texturedCard ? 5 : 1)),
-            TextColor);
+            TextColor,
+            labelScale,
+            shadow: true);
 
+        int labelLineHeight = GetScaledLineHeight(Game1.tinyFont, labelScale);
         int contentTopOffset = texturedCard
-            ? Math.Max(Game1.tinyFont.LineSpacing + 5, bounds.Height / 3)
-            : Math.Min(Game1.tinyFont.LineSpacing, Math.Max(12, bounds.Height / 3));
+            ? Math.Max(labelLineHeight + 5, bounds.Height / 3)
+            : Math.Min(labelLineHeight, Math.Max(12, bounds.Height / 3));
         int contentTop = bounds.Y + Math.Min(Math.Max(1, bounds.Height - 3), contentTopOffset);
         int contentHeight = Math.Max(1, bounds.Bottom - contentTop - 3);
         int iconSize = Math.Min(40, contentHeight);
@@ -522,7 +741,7 @@ internal sealed partial class CompanionPanelMenu
         if (item is not null)
         {
             float scale = Math.Clamp((iconSize - 3) / 64f, 0.3f, 0.7f);
-            item.drawInMenu(b, new Vector2(iconBounds.X + 1, iconBounds.Y + 1), scale);
+            DrawItemCenteredInBounds(b, item, iconBounds, scale);
         }
         else
         {
@@ -541,14 +760,17 @@ internal sealed partial class CompanionPanelMenu
         int detailsWidth = Math.Max(1, bounds.Right - detailsX - contentInset);
         string name = item?.DisplayName
             ?? this.translate(hasPersistedItem ? "companion.equipment.unavailable" : "companion.equipment.empty", null);
-        Utility.drawTextWithShadow(
+        DrawPanelText(
             b,
-            FitText(name, Game1.tinyFont, detailsWidth),
+            FitText(name, Game1.tinyFont, detailsWidth, PanelMetaTextScale),
             Game1.tinyFont,
             new Vector2(detailsX, contentTop),
-            hasPersistedItem ? TextColor : MutedTextColor);
+            hasPersistedItem ? TextColor : MutedTextColor,
+            PanelMetaTextScale,
+            shadow: true);
 
-        if (item is Tool tool && contentHeight >= Game1.tinyFont.LineSpacing * 2)
+        int detailLineHeight = GetScaledLineHeight(Game1.tinyFont, PanelMetaTextScale);
+        if (item is Tool tool && contentHeight >= detailLineHeight * 2)
         {
             string detail = tool is WateringCan wateringCan
                 ? this.translate("companion.equipment.water", new
@@ -557,13 +779,24 @@ internal sealed partial class CompanionPanelMenu
                     capacity = CompanionEquipmentPolicy.GetWateringCanCapacity(wateringCan.UpgradeLevel)
                 })
                 : this.translate("companion.equipment.upgrade", new { level = tool.UpgradeLevel });
-            Utility.drawTextWithShadow(
+            DrawPanelText(
                 b,
-                FitText(detail, Game1.tinyFont, detailsWidth),
+                FitText(detail, Game1.tinyFont, detailsWidth, PanelMetaTextScale),
                 Game1.tinyFont,
-                new Vector2(detailsX, contentTop + Game1.tinyFont.LineSpacing),
-                MutedTextColor);
+                new Vector2(detailsX, contentTop + detailLineHeight),
+                MutedTextColor,
+                PanelMetaTextScale,
+                shadow: true);
         }
+    }
+
+    private static void DrawItemCenteredInBounds(SpriteBatch b, Item item, Rectangle bounds, float scale)
+    {
+        const float MenuIconSize = 64f;
+        Vector2 position = new(
+            bounds.X + (bounds.Width - MenuIconSize * scale) / 2f,
+            bounds.Y + (bounds.Height - MenuIconSize * scale) / 2f);
+        item.drawInMenu(b, position, scale);
     }
 
     private void DrawSummaryStrip(SpriteBatch b, Rectangle area, IReadOnlyList<string> lines)
@@ -584,12 +817,15 @@ internal sealed partial class CompanionPanelMenu
                 _ => AccentGold
             };
             this.DrawMenuCard(b, chip, HeaderCardColor, accent);
-            Utility.drawTextWithShadow(
+            int lineHeight = GetScaledLineHeight(Game1.tinyFont, PanelTextScale);
+            DrawPanelText(
                 b,
-                FitText(lines[i], Game1.tinyFont, Math.Max(1, chip.Width - 24)),
+                FitText(lines[i], Game1.tinyFont, Math.Max(1, chip.Width - 24), PanelTextScale),
                 Game1.tinyFont,
-                new Vector2(chip.X + 17, chip.Y + Math.Max(3, (chip.Height - Game1.tinyFont.LineSpacing) / 2)),
-                MutedTextColor);
+                new Vector2(chip.X + 17, chip.Y + Math.Max(3, (chip.Height - lineHeight) / 2)),
+                MutedTextColor,
+                PanelTextScale,
+                shadow: true);
         }
     }
 
@@ -598,12 +834,14 @@ internal sealed partial class CompanionPanelMenu
         Color statusColor = this.GetMapStatusColor(info.StatusKey);
         this.DrawMenuCard(b, area, RowColor, statusColor);
         string status = this.translate(info.StatusKey, null);
-        Utility.drawTextWithShadow(
+        DrawPanelText(
             b,
-            FitText(status, Game1.tinyFont, Math.Max(1, area.Width - 30)),
+            FitText(status, Game1.tinyFont, Math.Max(1, area.Width - 30), PanelTextScale),
             Game1.tinyFont,
             new Vector2(area.X + 17, area.Y + 7),
-            TextColor);
+            TextColor,
+            PanelTextScale,
+            shadow: true);
 
         int lineY = area.Bottom - 20;
         int startX = area.X + 18;
@@ -632,12 +870,15 @@ internal sealed partial class CompanionPanelMenu
                     ? this.translate("companion.preview.inactive", null)
                     : this.translate(member.PreviewReasonKey, null)
             });
-        Utility.drawTextWithShadow(
+        int lineHeight = GetScaledLineHeight(Game1.tinyFont, PanelTextScale);
+        DrawPanelText(
             b,
-            FitText(text, Game1.tinyFont, Math.Max(1, bounds.Width - 30)),
+            FitText(text, Game1.tinyFont, Math.Max(1, bounds.Width - 30), PanelTextScale),
             Game1.tinyFont,
-            new Vector2(bounds.X + 17, bounds.Y + Math.Max(4, (bounds.Height - Game1.tinyFont.LineSpacing) / 2)),
-            MutedTextColor);
+            new Vector2(bounds.X + 17, bounds.Y + Math.Max(4, (bounds.Height - lineHeight) / 2)),
+            MutedTextColor,
+            PanelTextScale,
+            shadow: true);
     }
 
     private void DrawDirectiveButton(SpriteBatch b, Rectangle bounds, string label, bool active, CompanionDirective directive)
@@ -652,13 +893,23 @@ internal sealed partial class CompanionPanelMenu
             this.DrawTexturedPanel(b, bounds, fill);
         Rectangle indicator = new(bounds.X + 7, bounds.Center.Y - 6, 5, 12);
         b.Draw(Game1.staminaRect, indicator, active ? Color.White : Color.Black * 0.22f);
-        string text = FitText(label, Game1.tinyFont, bounds.Width - 24);
-        Utility.drawTextWithShadow(
+        float labelScale = GetTextScaleForBox(
+            label,
+            Game1.tinyFont,
+            PanelTextScale,
+            Math.Max(1, bounds.Width - 24),
+            Math.Max(1, bounds.Height - 6),
+            minimumScale: PanelMetaTextScale);
+        string text = FitText(label, Game1.tinyFont, bounds.Width - 24, labelScale);
+        Vector2 textSize = MeasureScaledText(text, Game1.tinyFont, labelScale);
+        DrawPanelText(
             b,
             text,
             Game1.tinyFont,
-            new Vector2(bounds.X + 17, bounds.Y + Math.Max(3, (bounds.Height - Game1.tinyFont.LineSpacing) / 2)),
-            active ? Color.White : TextColor);
+            new Vector2(bounds.X + 17, bounds.Y + Math.Max(3, (bounds.Height - textSize.Y) / 2)),
+            active ? Color.White : TextColor,
+            labelScale,
+            shadow: true);
         this.directiveButtons.Add((bounds, directive));
     }
 

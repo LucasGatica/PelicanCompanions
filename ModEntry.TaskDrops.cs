@@ -14,8 +14,45 @@ public sealed partial class ModEntry
         this.trackedFallingTrees[tree] = new TrackedFallingTree(
             member.NpcName,
             location.NameOrUniqueName,
-            NormalizeTile(tile));
+            NormalizeTile(tile),
+            member.WorkAreaActive,
+            member.WorkAreaOrderId);
         CompanionTaskDropPatches.IsCaptureActive = true;
+    }
+
+    /// <summary>
+    /// Advances only trees felled by a routine in an unobserved location.
+    /// The captured order identity deliberately survives task or block cleanup.
+    /// </summary>
+    private void AdvanceTrackedFallingTreesOffscreen()
+    {
+        foreach ((Tree tree, TrackedFallingTree tracked) in this.trackedFallingTrees.ToList())
+        {
+            GameLocation? location = tree.Location;
+            if (!tree.falling.Value
+                || location is null
+                || !string.Equals(location.NameOrUniqueName, tracked.LocationName, StringComparison.Ordinal)
+                || NormalizeTile(tree.Tile) != tracked.Tile)
+            {
+                this.StopTrackingFallingTree(tree);
+                continue;
+            }
+
+            if (!TaskNavigationPolicy.ShouldAdvanceRoutineOffscreen(
+                    tracked.UsesFixedWorkArea,
+                    tracked.WorkAreaOrderId,
+                    location.farmers.Any()))
+            {
+                continue;
+            }
+
+            bool removeTree = tree.tickUpdate(Game1.currentGameTime);
+            if (!removeTree)
+                continue;
+
+            location.terrainFeatures.Remove(tracked.Tile);
+            this.InvalidateReachabilityForLocation(location);
+        }
     }
 
     private FallingTreeTickCapture BeforeTrackedTreeTick(Tree tree)
@@ -111,5 +148,7 @@ public sealed partial class ModEntry
     private sealed record TrackedFallingTree(
         string NpcName,
         string LocationName,
-        Vector2 Tile);
+        Vector2 Tile,
+        bool UsesFixedWorkArea,
+        string? WorkAreaOrderId);
 }

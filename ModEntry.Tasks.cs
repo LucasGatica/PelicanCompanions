@@ -71,6 +71,37 @@ public sealed partial class ModEntry
             && this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled
             && wateringMember is null)
         {
+            SquadMemberState? smartWateringMember = this.GetAvailableMember(
+                ownerId,
+                candidate => this.IsMemberNearOwnerInLocation(
+                    candidate,
+                    owner!,
+                    location));
+            if (smartWateringMember is not null)
+            {
+                if (this.TryEnsureSmartToolForTask(
+                        smartWateringMember,
+                        CompanionTaskKind.Watering)
+                    && this.TryWaterTile(
+                        location,
+                        tile,
+                        smartWateringMember,
+                        manual: true))
+                {
+                    return;
+                }
+
+                if (this.HasEmptyCompanionWateringCan(smartWateringMember)
+                    && this.TryQueueSmartWaterRefill(
+                        smartWateringMember,
+                        location,
+                        tile,
+                        manual: true))
+                {
+                    return;
+                }
+            }
+
             bool hasEmptyCan = this.GetAvailableMembers(ownerId).Any(candidate =>
                 this.IsMemberNearOwnerInLocation(candidate, owner!, location)
                 && this.TryGetEquippedTool(
@@ -99,6 +130,25 @@ public sealed partial class ModEntry
             && this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) != TaskMode.Disabled
             && lumberMember is null)
         {
+            SquadMemberState? smartLumberMember = this.GetAvailableMember(
+                ownerId,
+                candidate => this.IsMemberNearOwnerInLocation(
+                    candidate,
+                    owner!,
+                    location));
+            if (smartLumberMember is not null
+                && this.TryEnsureSmartToolForTask(
+                    smartLumberMember,
+                    CompanionTaskKind.Lumbering)
+                && this.TryLumberTile(
+                    location,
+                    tile,
+                    smartLumberMember,
+                    manual: true))
+            {
+                return;
+            }
+
             this.SetTaskFailure(member, "companion.task_failure.need_axe");
             this.WarnForPlayer(ownerId, "tasks.need_axe");
             return;
@@ -115,6 +165,25 @@ public sealed partial class ModEntry
             && this.GetConfiguredTaskMode(CompanionTaskKind.Mining) != TaskMode.Disabled
             && miningMember is null)
         {
+            SquadMemberState? smartMiningMember = this.GetAvailableMember(
+                ownerId,
+                candidate => this.IsMemberNearOwnerInLocation(
+                    candidate,
+                    owner!,
+                    location));
+            if (smartMiningMember is not null
+                && this.TryEnsureSmartToolForTask(
+                    smartMiningMember,
+                    CompanionTaskKind.Mining)
+                && this.TryMiningTile(
+                    location,
+                    tile,
+                    smartMiningMember,
+                    manual: true))
+            {
+                return;
+            }
+
             this.SetTaskFailure(member, "companion.task_failure.need_pickaxe");
             this.WarnForPlayer(ownerId, "tasks.need_pickaxe");
             return;
@@ -393,6 +462,9 @@ public sealed partial class ModEntry
                     continue;
 
                 this.priorityTaskPlanningMembers.Remove(member.NpcName);
+                if (this.TrySmartDepositBeforeWork(member))
+                    continue;
+
                 CompanionRoutinePlanningLane planningLane = this.GetRoutinePlanningLane(member);
                 if (planningLane == CompanionRoutinePlanningLane.ExplicitDirective)
                 {
@@ -471,7 +543,12 @@ public sealed partial class ModEntry
         if (!this.IsValidWateringTarget(location, tile))
             return false;
 
-        if (!this.TryGetEquippedTool(member, CompanionEquipmentSlot.WateringCan, out WateringCan wateringCan))
+        if (!this.TryGetEquippedTool(member, CompanionEquipmentSlot.WateringCan, out WateringCan wateringCan)
+            && (!this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Watering)
+                || !this.TryGetEquippedTool(
+                    member,
+                    CompanionEquipmentSlot.WateringCan,
+                    out wateringCan)))
         {
             this.SetTaskFailure(member, "companion.task_failure.need_watering_can");
             if (manual)
@@ -481,10 +558,27 @@ public sealed partial class ModEntry
 
         if (wateringCan.WaterLeft <= 0)
         {
-            this.SetTaskFailure(member, "companion.task_failure.watering_can_empty");
-            if (manual)
-                this.WarnForPlayer(member.OwnerId, "tasks.watering_can_empty");
-            return false;
+            if (this.TryQueueSmartWaterRefill(
+                    member,
+                    location,
+                    tile,
+                    manual))
+            {
+                return true;
+            }
+
+            if (!this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Watering)
+                || !this.TryGetEquippedTool(
+                    member,
+                    CompanionEquipmentSlot.WateringCan,
+                    out wateringCan)
+                || wateringCan.WaterLeft <= 0)
+            {
+                this.SetTaskFailure(member, "companion.task_failure.watering_can_empty");
+                if (manual)
+                    this.WarnForPlayer(member.OwnerId, "tasks.watering_can_empty");
+                return false;
+            }
         }
 
         return this.TryQueueInstantTask(CompanionTaskKind.Watering, location, tile, member, manual);
@@ -539,7 +633,12 @@ public sealed partial class ModEntry
             return false;
         }
 
-        if (!this.TryGetEquippedTool<Axe>(member, CompanionEquipmentSlot.Axe, out _))
+        if (!this.TryGetEquippedTool<Axe>(member, CompanionEquipmentSlot.Axe, out _)
+            && (!this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Lumbering)
+                || !this.TryGetEquippedTool<Axe>(
+                    member,
+                    CompanionEquipmentSlot.Axe,
+                    out _)))
         {
             this.SetTaskFailure(member, "companion.task_failure.need_axe");
             if (manual)
@@ -640,7 +739,12 @@ public sealed partial class ModEntry
         if (npc is null || owner is null || npc.currentLocation != location || owner.currentLocation != location)
             return false;
 
-        if (!this.TryGetEquippedTool<Pickaxe>(member, CompanionEquipmentSlot.Pickaxe, out _))
+        if (!this.TryGetEquippedTool<Pickaxe>(member, CompanionEquipmentSlot.Pickaxe, out _)
+            && (!this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Mining)
+                || !this.TryGetEquippedTool<Pickaxe>(
+                    member,
+                    CompanionEquipmentSlot.Pickaxe,
+                    out _)))
         {
             this.SetTaskFailure(member, "companion.task_failure.need_pickaxe");
             if (manual)

@@ -147,6 +147,10 @@ public sealed partial class ModEntry
                 this.ProcessPendingFishingTask(task);
                 break;
 
+            case CompanionTaskKind.RefillingWater:
+                this.ProcessPendingWaterRefillTask(task);
+                break;
+
             case CompanionTaskKind.Watering:
             case CompanionTaskKind.Gathering:
             case CompanionTaskKind.Harvesting:
@@ -225,8 +229,45 @@ public sealed partial class ModEntry
 
                 if (activeCan.WaterLeft <= 0)
                 {
-                    this.RemovePendingTask(task, "companion.task_failure.watering_can_empty", returning: true);
-                    if (task.Manual)
+                    Vector2 resumeTile = task.TargetTile;
+                    bool manual = task.Manual;
+                    this.RemovePendingTask(task);
+                    if (this.TryQueueSmartWaterRefill(
+                            member,
+                            location,
+                            resumeTile,
+                            manual))
+                    {
+                        return;
+                    }
+
+                    if (this.TryEnsureSmartToolForTask(
+                            member,
+                            CompanionTaskKind.Watering))
+                    {
+                        if (!manual
+                            || this.TryQueueInstantTask(
+                                CompanionTaskKind.Watering,
+                                location,
+                                resumeTile,
+                                member,
+                                manual: true,
+                                targetEntityId: task.TargetEntityId,
+                                ignoreTaskMode: task.IgnoresTaskMode,
+                                sharedTargetGroupId: task.SharedTargetGroupId,
+                                ignoreTaskToggle: task.IgnoresTaskToggle,
+                                expectedTargetToken: task.ExpectedTargetToken,
+                                expectedTargetInstance: task.ExpectedTargetInstance,
+                                preparedStandTile: task.StandTile))
+                        {
+                            return;
+                        }
+                    }
+
+                    this.SetTaskFailure(
+                        member,
+                        "companion.task_failure.watering_can_empty");
+                    if (manual)
                         this.WarnForPlayer(member.OwnerId, "tasks.watering_can_empty");
                     return;
                 }
@@ -571,7 +612,16 @@ public sealed partial class ModEntry
         // Otherwise the tree can reach its terminal health while still falling
         // and the task would wait forever for a completion signal.
         if (tree.falling.Value)
+        {
+            if (TaskNavigationPolicy.ShouldAdvanceRoutineOffscreen(
+                    task.UsesFixedWorkArea,
+                    task.FixedWorkAreaOrderId,
+                    location.farmers.Any())
+                && this.trackedFallingTrees.ContainsKey(tree))
+                task.InactiveTicks = 0;
+
             return;
+        }
 
         if (!this.TryGetEquippedTool<Axe>(member, CompanionEquipmentSlot.Axe, out Axe axe))
         {
@@ -778,7 +828,7 @@ public sealed partial class ModEntry
                 member.NpcName);
             bool hasExpectedController = this.HasCompanionController(
                 npc,
-                CompanionMovementIntent.Task,
+                GetTaskMovementIntent(task),
                 location,
                 currentStandTile);
             rejectedByMissingController = tileAvailable
@@ -984,7 +1034,7 @@ public sealed partial class ModEntry
 
         bool hasExpectedController = this.HasCompanionController(
             npc,
-            CompanionMovementIntent.Task,
+            GetTaskMovementIntent(task),
             location,
             standTile);
         bool retryCooldownElapsed = !task.HasPathStartAttempted
@@ -1017,7 +1067,11 @@ public sealed partial class ModEntry
         ResetCompanionMovementSpeed(npc);
         try
         {
-            if (!this.TryStartCompanionPath(npc, location, standTile, CompanionMovementIntent.Task)
+            if (!this.TryStartCompanionPath(
+                    npc,
+                    location,
+                    standTile,
+                    GetTaskMovementIntent(task))
                 && member is not null)
             {
                 this.SetCompanionActivity(member, "companion.status.stuck");
@@ -1041,6 +1095,15 @@ public sealed partial class ModEntry
                 this.RemovePendingTask(task, "companion.task_failure.unexpected_error", returning: true);
             }
         }
+    }
+
+    private static CompanionMovementIntent GetTaskMovementIntent(PendingCompanionTask task)
+    {
+        return TaskNavigationPolicy.IsRoutineWorkOrder(
+                task.UsesFixedWorkArea,
+                task.FixedWorkAreaOrderId)
+                ? CompanionMovementIntent.RoutineTask
+                : CompanionMovementIntent.Task;
     }
 
     private bool PerformLumberHit(GameLocation location, Tree tree, Vector2 tile, SquadMemberState member, NPC npc, Axe axe, bool manual)

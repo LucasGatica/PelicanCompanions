@@ -11,6 +11,10 @@ internal static class Program
         new("ModConfig.Validate limita valores abaixo do minimo", ModConfigValidateClampsMinimumValues),
         new("ModConfig.Validate limita valores acima do maximo", ModConfigValidateClampsMaximumValues),
         new("ModConfig.Validate normaliza enums invalidos", ModConfigValidateNormalizesInvalidEnums),
+        new("CompanionInventoryFilterPolicy preserva defaults e precedencia", CompanionInventoryFilterPolicyPreservesDefaultsAndPrecedence),
+        new("CompanionInventoryFilterPolicy alterna cada regra isoladamente", CompanionInventoryFilterPolicySetsEachRuleIndependently),
+        new("CompanionSmartRefillPolicy falha fechado e respeita local", CompanionSmartRefillPolicyFailsClosedAndScopesLocations),
+        new("CompanionIdleAnimationPolicy normaliza aliases e intervalos", CompanionIdleAnimationPolicyNormalizesAliasesAndIntervals),
         new("CompanionProgression expoe thresholds esperados", CompanionProgressionHasExpectedThresholds),
         new("CompanionProgression respeita fronteiras de nivel", CompanionProgressionRespectsLevelBoundaries),
         new("CompanionProgression limita consultas de XP por nivel", CompanionProgressionClampsLevelQueries),
@@ -20,6 +24,7 @@ internal static class Program
         new("CompanionSkillTreePolicy respeita caixa e limite de pontos", CompanionSkillTreePolicyHonorsCasingAndPointBoundary),
         new("IGenericModConfigMenuApiCompat e publica", GenericModConfigMenuCompatibilityApiIsPublic),
         new("CompanionActionWheelHitTest mapeia setores variaveis e limites", CompanionActionWheelHitTestMapsSegmentsAndBounds),
+        new("CompanionActionWheelPagination preserva seis opcoes sem paginar", CompanionActionWheelPaginationKeepsSixOptionsUnpaged),
         new("CompanionActionWheelPagination pagina doze companions sem perdas", CompanionActionWheelPaginationMapsTwelveCompanions),
         new("CompanionActionWheelNavigation navega e ignora slots vazios", CompanionActionWheelNavigationMovesFocusAndSkipsEmptySlots),
         new("CompanionActionWheelTextLayout preserva e equilibra rotulos", CompanionActionWheelTextLayoutPreservesAndBalancesLabels),
@@ -35,10 +40,13 @@ internal static class Program
         new("CompanionWorkAreaPolicy valida estado persistido ativo", CompanionWorkAreaPolicyValidatesPersistedState),
         new("WateringTargetPolicy rejeita solo ja molhado", WateringTargetPolicyRejectsAlreadyWateredDirt),
         new("CompanionRoutinePolicy normaliza grade e identifica blocos", CompanionRoutinePolicyNormalizesGridAndFindsBlocks),
+        new("CompanionRoutinePolicy decide quando seguir a rotina agora", CompanionRoutinePolicyDecidesWhenRoutineCanResumeNow),
+        new("CompanionRoutinePolicy foca a area no trabalho certo do editor", CompanionRoutinePolicyFocusesEditorOnRelevantWork),
         new("CompanionRoutinePolicy ativa edicoes e reserva a rotina da autonomia", CompanionRoutinePolicyActivatesEditsAndSuppressesAutonomy),
         new("CompanionRoutinePolicy respeita execucao unica e revisao", CompanionRoutinePolicyTracksExecutionByRevision),
         new("CompanionRoutinePolicy aplica atalho 06-18 e presets unicos", CompanionRoutinePolicyAppliesShiftAndUniquePresets),
         new("CompanionRoutinePolicy codifica presets no CAS v2 e aceita v1", CompanionRoutinePolicyEncodesVersionedCasConfiguration),
+        new("CompanionRoutinePolicy valida areas em mapas diferentes", CompanionRoutinePolicyValidatesAreasAcrossKnownMaps),
         new("CompanionStateCopy preserva diretiva e area de rega", CompanionStateCopyPreservesWateringWorkState),
         new("FishingWaterBodyPolicy descobre componente e margens estaveis", FishingWaterBodyPolicyDiscoversStableComponentAndShore),
         new("FishingWaterBodyPolicy falha fechado em entrada invalida ou truncada", FishingWaterBodyPolicyFailsClosedForInvalidOrTruncatedDiscovery),
@@ -57,6 +65,7 @@ internal static class Program
         new("FollowNavigationPolicy preserva controller e orcamento", FollowNavigationPolicyPreservesControllerAndBudget),
         new("TaskNavigationPolicy reutiliza stand validado sem novo probe", TaskNavigationPolicyReusesValidatedStand),
         new("TaskNavigationPolicy limita criacao e reinicio de rotas", TaskNavigationPolicyBudgetsPathStarts),
+        new("TaskNavigationPolicy libera off-screen somente para rotina", TaskNavigationPolicyScopesOffscreenRoutineWork),
         new("TaskPlanningPolicy prioriza e percorre membros sem starvation", TaskPlanningPolicyPrioritizesAndRotatesFairly),
         new("ContextCommandPolicy mede alcance pelo stand adjacente", ContextCommandPolicyUsesAdjacentStandRange),
         new("GroundCommandPolicy abre contexto local seguro sem raio de follow", GroundCommandPolicyOpensSafeLocalContext),
@@ -159,6 +168,9 @@ internal static class Program
             CompanionQuickHudMaxRows = 0,
             DialogueCooldownSeconds = -1,
             CommunicationGroupCooldownSeconds = -1,
+            IdleAnimationIntervalSeconds = -1,
+            CompanionInteractionCooldownSeconds = -1,
+            SmartWaterRefillSearchRadius = -1,
             ProtectBeehouseFlowers = -1,
             ParkTimeoutMinutes = -1
         };
@@ -174,6 +186,9 @@ internal static class Program
         Assert.Equal(1, config.CompanionQuickHudMaxRows, nameof(config.CompanionQuickHudMaxRows));
         Assert.Equal(0, config.DialogueCooldownSeconds, nameof(config.DialogueCooldownSeconds));
         Assert.Equal(1, config.CommunicationGroupCooldownSeconds, nameof(config.CommunicationGroupCooldownSeconds));
+        Assert.Equal(5, config.IdleAnimationIntervalSeconds, nameof(config.IdleAnimationIntervalSeconds));
+        Assert.Equal(15, config.CompanionInteractionCooldownSeconds, nameof(config.CompanionInteractionCooldownSeconds));
+        Assert.Equal(3, config.SmartWaterRefillSearchRadius, nameof(config.SmartWaterRefillSearchRadius));
         Assert.Equal(0, config.ProtectBeehouseFlowers, nameof(config.ProtectBeehouseFlowers));
         Assert.Equal(0, config.ParkTimeoutMinutes, nameof(config.ParkTimeoutMinutes));
     }
@@ -188,7 +203,10 @@ internal static class Program
             CompanionWorkRadius = 99,
             CompanionWorkReturnDistance = 99,
             CompanionQuickHudMaxRows = 99,
-            CommunicationGroupCooldownSeconds = 99
+            CommunicationGroupCooldownSeconds = 99,
+            IdleAnimationIntervalSeconds = 999,
+            CompanionInteractionCooldownSeconds = 9999,
+            SmartWaterRefillSearchRadius = 999
         };
 
         config.Validate();
@@ -200,6 +218,9 @@ internal static class Program
         Assert.Equal(40, config.CompanionWorkReturnDistance, nameof(config.CompanionWorkReturnDistance));
         Assert.Equal(12, config.CompanionQuickHudMaxRows, nameof(config.CompanionQuickHudMaxRows));
         Assert.Equal(30, config.CommunicationGroupCooldownSeconds, nameof(config.CommunicationGroupCooldownSeconds));
+        Assert.Equal(300, config.IdleAnimationIntervalSeconds, nameof(config.IdleAnimationIntervalSeconds));
+        Assert.Equal(1800, config.CompanionInteractionCooldownSeconds, nameof(config.CompanionInteractionCooldownSeconds));
+        Assert.Equal(40, config.SmartWaterRefillSearchRadius, nameof(config.SmartWaterRefillSearchRadius));
 
         config.CompanionWorkRadius = 18;
         config.CompanionWorkReturnDistance = 7;
@@ -217,6 +238,8 @@ internal static class Program
             DisableInteraction = (DisableInteractionMode)999,
             DisableTrashRummagingReaction = (TrashReactionMode)999,
             FishingMode = (FishingTaskMode)999,
+            SmartWaterRefill = (SmartWaterRefillMode)999,
+            SmartDeposit = (SmartDepositMode)999,
             AttackingMode = (TaskMode)999,
             HarvestingMode = (TaskMode)999,
             ForagingMode = (TaskMode)999,
@@ -236,6 +259,8 @@ internal static class Program
         Assert.Equal(DisableInteractionMode.Never, config.DisableInteraction, nameof(config.DisableInteraction));
         Assert.Equal(TrashReactionMode.Never, config.DisableTrashRummagingReaction, nameof(config.DisableTrashRummagingReaction));
         Assert.Equal(FishingTaskMode.Disabled, config.FishingMode, nameof(config.FishingMode));
+        Assert.Equal(SmartWaterRefillMode.FarmOnly, config.SmartWaterRefill, nameof(config.SmartWaterRefill));
+        Assert.Equal(SmartDepositMode.WhenFull, config.SmartDeposit, nameof(config.SmartDeposit));
         Assert.Equal(TaskMode.Disabled, config.AttackingMode, nameof(config.AttackingMode));
         Assert.Equal(TaskMode.Mimicking, config.HarvestingMode, nameof(config.HarvestingMode));
         Assert.Equal(TaskMode.Disabled, config.ForagingMode, nameof(config.ForagingMode));
@@ -245,6 +270,157 @@ internal static class Program
         Assert.Equal(TaskMode.Mimicking, config.PettingMode, nameof(config.PettingMode));
         Assert.Equal(TaskMode.Disabled, config.ShearingMode, nameof(config.ShearingMode));
         Assert.Equal(TaskMode.Disabled, config.MilkingMode, nameof(config.MilkingMode));
+    }
+
+    private static void CompanionInventoryFilterPolicyPreservesDefaultsAndPrecedence()
+    {
+        CompanionInventoryRulesState defaults = new();
+        Assert.True(defaults.DepositWood, "madeira deve ser depositada por padrao");
+        Assert.True(defaults.DepositMinerals, "minerais devem ser depositados por padrao");
+        Assert.False(defaults.KeepFood, "save antigo deve preservar o deposito de comida");
+
+        Assert.True(
+            CompanionInventoryFilterPolicy.ShouldDeposit(defaults, isWood: false, isMineral: false, isFood: true),
+            "comida deve seguir a rota anterior enquanto KeepFood estiver desligado");
+
+        defaults.KeepFood = true;
+        Assert.False(
+            CompanionInventoryFilterPolicy.ShouldDeposit(defaults, isWood: true, isMineral: false, isFood: true),
+            "KeepFood deve vencer mesmo para item que tambem seja madeira");
+        Assert.False(
+            CompanionInventoryFilterPolicy.ShouldDeposit(defaults, isWood: false, isMineral: true, isFood: true),
+            "KeepFood deve vencer mesmo para item que tambem seja mineral");
+
+        defaults.KeepFood = false;
+        defaults.DepositWood = false;
+        defaults.DepositMinerals = false;
+        Assert.False(
+            CompanionInventoryFilterPolicy.ShouldDeposit(defaults, isWood: true, isMineral: false, isFood: false),
+            "madeira deve ficar no cargo quando o filtro estiver desligado");
+        Assert.False(
+            CompanionInventoryFilterPolicy.ShouldDeposit(defaults, isWood: false, isMineral: true, isFood: false),
+            "mineral deve ficar no cargo quando o filtro estiver desligado");
+        Assert.True(
+            CompanionInventoryFilterPolicy.ShouldDeposit(defaults, isWood: false, isMineral: false, isFood: false),
+            "itens sem categoria continuam elegiveis");
+    }
+
+    private static void CompanionInventoryFilterPolicySetsEachRuleIndependently()
+    {
+        CompanionInventoryRulesState rules = new();
+        Assert.True(
+            CompanionInventoryFilterPolicy.Set(rules, CompanionInventoryFilter.DepositWood, false),
+            "toggle de madeira");
+        Assert.True(
+            CompanionInventoryFilterPolicy.Set(rules, CompanionInventoryFilter.DepositMinerals, false),
+            "toggle de minerais");
+        Assert.True(
+            CompanionInventoryFilterPolicy.Set(rules, CompanionInventoryFilter.KeepFood, true),
+            "toggle de comida");
+
+        Assert.False(
+            CompanionInventoryFilterPolicy.Get(rules, CompanionInventoryFilter.DepositWood),
+            "leitura de madeira");
+        Assert.False(
+            CompanionInventoryFilterPolicy.Get(rules, CompanionInventoryFilter.DepositMinerals),
+            "leitura de minerais");
+        Assert.True(
+            CompanionInventoryFilterPolicy.Get(rules, CompanionInventoryFilter.KeepFood),
+            "leitura de comida");
+        Assert.False(
+            CompanionInventoryFilterPolicy.Set(rules, (CompanionInventoryFilter)999, true),
+            "enum desconhecido deve falhar fechado");
+        Assert.False(
+            CompanionInventoryFilterPolicy.Get(rules, (CompanionInventoryFilter)999),
+            "leitura desconhecida deve falhar fechado");
+    }
+
+    private static void CompanionSmartRefillPolicyFailsClosedAndScopesLocations()
+    {
+        Assert.False(
+            CompanionSmartRefillPolicy.ShouldRefill(
+                SmartWaterRefillMode.Disabled,
+                waterLeft: 0,
+                isFarm: true,
+                isOutdoors: true,
+                hasReachableWater: true),
+            "modo desativado");
+        Assert.False(
+            CompanionSmartRefillPolicy.ShouldRefill(
+                SmartWaterRefillMode.FarmOnly,
+                waterLeft: 1,
+                isFarm: true,
+                isOutdoors: true,
+                hasReachableWater: true),
+            "regador com agua");
+        Assert.False(
+            CompanionSmartRefillPolicy.ShouldRefill(
+                SmartWaterRefillMode.FarmOnly,
+                waterLeft: 0,
+                isFarm: true,
+                isOutdoors: true,
+                hasReachableWater: false),
+            "fonte inacessivel");
+        Assert.True(
+            CompanionSmartRefillPolicy.ShouldRefill(
+                SmartWaterRefillMode.FarmOnly,
+                waterLeft: 0,
+                isFarm: true,
+                isOutdoors: true,
+                hasReachableWater: true),
+            "fonte da fazenda");
+        Assert.False(
+            CompanionSmartRefillPolicy.ShouldRefill(
+                SmartWaterRefillMode.FarmOnly,
+                waterLeft: 0,
+                isFarm: false,
+                isOutdoors: true,
+                hasReachableWater: true),
+            "FarmOnly fora da fazenda");
+        Assert.True(
+            CompanionSmartRefillPolicy.ShouldRefill(
+                SmartWaterRefillMode.AnySafeWater,
+                waterLeft: 0,
+                isFarm: false,
+                isOutdoors: true,
+                hasReachableWater: true),
+            "agua externa segura");
+        Assert.False(
+            CompanionSmartRefillPolicy.ShouldRefill(
+                SmartWaterRefillMode.AnySafeWater,
+                waterLeft: 0,
+                isFarm: false,
+                isOutdoors: false,
+                hasReachableWater: true),
+            "interior deve falhar fechado");
+    }
+
+    private static void CompanionIdleAnimationPolicyNormalizesAliasesAndIntervals()
+    {
+        Assert.Equal<CompanionIdleAnimationKind?>(
+            CompanionIdleAnimationKind.LookAround,
+            CompanionIdleAnimationPolicy.Parse("  LOOK-around  "),
+            "alias de olhar");
+        Assert.Equal<CompanionIdleAnimationKind?>(
+            CompanionIdleAnimationKind.Happy,
+            CompanionIdleAnimationPolicy.Parse("emote"),
+            "alias de emote");
+        Assert.Equal<CompanionIdleAnimationKind?>(
+            CompanionIdleAnimationKind.Jump,
+            CompanionIdleAnimationPolicy.Parse("JUMP"),
+            "alias de pulo");
+        Assert.Equal<CompanionIdleAnimationKind?>(
+            CompanionIdleAnimationKind.Shake,
+            CompanionIdleAnimationPolicy.Parse("shake"),
+            "alias de sacudir");
+        Assert.Equal<CompanionIdleAnimationKind?>(
+            null,
+            CompanionIdleAnimationPolicy.Parse("custom-command"),
+            "animacao desconhecida");
+        Assert.Equal(5, CompanionIdleAnimationPolicy.NormalizeIntervalSeconds(-1), "intervalo minimo");
+        Assert.Equal(300, CompanionIdleAnimationPolicy.NormalizeIntervalSeconds(999), "intervalo maximo");
+        Assert.Equal(15, CompanionIdleAnimationPolicy.NormalizeInteractionCooldownSeconds(-1), "cooldown minimo");
+        Assert.Equal(1800, CompanionIdleAnimationPolicy.NormalizeInteractionCooldownSeconds(9999), "cooldown maximo");
     }
 
     private static void CompanionProgressionHasExpectedThresholds()
@@ -406,6 +582,15 @@ internal static class Program
                 $"centro do setor {index} em roda de cinco opcoes");
         }
 
+        for (int index = 0; index < 6; index++)
+        {
+            float angle = firstCenter + index * MathF.PI * 2f / 6f;
+            Assert.Equal<int?>(
+                index,
+                CompanionActionWheelHitTest.GetSegment(MathF.Cos(angle) * 80f, MathF.Sin(angle) * 80f, inner, outer, 6, firstCenter, 0.035f),
+                $"centro do setor {index} em roda de seis opcoes");
+        }
+
         Assert.Equal<int?>(0, CompanionActionWheelHitTest.GetSegment(-80f, 0f, inner, outer, 1, firstCenter), "roda de uma opcao");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(0f, 0f, inner, outer, 4, firstCenter), "dead zone");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(inner, 0f, inner, outer, 4, firstCenter), "borda interna");
@@ -413,6 +598,25 @@ internal static class Program
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(outer + 0.1f, 0f, inner, outer, 4, firstCenter), "fora do circulo");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(float.NaN, 0f, inner, outer, 4, firstCenter), "coordenada invalida");
         Assert.Equal<int?>(null, CompanionActionWheelHitTest.GetSegment(80f, 0f, inner, outer, 0, firstCenter), "quantidade de setores invalida");
+    }
+
+    private static void CompanionActionWheelPaginationKeepsSixOptionsUnpaged()
+    {
+        CompanionActionWheelPageLayout layout = CompanionActionWheelPagination.Create(
+            optionCount: 6,
+            pinnedOptionCount: 0,
+            requestedPageIndex: 7);
+
+        Assert.Equal(1, layout.PageCount, "seis opcoes cabem na roda sem paginacao");
+        Assert.Equal(0, layout.PageIndex, "pedido de pagina excedente deve normalizar para a unica pagina");
+        Assert.Equal(6, layout.Slots.Length, "a roda deve expor exatamente seis setores");
+        Assert.SequenceEqual(
+            Enumerable.Range(0, 6),
+            layout.Slots.Select(slot => slot.OptionIndex),
+            "todos os indices de zero a cinco devem permanecer na roda");
+        Assert.True(
+            layout.Slots.All(slot => slot.Kind == CompanionActionWheelSlotKind.Option),
+            "roda sem paginacao deve conter somente opcoes acionaveis");
     }
 
     private static void CompanionActionWheelPaginationMapsTwelveCompanions()
@@ -936,6 +1140,141 @@ internal static class Program
             "salvar uma rotina ja inativa nao toma controle do NPC");
     }
 
+    private static void CompanionRoutinePolicyDecidesWhenRoutineCanResumeNow()
+    {
+        const int currentDay = 42;
+
+        Assert.True(
+            CompanionRoutinePolicy.CanResumeNow(
+                new CompanionRoutineState
+                {
+                    Enabled = true,
+                    RepeatDaily = true,
+                    ScheduledDayIndex = currentDay - 10
+                },
+                currentDay),
+            "rotina diaria ativa pode ser retomada independentemente do dia salvo");
+        Assert.False(
+            CompanionRoutinePolicy.CanResumeNow(
+                new CompanionRoutineState
+                {
+                    Enabled = false,
+                    RepeatDaily = true,
+                    ScheduledDayIndex = currentDay
+                },
+                currentDay),
+            "rotina desativada nao pode ser retomada");
+        Assert.True(
+            CompanionRoutinePolicy.CanResumeNow(
+                new CompanionRoutineState
+                {
+                    Enabled = true,
+                    RepeatDaily = false,
+                    ScheduledDayIndex = -1
+                },
+                currentDay),
+            "rotina unica ainda sem dia pode ser iniciada pelo comando explicito");
+        Assert.True(
+            CompanionRoutinePolicy.CanResumeNow(
+                new CompanionRoutineState
+                {
+                    Enabled = true,
+                    RepeatDaily = false,
+                    ScheduledDayIndex = currentDay
+                },
+                currentDay),
+            "rotina unica agendada para hoje pode ser retomada");
+        Assert.False(
+            CompanionRoutinePolicy.CanResumeNow(
+                new CompanionRoutineState
+                {
+                    Enabled = true,
+                    RepeatDaily = false,
+                    ScheduledDayIndex = currentDay - 1
+                },
+                currentDay),
+            "rotina unica expirada nao pode ser retomada");
+    }
+
+    private static void CompanionRoutinePolicyFocusesEditorOnRelevantWork()
+    {
+        CompanionRoutineState currentMining = new()
+        {
+            Hours = Enumerable.Range(CompanionRoutinePolicy.FirstHour, CompanionRoutinePolicy.HourCount)
+                .Select(hour => new CompanionRoutineHourState
+                {
+                    Hour = hour,
+                    Activity = hour == 14
+                        ? CompanionRoutineActivity.Mine
+                        : CompanionRoutineActivity.Follow
+                })
+                .ToList()
+        };
+        CompanionRoutineActivity selectedMining =
+            CompanionRoutinePolicy.GetPreferredEditorActivity(currentMining, 1420);
+        Assert.Equal(
+            CompanionRoutineActivity.Mine,
+            selectedMining,
+            "bloco de mineracao atual deve receber a proxima escolha de area");
+        Assert.True(
+            CompanionRoutinePolicy.TryGetWorkSpecialty(
+                selectedMining,
+                out CompanionWorkSpecialty selectedSpecialty),
+            "selecao inicial do editor deve mapear para uma especialidade");
+        CompanionRoutinePolicy.UpsertAreaPreset(currentMining, new CompanionRoutineAreaPreset
+        {
+            Specialty = selectedSpecialty,
+            RegionKind = CompanionWorkRegionKind.FarmWide,
+            LocationName = "Farm"
+        });
+        Assert.True(
+            CompanionRoutinePolicy.TryDecode(
+                CompanionRoutinePolicy.Encode(currentMining),
+                out CompanionRoutineState savedMining),
+            "area livre escolhida pelo foco do editor sobrevive ao salvamento");
+        CompanionRoutineActivity savedCurrent =
+            CompanionRoutinePolicy.GetActivity(savedMining.Hours, 1420);
+        CompanionRoutinePolicy.TryGetWorkSpecialty(
+            savedCurrent,
+            out CompanionWorkSpecialty savedCurrentSpecialty);
+        Assert.Equal(
+            CompanionWorkRegionKind.FarmWide,
+            CompanionRoutinePolicy.GetAreaPreset(savedMining, savedCurrentSpecialty)?.RegionKind,
+            "executor encontra a area livre na mesma especialidade do bloco atual");
+
+        CompanionRoutineState passiveBlock = new()
+        {
+            Hours = Enumerable.Range(CompanionRoutinePolicy.FirstHour, CompanionRoutinePolicy.HourCount)
+                .Select(hour => new CompanionRoutineHourState
+                {
+                    Hour = hour,
+                    Activity = hour == 8
+                        ? CompanionRoutineActivity.Water
+                        : hour == 15
+                            ? CompanionRoutineActivity.Lumber
+                            : CompanionRoutineActivity.Follow
+                })
+                .ToList(),
+            AreaPresets = new List<CompanionRoutineAreaPreset>
+            {
+                new()
+                {
+                    Specialty = CompanionWorkSpecialty.Watering,
+                    RegionKind = CompanionWorkRegionKind.FarmWide,
+                    LocationName = "Farm"
+                }
+            }
+        };
+        Assert.Equal(
+            CompanionRoutineActivity.Lumber,
+            CompanionRoutinePolicy.GetPreferredEditorActivity(passiveBlock, 1200),
+            "fora de um bloco de trabalho, prioriza a especialidade agendada ainda sem area");
+        Assert.Equal(
+            CompanionRoutineActivity.Follow,
+            CompanionRoutinePolicy.GetPreferredEditorActivity(new CompanionRoutineState(), 1200),
+            "grade sem trabalho exige escolher explicitamente uma especialidade antes da area");
+    }
+
     private static void CompanionRoutinePolicyTracksExecutionByRevision()
     {
         CompanionRoutineState routine = new()
@@ -1246,11 +1585,80 @@ internal static class Program
         Assert.Equal(0, legacy.AreaPresets.Count, "payload v1 nasce sem presets");
     }
 
+    private static void CompanionRoutinePolicyValidatesAreasAcrossKnownMaps()
+    {
+        Dictionary<string, (int Width, int Height)> maps = new(StringComparer.Ordinal)
+        {
+            ["Farm"] = (80, 65),
+            ["Forest"] = (120, 100),
+            ["Shed_42"] = (20, 15)
+        };
+        List<CompanionRoutineAreaPreset> areas = new()
+        {
+            new()
+            {
+                Specialty = CompanionWorkSpecialty.Watering,
+                RegionKind = CompanionWorkRegionKind.FarmWide,
+                LocationName = "Farm"
+            },
+            new()
+            {
+                Specialty = CompanionWorkSpecialty.Wood,
+                RegionKind = CompanionWorkRegionKind.DelimitedSquare,
+                LocationName = "Forest",
+                MinX = 90,
+                MinY = 70,
+                Size = 21
+            },
+            new()
+            {
+                Specialty = CompanionWorkSpecialty.ClearArea,
+                RegionKind = CompanionWorkRegionKind.Circle,
+                LocationName = "Shed_42",
+                CenterX = 10,
+                CenterY = 7,
+                Radius = 5
+            }
+        };
+        (int Width, int Height)? Resolve(string locationName)
+        {
+            return maps.TryGetValue(locationName, out (int Width, int Height) size)
+                ? size
+                : null;
+        }
+
+        Assert.True(
+            CompanionRoutinePolicy.AreAreaPresetsValidForKnownMaps(areas, Resolve),
+            "presets validos podem apontar para locations diferentes");
+
+        List<CompanionRoutineAreaPreset> missingMap =
+            CompanionOperationsStateCopy.CloneRoutine(new CompanionRoutineState { AreaPresets = areas }).AreaPresets;
+        missingMap[1].LocationName = "MapaInexistente";
+        Assert.False(
+            CompanionRoutinePolicy.AreAreaPresetsValidForKnownMaps(missingMap, Resolve),
+            "location que o host nao conhece falha fechada");
+
+        List<CompanionRoutineAreaPreset> overflowingSquare =
+            CompanionOperationsStateCopy.CloneRoutine(new CompanionRoutineState { AreaPresets = areas }).AreaPresets;
+        overflowingSquare[1].MinX = 110;
+        Assert.False(
+            CompanionRoutinePolicy.AreAreaPresetsValidForKnownMaps(overflowingSquare, Resolve),
+            "quadrado deve caber no mapa remoto concreto");
+
+        List<CompanionRoutineAreaPreset> outsideCircle =
+            CompanionOperationsStateCopy.CloneRoutine(new CompanionRoutineState { AreaPresets = areas }).AreaPresets;
+        outsideCircle[2].CenterX = maps["Shed_42"].Width;
+        Assert.False(
+            CompanionRoutinePolicy.AreAreaPresetsValidForKnownMaps(outsideCircle, Resolve),
+            "centro circular fora do mapa remoto e rejeitado");
+    }
+
     private static void CompanionStateCopyPreservesWateringWorkState()
     {
         SquadMemberState source = new()
         {
             NpcName = "Leah",
+            RoutinePausedByPlayer = true,
             SearchWatering = true,
             PreferredWorkSpecialty = CompanionWorkSpecialty.Watering,
             WorkAreaActive = true,
@@ -1265,6 +1673,7 @@ internal static class Program
 
         SquadMemberState clone = CompanionStateCopy.CloneMember(source);
 
+        Assert.True(clone.RoutinePausedByPlayer, "pausa manual da rotina clonada");
         Assert.True(clone.SearchWatering, "diretiva regar clonada");
         Assert.Equal(CompanionWorkSpecialty.Watering, clone.PreferredWorkSpecialty, "preferencia regar clonada");
         Assert.True(clone.WorkAreaActive, "area ativa clonada");
@@ -1734,6 +2143,43 @@ internal static class Program
         Assert.True(
             TaskNavigationPolicy.ShouldStartPath(false, true, true, false, true),
             "Recuperacao com orcamento pode substituir controller travado sem esperar cooldown.");
+    }
+
+    private static void TaskNavigationPolicyScopesOffscreenRoutineWork()
+    {
+        Assert.True(
+            TaskNavigationPolicy.IsRoutineWorkOrder(true, "routine-42-9-a1b2"),
+            "ordem fixa criada pelo scheduler pode concluir a rota off-screen");
+        Assert.False(
+            TaskNavigationPolicy.IsRoutineWorkOrder(false, "routine-42-9-a1b2"),
+            "prefixo isolado nao transforma tarefa local em tarefa de rotina");
+        Assert.False(
+            TaskNavigationPolicy.IsRoutineWorkOrder(true, "manual-a1b2"),
+            "area manual permanece pausada sem observador");
+        Assert.False(
+            TaskNavigationPolicy.IsRoutineWorkOrder(true, ""),
+            "ordem vazia falha fechada");
+        Assert.False(
+            TaskNavigationPolicy.IsRoutineWorkOrder(true, "Routine-42-9-a1b2"),
+            "identidade da ordem de rotina e ordinal e exata");
+        Assert.True(
+            TaskNavigationPolicy.ShouldAdvanceRoutineOffscreen(
+                true,
+                "routine-42-9-a1b2",
+                hasFarmerInLocation: false),
+            "estado de mundo pertencente a rotina pode avancar em mapa vazio");
+        Assert.False(
+            TaskNavigationPolicy.ShouldAdvanceRoutineOffscreen(
+                true,
+                "routine-42-9-a1b2",
+                hasFarmerInLocation: true),
+            "mapa observado deixa o update vanilla avancar a feature uma unica vez");
+        Assert.False(
+            TaskNavigationPolicy.ShouldAdvanceRoutineOffscreen(
+                true,
+                "manual-a1b2",
+                hasFarmerInLocation: false),
+            "area manual nao ganha simulacao off-screen");
     }
 
     private static void TaskPlanningPolicyPrioritizesAndRotatesFairly()
@@ -2276,6 +2722,12 @@ internal static class Program
                     }
                 }
             },
+            InventoryRules = new CompanionInventoryRulesState
+            {
+                DepositWood = false,
+                DepositMinerals = true,
+                KeepFood = true
+            },
             Routine = new CompanionRoutineState
             {
                 ScheduledDayIndex = 12,
@@ -2309,6 +2761,9 @@ internal static class Program
         CompanionOperationalProfileState clone = CompanionOperationsStateCopy.CloneOperationalProfile(source);
         source.Equipment.Pickaxe!.ToolUpgradeLevel = 1;
         source.Equipment.Pickaxe.ModData["example/tool"] = "changed";
+        source.InventoryRules.DepositWood = true;
+        source.InventoryRules.DepositMinerals = false;
+        source.InventoryRules.KeepFood = false;
         source.Routine.Hours[0].Activity = CompanionRoutineActivity.Wait;
         source.Routine.AreaPresets[0].RegionKind = CompanionWorkRegionKind.FarmWide;
         source.Routine.AreaPresets[0].MinX = 99;
@@ -2319,6 +2774,14 @@ internal static class Program
 
         Assert.Equal(3, clone.Equipment.Pickaxe?.ToolUpgradeLevel, "upgrade destacado");
         Assert.Equal("original", clone.Equipment.Pickaxe?.ModData["example/tool"], "ModData destacado");
+        Assert.False(clone.InventoryRules.DepositWood, "regra de madeira destacada");
+        Assert.True(clone.InventoryRules.DepositMinerals, "regra de minerais destacada");
+        Assert.True(clone.InventoryRules.KeepFood, "regra de comida destacada");
+        Assert.False(ReferenceEquals(source.InventoryRules, clone.InventoryRules), "regras precisam ser destacadas");
+        CompanionInventoryRulesState defaultRules = CompanionOperationsStateCopy.CloneInventoryRules(null);
+        Assert.True(defaultRules.DepositWood, "clone nulo usa default de madeira");
+        Assert.True(defaultRules.DepositMinerals, "clone nulo usa default de minerais");
+        Assert.False(defaultRules.KeepFood, "clone nulo preserva compatibilidade de comida");
         Assert.Equal(CompanionRoutineActivity.Mine, clone.Routine.Hours[0].Activity, "hora destacada");
         Assert.Equal(CompanionWorkRegionKind.DelimitedSquare, clone.Routine.AreaPresets[0].RegionKind, "discriminador de preset destacado");
         Assert.Equal(14, clone.Routine.AreaPresets[0].MinX, "min X de preset destacado");

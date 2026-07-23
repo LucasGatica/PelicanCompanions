@@ -100,39 +100,117 @@ public sealed partial class ModEntry
     private bool AreRoutineAreaPresetsHostValid(
         IEnumerable<CompanionRoutineAreaPreset>? presets)
     {
-        foreach (CompanionRoutineAreaPreset preset in
-                 CompanionRoutinePolicy.NormalizeAreaPresets(presets))
+        return CompanionRoutinePolicy.AreAreaPresetsValidForKnownMaps(
+            presets,
+            locationName =>
+            {
+                GameLocation? location = ResolvePersistentRoutineLocation(locationName);
+                if (location?.Map is null || location.Map.Layers.Count == 0)
+                    return null;
+
+                return (
+                    location.Map.Layers[0].LayerWidth,
+                    location.Map.Layers[0].LayerHeight);
+            });
+    }
+
+    private static GameLocation? ResolvePersistentRoutineLocation(string? locationName)
+    {
+        if (string.IsNullOrWhiteSpace(locationName))
+            return null;
+
+        GameLocation? match = null;
+        Utility.ForEachLocation(
+            location =>
+            {
+                if (location.IsTemporary
+                    || !string.Equals(
+                        location.NameOrUniqueName,
+                        locationName,
+                        StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                match = location;
+                return false;
+            },
+            includeInteriors: true,
+            includeGenerated: false);
+        return match;
+    }
+
+    private void RequestFollowCompanionRoutine(SquadMemberState member)
+    {
+        long ownerId = Game1.player.UniqueMultiplayerID;
+        if (!this.CanOwnerMutate(member, ownerId))
+            return;
+
+        if (!Context.IsMainPlayer)
         {
-            if (preset.RegionKind == CompanionWorkRegionKind.Circle)
-                continue;
-
-            GameLocation farm = Game1.getFarm();
-            if (!string.Equals(
-                    preset.LocationName,
-                    farm.NameOrUniqueName,
-                    StringComparison.Ordinal)
-                || farm.Map is null
-                || farm.Map.Layers.Count == 0)
-            {
-                return false;
-            }
-
-            if (preset.RegionKind == CompanionWorkRegionKind.FarmWide)
-                continue;
-
-            int mapWidth = farm.Map.Layers[0].LayerWidth;
-            int mapHeight = farm.Map.Layers[0].LayerHeight;
-            if (!CompanionWorkAreaPolicy.IsDelimitedSquareInsideMap(
-                    preset.MinX,
-                    preset.MinY,
-                    preset.Size,
-                    mapWidth,
-                    mapHeight))
-            {
-                return false;
-            }
+            this.SendActionRequest("FollowRoutine", member.NpcName);
+            return;
         }
 
+        this.TryFollowCompanionRoutine(member, ownerId);
+    }
+
+    private bool TryFollowCompanionRoutine(
+        SquadMemberState member,
+        long ownerId,
+        bool showMessage = true)
+    {
+        if (!Context.IsMainPlayer || !this.CanOwnerMutate(member, ownerId))
+            return false;
+
+        if (!this.TryGetOperationalProfile(
+                ownerId,
+                member.NpcName,
+                out CompanionOperationalProfileState? profile))
+        {
+            if (showMessage)
+            {
+                this.WarnForPlayer(
+                    ownerId,
+                    "companion.routine.follow_unavailable",
+                    new { npc = member.DisplayName });
+            }
+            return false;
+        }
+
+        CompanionRoutineState routine = profile.Routine ??= new CompanionRoutineState();
+        int dayIndex = Game1.Date.TotalDays;
+        if (!CompanionRoutinePolicy.CanResumeNow(routine, dayIndex)
+            || this.GetOwnerFarmer(ownerId) is null
+            || this.GetNpcByName(member.NpcName) is null)
+        {
+            if (showMessage)
+            {
+                this.WarnForPlayer(
+                    ownerId,
+                    "companion.routine.follow_unavailable",
+                    new { npc = member.DisplayName });
+            }
+            return false;
+        }
+
+        if (!routine.RepeatDaily && routine.ScheduledDayIndex < 0)
+            routine.ScheduledDayIndex = dayIndex;
+
+        // Clear every explicit/manual override through the same transition used
+        // by routine activities, then let the scheduler restore the current
+        // block. Its execution key is intentionally preserved so completed work
+        // and deposits aren't repeated by a simple "follow routine" command.
+        this.SetRoutineFollowing(member);
+        this.MarkStateDirty();
+        if (showMessage)
+        {
+            this.InfoForPlayer(
+                ownerId,
+                "companion.routine.following_now",
+                new { npc = member.DisplayName });
+        }
+        this.RefreshCompanionRoutine(member, allowOneShotExpiry: true);
         return true;
     }
 
@@ -318,6 +396,7 @@ public sealed partial class ModEntry
         NPC? npc = this.GetNpcByName(member.NpcName);
         this.PrepareForRoutineModeChange(member, npc);
         member.Mode = CompanionMode.Waiting;
+        member.RoutinePausedByPlayer = false;
         member.ParkedAtUtcTicks = 0;
         if (npc?.currentLocation is not null)
             this.StoreWaitingPosition(member, npc);
@@ -365,21 +444,11 @@ public sealed partial class ModEntry
 
         NPC? npc = this.GetNpcByName(member.NpcName);
         Farmer? owner = this.GetOwnerFarmer(member.OwnerId);
-        Farm farm = Game1.getFarm();
-        bool requiresMainFarm = preset.RegionKind is
-            CompanionWorkRegionKind.DelimitedSquare or CompanionWorkRegionKind.FarmWide;
-        GameLocation? location = preset.RegionKind == CompanionWorkRegionKind.FarmWide
-            ? farm
-            : Game1.getLocationFromName(preset.LocationName);
+        GameLocation? location = ResolvePersistentRoutineLocation(preset.LocationName);
         if (npc is null
             || owner is null
             || location?.Map is null
-            || location.Map.Layers.Count == 0
-            || requiresMainFarm
-                && !string.Equals(
-                    preset.LocationName,
-                    farm.NameOrUniqueName,
-                    StringComparison.Ordinal))
+            || location.Map.Layers.Count == 0)
         {
             this.SetCompanionActivity(member, "companion.status.work_area_paused");
             this.SetTaskFailure(member, "companion.task_failure.work_area_unavailable");
@@ -501,7 +570,13 @@ public sealed partial class ModEntry
         this.ReleaseWorkTargetsForNpc(member.NpcName);
         this.ClearCompanionWorkArea(member, cancelPendingAreaTask: true);
         this.ClearFollowState(member.NpcName);
-        if (!this.TryGetRoutineWorkStartTile(npc, location, preset, center, out Vector2 startTile)
+        if (!this.TryGetRoutineWorkStartTile(
+                npc,
+                location,
+                preset,
+                center,
+                radius,
+                out Vector2 startTile)
             || !this.PlaceNpc(npc, location, startTile))
         {
             this.workAreaPositionRecoveryNeeded.Add(member.NpcName);
@@ -513,6 +588,7 @@ public sealed partial class ModEntry
             center = NormalizeTile(startTile);
 
         member.Mode = CompanionMode.Following;
+        member.RoutinePausedByPlayer = false;
         member.ParkedAtUtcTicks = 0;
         member.WaitingLocationName = null;
         member.SearchWood = false;
@@ -547,14 +623,9 @@ public sealed partial class ModEntry
         GameLocation location,
         CompanionRoutineAreaPreset preset,
         Vector2 center,
+        int effectiveRadius,
         out Vector2 startTile)
     {
-        if (preset.RegionKind == CompanionWorkRegionKind.Circle)
-        {
-            startTile = center;
-            return true;
-        }
-
         if (preset.RegionKind == CompanionWorkRegionKind.FarmWide
             && npc.currentLocation == location
             && this.IsTileSafe(location, NormalizeTile(npc.Tile)))
@@ -564,9 +635,10 @@ public sealed partial class ModEntry
         }
 
         Vector2 preferred = center;
-        if (preset.RegionKind == CompanionWorkRegionKind.FarmWide)
+        if (preset.RegionKind == CompanionWorkRegionKind.FarmWide
+            && location is Farm farm)
         {
-            Point entry = Game1.getFarm().GetMainFarmHouseEntry();
+            Point entry = farm.GetMainFarmHouseEntry();
             preferred = new Vector2(entry.X, entry.Y);
             if (this.IsTileSafe(location, preferred))
             {
@@ -575,14 +647,32 @@ public sealed partial class ModEntry
             }
         }
 
-        int minX = preset.RegionKind == CompanionWorkRegionKind.DelimitedSquare ? preset.MinX : 0;
-        int minY = preset.RegionKind == CompanionWorkRegionKind.DelimitedSquare ? preset.MinY : 0;
-        int maxX = preset.RegionKind == CompanionWorkRegionKind.DelimitedSquare
-            ? preset.MinX + preset.Size - 1
-            : location.Map.Layers[0].LayerWidth - 1;
-        int maxY = preset.RegionKind == CompanionWorkRegionKind.DelimitedSquare
-            ? preset.MinY + preset.Size - 1
-            : location.Map.Layers[0].LayerHeight - 1;
+        int mapWidth = location.Map.Layers[0].LayerWidth;
+        int mapHeight = location.Map.Layers[0].LayerHeight;
+        int minX = preset.RegionKind switch
+        {
+            CompanionWorkRegionKind.Circle => Math.Max(0, preset.CenterX - effectiveRadius),
+            CompanionWorkRegionKind.DelimitedSquare => preset.MinX,
+            _ => 0
+        };
+        int minY = preset.RegionKind switch
+        {
+            CompanionWorkRegionKind.Circle => Math.Max(0, preset.CenterY - effectiveRadius),
+            CompanionWorkRegionKind.DelimitedSquare => preset.MinY,
+            _ => 0
+        };
+        int maxX = preset.RegionKind switch
+        {
+            CompanionWorkRegionKind.Circle => Math.Min(mapWidth - 1, preset.CenterX + effectiveRadius),
+            CompanionWorkRegionKind.DelimitedSquare => preset.MinX + preset.Size - 1,
+            _ => mapWidth - 1
+        };
+        int maxY = preset.RegionKind switch
+        {
+            CompanionWorkRegionKind.Circle => Math.Min(mapHeight - 1, preset.CenterY + effectiveRadius),
+            CompanionWorkRegionKind.DelimitedSquare => preset.MinY + preset.Size - 1,
+            _ => mapHeight - 1
+        };
         long bestDistance = long.MaxValue;
         Vector2 best = preferred;
         bool found = false;
@@ -591,8 +681,22 @@ public sealed partial class ModEntry
             for (int y = minY; y <= maxY; y++)
             {
                 Vector2 candidate = new(x, y);
-                if (!this.IsTileSafe(location, candidate))
+                if (!CompanionWorkAreaPolicy.ContainsRegion(
+                        preset.RegionKind,
+                        preset.CenterX,
+                        preset.CenterY,
+                        effectiveRadius,
+                        preset.MinX,
+                        preset.MinY,
+                        preset.Size,
+                        x,
+                        y,
+                        mapWidth,
+                        mapHeight)
+                    || !this.IsTileSafe(location, candidate))
+                {
                     continue;
+                }
 
                 long deltaX = x - (long)preferred.X;
                 long deltaY = y - (long)preferred.Y;
@@ -635,6 +739,7 @@ public sealed partial class ModEntry
         NPC? npc = this.GetNpcByName(member.NpcName);
         this.PrepareForRoutineModeChange(member, npc);
         member.Mode = CompanionMode.Following;
+        member.RoutinePausedByPlayer = false;
         member.ParkedAtUtcTicks = 0;
         member.WaitingLocationName = null;
         this.SetTaskFailure(member, "");
@@ -651,6 +756,7 @@ public sealed partial class ModEntry
 
         this.PrepareForRoutineModeChange(member, npc);
         member.Mode = CompanionMode.Waiting;
+        member.RoutinePausedByPlayer = false;
         member.ParkedAtUtcTicks = 0;
         this.StoreWaitingPosition(member, npc);
         this.SetTaskFailure(member, "");
@@ -677,6 +783,7 @@ public sealed partial class ModEntry
         this.ClearRoutineDirectives(member);
         this.ClearCompanionTarget(member);
         member.Mode = CompanionMode.OriginalRoutine;
+        member.RoutinePausedByPlayer = false;
         member.ParkedAtUtcTicks = 0;
         member.WaitingLocationName = null;
         this.SetTaskFailure(member, "");
@@ -690,6 +797,7 @@ public sealed partial class ModEntry
         catch (Exception ex)
         {
             member.Mode = CompanionMode.Following;
+            member.RoutinePausedByPlayer = false;
             this.SetTaskFailure(member, "companion.task_failure.routine_unavailable");
             this.SetCompanionActivity(member, "companion.status.following");
             if (!failureAlreadyReported)
@@ -820,6 +928,7 @@ public sealed partial class ModEntry
     private bool HasExplicitRoutineOverride(SquadMemberState member)
     {
         if (this.activeRecallTargets.ContainsKey(member.NpcName)
+            || member.RoutinePausedByPlayer
             || member.SearchWood
             || member.SearchMining
             || member.SearchWatering
@@ -834,8 +943,9 @@ public sealed partial class ModEntry
         if (!this.pendingTasks.TryGetValue(member.NpcName, out PendingCompanionTask? task))
             return false;
 
-        bool routineOwnedTask = task.UsesFixedWorkArea
-            && task.FixedWorkAreaOrderId.StartsWith("routine-", StringComparison.Ordinal);
+        bool routineOwnedTask = TaskNavigationPolicy.IsRoutineWorkOrder(
+            task.UsesFixedWorkArea,
+            task.FixedWorkAreaOrderId);
         return !routineOwnedTask && !task.UsesConfiguredAutonomy;
     }
 

@@ -5,7 +5,7 @@ namespace PelicanCompanions;
 
 internal sealed class ModConfig
 {
-    public int ConfigVersion { get; set; } = 8;
+    public int ConfigVersion { get; set; } = 9;
 
     public KeybindList QuickActionWheelKey { get; set; } = KeybindList.Parse("X");
     public KeybindList ControllerQuickActionWheelKey { get; set; } = KeybindList.Parse("LeftStick");
@@ -42,7 +42,15 @@ internal sealed class ModConfig
     public int DialogueCooldownSeconds { get; set; } = 45;
     public int CommunicationGroupCooldownSeconds { get; set; } = 3;
     public bool EnablePetExpressions { get; set; } = true;
-    public bool EnableIdleAnimations { get; set; } = false;
+    public bool EnableIdleAnimations { get; set; } = true;
+    public int IdleAnimationIntervalSeconds { get; set; } = 20;
+    public bool EnableCompanionInteractions { get; set; } = true;
+    public int CompanionInteractionCooldownSeconds { get; set; } = 90;
+
+    public SmartWaterRefillMode SmartWaterRefill { get; set; } = SmartWaterRefillMode.FarmOnly;
+    public int SmartWaterRefillSearchRadius { get; set; } = 16;
+    public bool EnableSmartToolSwap { get; set; } = false;
+    public SmartDepositMode SmartDeposit { get; set; } = SmartDepositMode.WhenFull;
 
     public bool EnableGathering { get; set; } = false;
     public TaskMode AttackingMode { get; set; } = TaskMode.Disabled;
@@ -94,6 +102,10 @@ internal sealed class ModConfig
             this.DisableTrashRummagingReaction = TrashReactionMode.Never;
         if (!Enum.IsDefined(this.FishingMode))
             this.FishingMode = FishingTaskMode.Disabled;
+        if (!Enum.IsDefined(this.SmartWaterRefill))
+            this.SmartWaterRefill = SmartWaterRefillMode.FarmOnly;
+        if (!Enum.IsDefined(this.SmartDeposit))
+            this.SmartDeposit = SmartDepositMode.WhenFull;
 
         this.AttackingMode = NormalizeTaskMode(this.AttackingMode, TaskMode.Disabled);
         this.HarvestingMode = NormalizeTaskMode(this.HarvestingMode, TaskMode.Mimicking);
@@ -107,6 +119,9 @@ internal sealed class ModConfig
 
         this.DialogueCooldownSeconds = Math.Max(0, this.DialogueCooldownSeconds);
         this.CommunicationGroupCooldownSeconds = Math.Clamp(this.CommunicationGroupCooldownSeconds, 1, 30);
+        this.IdleAnimationIntervalSeconds = Math.Clamp(this.IdleAnimationIntervalSeconds, 5, 300);
+        this.CompanionInteractionCooldownSeconds = Math.Clamp(this.CompanionInteractionCooldownSeconds, 15, 1800);
+        this.SmartWaterRefillSearchRadius = Math.Clamp(this.SmartWaterRefillSearchRadius, 3, 40);
         this.ProtectBeehouseFlowers = Math.Max(0, this.ProtectBeehouseFlowers);
         this.ParkTimeoutMinutes = Math.Max(0, this.ParkTimeoutMinutes);
     }
@@ -128,6 +143,22 @@ internal enum FishingTaskMode
 {
     Disabled,
     Mimicking
+}
+
+/// <summary>Where an empty companion watering can may be refilled automatically.</summary>
+internal enum SmartWaterRefillMode
+{
+    Disabled = 0,
+    FarmOnly = 1,
+    AnySafeWater = 2
+}
+
+/// <summary>When carried cargo should be routed to the assigned chest automatically.</summary>
+internal enum SmartDepositMode
+{
+    Disabled = 0,
+    WhenFull = 1,
+    AfterEveryTask = 2
 }
 
 internal enum CompanionFormationMode

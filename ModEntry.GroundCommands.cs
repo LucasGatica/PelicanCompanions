@@ -304,6 +304,7 @@ public sealed partial class ModEntry
         NPC npc)
     {
         member.Mode = CompanionMode.Waiting;
+        member.RoutinePausedByPlayer = true;
         member.ParkedAtUtcTicks = 0;
         this.StoreWaitingPosition(member, npc);
         this.SetTaskResult(member, "companion.task_result.waiting_at_point");
@@ -325,6 +326,7 @@ public sealed partial class ModEntry
         if (canWaitWhereStopped)
         {
             member.Mode = CompanionMode.Waiting;
+            member.RoutinePausedByPlayer = true;
             member.ParkedAtUtcTicks = 0;
             this.StoreWaitingPosition(member, npc!);
         }

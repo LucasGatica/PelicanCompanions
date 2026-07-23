@@ -1436,7 +1436,15 @@ public sealed partial class ModEntry
 
     private bool IsTileSafe(GameLocation location, Vector2 tile)
     {
+        tile = NormalizeTile(tile);
+        int x = (int)tile.X;
+        int y = (int)tile.Y;
         return this.IsTileTraversable(location, tile)
+            && !location.warps.Any(warp => warp.X == x && warp.Y == y)
+            && string.IsNullOrWhiteSpace(
+                location.doesTileHavePropertyNoNull(x, y, "Action", "Buildings"))
+            && string.IsNullOrWhiteSpace(
+                location.doesTileHavePropertyNoNull(x, y, "TouchAction", "Back"))
             && !location.IsTileOccupiedBy(tile, CollisionMask.Farmers)
             && !location.IsTileOccupiedBy(
                 tile,

@@ -80,8 +80,16 @@ public sealed partial class ModEntry
         this.AddIntOption(gmcm, "dialogueCooldownSeconds", () => this.config.DialogueCooldownSeconds, value => this.config.DialogueCooldownSeconds = value);
         this.AddIntOption(gmcm, "communicationGroupCooldownSeconds", () => this.config.CommunicationGroupCooldownSeconds, value => this.config.CommunicationGroupCooldownSeconds = value);
         this.AddBoolOption(gmcm, "enablePetExpressions", () => this.config.EnablePetExpressions, value => this.config.EnablePetExpressions = value);
+        this.AddBoolOption(gmcm, "enableIdleAnimations", () => this.config.EnableIdleAnimations, value => this.config.EnableIdleAnimations = value);
+        this.AddBoundedIntOption(gmcm, "idleAnimationIntervalSeconds", () => this.config.IdleAnimationIntervalSeconds, value => this.config.IdleAnimationIntervalSeconds = value, 5, 300);
+        this.AddBoolOption(gmcm, "enableCompanionInteractions", () => this.config.EnableCompanionInteractions, value => this.config.EnableCompanionInteractions = value);
+        this.AddBoundedIntOption(gmcm, "companionInteractionCooldownSeconds", () => this.config.CompanionInteractionCooldownSeconds, value => this.config.CompanionInteractionCooldownSeconds = value, 15, 1800);
 
         this.AddSection(gmcm, "config.section.tasks");
+        this.AddEnumOption(gmcm, "smartWaterRefill", () => this.config.SmartWaterRefill, value => this.config.SmartWaterRefill = value);
+        this.AddBoundedIntOption(gmcm, "smartWaterRefillSearchRadius", () => this.config.SmartWaterRefillSearchRadius, value => this.config.SmartWaterRefillSearchRadius = value, 3, 40);
+        this.AddBoolOption(gmcm, "enableSmartToolSwap", () => this.config.EnableSmartToolSwap, value => this.config.EnableSmartToolSwap = value);
+        this.AddEnumOption(gmcm, "smartDeposit", () => this.config.SmartDeposit, value => this.config.SmartDeposit = value);
         this.AddBoolOption(gmcm, "enableGathering", () => this.config.EnableGathering, value => this.config.EnableGathering = value);
         this.AddEnumOption(gmcm, "harvestingMode", () => this.config.HarvestingMode, value => this.config.HarvestingMode = value);
         this.AddIntOption(gmcm, "protectBeehouseFlowers", () => this.config.ProtectBeehouseFlowers, value => this.config.ProtectBeehouseFlowers = value);

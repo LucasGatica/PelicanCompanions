@@ -32,6 +32,10 @@ public sealed partial class ModEntry
     private PendingChestDestinationHandshake? pendingChestDestinationHandshake;
     private ItemGrabMenu? compactChestDestinationMenu;
     private int compactChestDestinationPage;
+    private readonly HashSet<string> pendingCompanionChestDeposits =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> companionChestDepositRetryAfterTicks =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private enum ChestDestinationSelection
     {
@@ -1732,6 +1736,9 @@ public sealed partial class ModEntry
         Item item,
         string context)
     {
+        if (!this.ShouldDepositCompanionItem(member, item))
+            return item;
+
         if (!this.TryResolveAssignedChest(member, out ResolvedDepositChest resolved)
             || !IsChestAvailableForDeposit(resolved.Chest))
         {
@@ -1832,22 +1839,150 @@ public sealed partial class ModEntry
 
         if (!Context.IsMainPlayer
             || !this.members.TryGetValue(member.NpcName, out SquadMemberState? activeMember)
-            || !ReferenceEquals(activeMember, member)
-            || !this.TryResolveAssignedChest(member, out ResolvedDepositChest resolved)
-            || !IsChestAvailableForDeposit(resolved.Chest))
+            || !ReferenceEquals(activeMember, member))
         {
             if (showFeedback)
                 this.WarnForPlayer(member.OwnerId, "chest_destination.deposit_unavailable", new { npc = member.DisplayName });
             return false;
         }
 
+        string pendingKey = GetPendingCompanionChestDepositKey(member);
+        if (this.pendingCompanionChestDeposits.Contains(pendingKey))
+            return false;
+        if (this.companionChestDepositRetryAfterTicks.TryGetValue(
+                pendingKey,
+                out int retryAfterTick)
+            && unchecked((int)((uint)Game1.ticks - (uint)retryAfterTick)) < 0)
+        {
+            return false;
+        }
+        if (!this.TryResolveAssignedChest(
+                member,
+                out ResolvedDepositChest resolved))
+        {
+            this.companionChestDepositRetryAfterTicks[pendingKey] =
+                unchecked(Game1.ticks + 300);
+            if (showFeedback)
+                this.WarnForPlayer(member.OwnerId, "chest_destination.deposit_unavailable", new { npc = member.DisplayName });
+            return false;
+        }
+
+        try
+        {
+            if (resolved.Chest.GetMutex().IsLockHeld())
+            {
+                return this.DepositCompanionInventoryToResolvedChestLocked(
+                    member,
+                    resolved,
+                    showFeedback);
+            }
+
+            this.pendingCompanionChestDeposits.Add(pendingKey);
+            this.SetCompanionActivity(member, "companion.status.depositing");
+            ResolvedDepositChest queuedChest = resolved;
+            ChestMutationQueueResult queueResult = this.QueueChestMutation(
+                queuedChest.Chest,
+                executeLocked: () =>
+                {
+                    try
+                    {
+                        if (!this.members.TryGetValue(
+                                member.NpcName,
+                                out SquadMemberState? liveMember)
+                            || !ReferenceEquals(liveMember, member)
+                            || !this.TryResolveAssignedChest(
+                                liveMember,
+                                out ResolvedDepositChest current)
+                            || !IsSameResolvedDepositChest(current, queuedChest)
+                            || !queuedChest.Chest.GetMutex().IsLockHeld())
+                        {
+                            this.companionChestDepositRetryAfterTicks[pendingKey] =
+                                unchecked(Game1.ticks + 60);
+                            if (showFeedback)
+                            {
+                                this.WarnForPlayer(
+                                    member.OwnerId,
+                                    "chest_destination.deposit_unavailable",
+                                    new { npc = member.DisplayName });
+                            }
+                            return false;
+                        }
+
+                        return this.DepositCompanionInventoryToResolvedChestLocked(
+                            liveMember,
+                            current,
+                            showFeedback);
+                    }
+                    catch (Exception ex)
+                    {
+                        this.companionChestDepositRetryAfterTicks[pendingKey] =
+                            unchecked(Game1.ticks + 60);
+                        this.Monitor.Log(
+                            $"Deferred companion chest deposit failed for '{member.NpcName}': {ex}",
+                            LogLevel.Error);
+                        if (showFeedback)
+                        {
+                            this.WarnForPlayer(
+                                member.OwnerId,
+                                "chest_destination.deposit_unavailable",
+                                new { npc = member.DisplayName });
+                        }
+                        return false;
+                    }
+                    finally
+                    {
+                        this.pendingCompanionChestDeposits.Remove(pendingKey);
+                        this.RestoreActivityAfterCompanionDeposit(member);
+                        this.SendStateSnapshot(member.OwnerId, force: true);
+                    }
+                },
+                lockFailed: () =>
+                {
+                    this.pendingCompanionChestDeposits.Remove(pendingKey);
+                    this.companionChestDepositRetryAfterTicks[pendingKey] =
+                        unchecked(Game1.ticks + 60);
+                    this.RestoreActivityAfterCompanionDeposit(member);
+                    if (showFeedback)
+                    {
+                        this.WarnForPlayer(
+                            member.OwnerId,
+                            "chest_destination.deposit_unavailable",
+                            new { npc = member.DisplayName });
+                    }
+                    this.SendStateSnapshot(member.OwnerId, force: true);
+                },
+                description:
+                    $"companion cargo deposit for '{member.NpcName}'");
+            return queueResult
+                == ChestMutationQueueResult.CompletedSuccessfully;
+        }
+        catch (Exception ex)
+        {
+            this.pendingCompanionChestDeposits.Remove(pendingKey);
+            this.companionChestDepositRetryAfterTicks[pendingKey] =
+                unchecked(Game1.ticks + 60);
+            this.RestoreActivityAfterCompanionDeposit(member);
+            this.Monitor.Log(
+                $"Could not acquire the assigned chest for '{member.NpcName}': {ex.Message}",
+                LogLevel.Warn);
+            if (showFeedback)
+                this.WarnForPlayer(member.OwnerId, "chest_destination.deposit_unavailable", new { npc = member.DisplayName });
+            return false;
+        }
+    }
+
+    private bool DepositCompanionInventoryToResolvedChestLocked(
+        SquadMemberState member,
+        ResolvedDepositChest resolved,
+        bool showFeedback)
+    {
         bool movedAny = false;
         int index = 0;
         while (index < member.Inventory.Count)
         {
             SavedItemStack saved = member.Inventory[index];
             Item? item = this.TryCreateItem(saved);
-            if (item is null || item is Tool)
+            if (item is null || item is Tool || !this.ShouldDepositCompanionItem(member, item))
             {
                 index++;
                 continue;
@@ -1885,6 +2020,29 @@ public sealed partial class ModEntry
         }
 
         bool complete = !this.HasCompanionDepositCargo(member);
+        if (complete)
+        {
+            this.companionChestDepositRetryAfterTicks.Remove(
+                GetPendingCompanionChestDepositKey(member));
+            if (member.LastFailureReasonKey is
+                "companion.task_failure.deposit_incomplete"
+                or "companion.task_failure.smart_deposit_unavailable")
+            {
+                this.SetTaskFailure(member, "");
+            }
+        }
+        else
+        {
+            this.companionChestDepositRetryAfterTicks[
+                GetPendingCompanionChestDepositKey(member)] =
+                unchecked(Game1.ticks + 300);
+            this.SetCompanionActivity(
+                member,
+                "companion.status.deposit_blocked");
+            this.SetTaskFailure(
+                member,
+                "companion.task_failure.deposit_incomplete");
+        }
         if (showFeedback)
         {
             if (complete)
@@ -1898,12 +2056,55 @@ public sealed partial class ModEntry
         return complete;
     }
 
+    private bool IsCompanionChestDepositPending(SquadMemberState member)
+    {
+        return this.pendingCompanionChestDeposits.Contains(
+            GetPendingCompanionChestDepositKey(member));
+    }
+
+    private static string GetPendingCompanionChestDepositKey(
+        SquadMemberState member)
+    {
+        return $"{member.OwnerId}|{member.NpcName}";
+    }
+
+    private static bool IsSameResolvedDepositChest(
+        ResolvedDepositChest current,
+        ResolvedDepositChest expected)
+    {
+        return ReferenceEquals(current.Chest, expected.Chest)
+            && string.Equals(
+                current.ChestId,
+                expected.ChestId,
+                StringComparison.Ordinal)
+            && string.Equals(
+                current.Location.NameOrUniqueName,
+                expected.Location.NameOrUniqueName,
+                StringComparison.Ordinal)
+            && NormalizeTile(current.Tile) == NormalizeTile(expected.Tile);
+    }
+
+    private void RestoreActivityAfterCompanionDeposit(
+        SquadMemberState member)
+    {
+        if (member.CurrentActivityKey != "companion.status.depositing")
+            return;
+
+        this.SetCompanionActivity(member, member.Mode switch
+        {
+            CompanionMode.Waiting => "companion.status.waiting",
+            CompanionMode.OriginalRoutine => "companion.status.original_routine",
+            CompanionMode.ParkedForDisconnect => "companion.status.parked",
+            _ => "companion.status.following"
+        });
+    }
+
     private bool HasCompanionDepositCargo(SquadMemberState member)
     {
         foreach (SavedItemStack saved in member.Inventory)
         {
             Item? item = this.TryCreateItem(saved);
-            if (item is null || item is not Tool)
+            if (item is null || item is not Tool && this.ShouldDepositCompanionItem(member, item))
                 return true;
         }
 

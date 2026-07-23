@@ -78,6 +78,60 @@
           "Overlay": true
         }
       ],
+      "LocationArrival": [
+        {
+          "Id": "generic.location-arrival",
+          "TextKey": "dialogue.LocationArrival.generic"
+        }
+      ],
+      "WeatherReaction": [
+        {
+          "Id": "generic.weather-reaction",
+          "TextKey": "dialogue.WeatherReaction.generic"
+        },
+        {
+          "Id": "generic.weather-reaction.rain",
+          "TextKey": "dialogue.WeatherReaction.rain",
+          "Condition": "rain"
+        },
+        {
+          "Id": "generic.weather-reaction.storm",
+          "TextKey": "dialogue.WeatherReaction.storm",
+          "Condition": "storm"
+        },
+        {
+          "Id": "generic.weather-reaction.snow",
+          "TextKey": "dialogue.WeatherReaction.snow",
+          "Condition": "snow"
+        },
+        {
+          "Id": "generic.weather-reaction.green-rain",
+          "TextKey": "dialogue.WeatherReaction.green_rain",
+          "Condition": "green_rain"
+        }
+      ],
+      "CompanionInteraction": [
+        {
+          "Id": "generic.companion-interaction",
+          "TextKey": "dialogue.CompanionInteraction.generic"
+        },
+        {
+          "Id": "generic.companion-interaction.friend",
+          "TextKey": "dialogue.CompanionInteraction.friend",
+          "Condition": "hearts>=8"
+        }
+      ],
+      "CompanionInteractionReply": [
+        {
+          "Id": "generic.companion-interaction-reply",
+          "TextKey": "dialogue.CompanionInteractionReply.generic"
+        },
+        {
+          "Id": "generic.companion-interaction-reply.friend",
+          "TextKey": "dialogue.CompanionInteractionReply.friend",
+          "Condition": "hearts>=8"
+        }
+      ],
       "Watering": [
         {
           "TextKey": "dialogue.Watering.generic",

@@ -1378,7 +1378,8 @@ public sealed partial class ModEntry
                 npc,
                 location,
                 new Point((int)targetTile.X, (int)targetTile.Y),
-                -1);
+                -1,
+                allowOffscreenCompletion: intent == CompanionMovementIntent.RoutineTask);
             if (controller.pathToEndPoint is null)
                 return false;
 
@@ -1465,6 +1466,7 @@ public sealed partial class ModEntry
             CompanionTaskKind.Harvesting => "companion.target.harvesting",
             CompanionTaskKind.Petting => "companion.target.petting",
             CompanionTaskKind.Fishing => "companion.target.fishing",
+            CompanionTaskKind.RefillingWater => "companion.target.water_source",
             _ => ""
         };
         int x = (int)tile.X;
@@ -1691,6 +1693,13 @@ public sealed partial class ModEntry
         this.ReleaseStandTile(task.NpcName, task.LocationName, task.StandTile);
         if (this.members.TryGetValue(task.NpcName, out SquadMemberState? member))
         {
+            if (string.IsNullOrWhiteSpace(failureKey)
+                && task.Kind is not CompanionTaskKind.MovingToWait
+                    and not CompanionTaskKind.RefillingWater)
+            {
+                this.TrySmartDepositAfterTask(member);
+            }
+
             NPC? npc = this.GetNpcByName(member.NpcName);
             if (npc is not null)
             {
@@ -1724,6 +1733,8 @@ public sealed partial class ModEntry
                 CompanionMode.Waiting => "companion.status.waiting",
                 CompanionMode.ParkedForDisconnect => "companion.status.parked",
                 CompanionMode.OriginalRoutine => "companion.status.original_routine",
+                _ when this.IsCompanionChestDepositPending(member) =>
+                    "companion.status.depositing",
                 _ when task.UsesFixedWorkArea && this.HasActiveWorkArea(member) =>
                     failureKey == "companion.task_failure.tasks_disabled"
                         ? "companion.status.work_area_paused"

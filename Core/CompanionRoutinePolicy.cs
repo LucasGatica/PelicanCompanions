@@ -76,6 +76,15 @@ internal static class CompanionRoutinePolicy
             && (routine.RepeatDaily || routine.ScheduledDayIndex == dayIndex);
     }
 
+    /// <summary>Whether an explicit player command may start the routine now.</summary>
+    public static bool CanResumeNow(CompanionRoutineState? routine, int dayIndex)
+    {
+        return routine?.Enabled == true
+            && (routine.RepeatDaily
+                || routine.ScheduledDayIndex < 0
+                || routine.ScheduledDayIndex == dayIndex);
+    }
+
     /// <summary>
     /// Select the only planning lane allowed for this update. Explicit player
     /// directives may override a block, but an active routine without one owns
@@ -143,6 +152,37 @@ internal static class CompanionRoutinePolicy
             or CompanionRoutineActivity.Clear;
     }
 
+    /// <summary>
+    /// Chooses the activity the routine editor should focus for one NPC. Prefer
+    /// the current work block, then scheduled work which still needs an area, so
+    /// an area click cannot silently target the unrelated Clear default.
+    /// </summary>
+    public static CompanionRoutineActivity GetPreferredEditorActivity(
+        CompanionRoutineState? routine,
+        int timeOfDay)
+    {
+        CompanionRoutineActivity current = GetActivity(routine?.Hours, timeOfDay);
+        if (TryGetWorkSpecialty(current, out _))
+            return current;
+
+        IReadOnlyList<CompanionRoutineActivity> scheduledWork = NormalizeHours(routine?.Hours)
+            .Select(hour => hour.Activity)
+            .Where(activity => TryGetWorkSpecialty(activity, out _))
+            .Distinct()
+            .ToList();
+        foreach (CompanionRoutineActivity activity in scheduledWork)
+        {
+            TryGetWorkSpecialty(activity, out CompanionWorkSpecialty specialty);
+            if (GetAreaPreset(routine, specialty) is null)
+                return activity;
+        }
+
+        // With no scheduled work there is no safe specialty to infer. Keeping a
+        // passive activity selected disables both area buttons until the player
+        // explicitly chooses Water, Wood, Mine, or Clear.
+        return scheduledWork.FirstOrDefault(CompanionRoutineActivity.Follow);
+    }
+
     public static bool IsValidAreaPreset(CompanionRoutineAreaPreset? area)
     {
         return area is not null
@@ -182,6 +222,39 @@ internal static class CompanionRoutinePolicy
         }
 
         return selected.Values.OrderBy(area => area.Specialty).ToList();
+    }
+
+    /// <summary>
+    /// Revalidates every normalized routine area against the concrete map which
+    /// will execute it. The resolver keeps this policy independent from
+    /// Stardew's loaded-location registry and makes multi-location presets
+    /// testable without a running game.
+    /// </summary>
+    public static bool AreAreaPresetsValidForKnownMaps(
+        IEnumerable<CompanionRoutineAreaPreset>? presets,
+        Func<string, (int Width, int Height)?> resolveMapSize)
+    {
+        ArgumentNullException.ThrowIfNull(resolveMapSize);
+        foreach (CompanionRoutineAreaPreset preset in NormalizeAreaPresets(presets))
+        {
+            (int Width, int Height)? mapSize = resolveMapSize(preset.LocationName);
+            if (mapSize is not { Width: > 0, Height: > 0 } dimensions
+                || !CompanionWorkAreaPolicy.IsRegionGeometryValid(
+                    preset.RegionKind,
+                    preset.CenterX,
+                    preset.CenterY,
+                    preset.Radius,
+                    preset.MinX,
+                    preset.MinY,
+                    preset.Size,
+                    dimensions.Width,
+                    dimensions.Height))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public static CompanionRoutineAreaPreset? GetAreaPreset(

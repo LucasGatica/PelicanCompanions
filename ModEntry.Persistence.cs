@@ -595,7 +595,11 @@ public sealed partial class ModEntry
             LumberingMode = this.config.LumberingMode,
             MiningMode = this.config.MiningMode,
             WateringMode = this.config.WateringMode,
-            PettingMode = this.config.PettingMode
+            PettingMode = this.config.PettingMode,
+            SmartWaterRefill = this.config.SmartWaterRefill,
+            SmartWaterRefillSearchRadius = this.config.SmartWaterRefillSearchRadius,
+            EnableSmartToolSwap = this.config.EnableSmartToolSwap,
+            SmartDeposit = this.config.SmartDeposit
         };
     }
 
@@ -1045,6 +1049,13 @@ public sealed partial class ModEntry
         rules.MiningMode = Enum.IsDefined(rules.MiningMode) ? rules.MiningMode : TaskMode.Disabled;
         rules.WateringMode = Enum.IsDefined(rules.WateringMode) ? rules.WateringMode : TaskMode.Disabled;
         rules.PettingMode = Enum.IsDefined(rules.PettingMode) ? rules.PettingMode : TaskMode.Disabled;
+        rules.SmartWaterRefill = Enum.IsDefined(rules.SmartWaterRefill)
+            ? rules.SmartWaterRefill
+            : SmartWaterRefillMode.FarmOnly;
+        rules.SmartWaterRefillSearchRadius = Math.Clamp(rules.SmartWaterRefillSearchRadius, 3, 40);
+        rules.SmartDeposit = Enum.IsDefined(rules.SmartDeposit)
+            ? rules.SmartDeposit
+            : SmartDepositMode.WhenFull;
         return rules;
     }
 

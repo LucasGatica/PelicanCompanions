@@ -37,7 +37,8 @@ public sealed partial class ModEntry
         Work,
         Stop,
         Dismiss,
-        Follow
+        Follow,
+        FollowRoutine
     }
 
     private readonly record struct ContextWorldTarget(
@@ -487,6 +488,7 @@ public sealed partial class ModEntry
         {
             this.CreateNpcWheelOption(npcName, CompanionNpcWheelAction.Profile, "wheel.profile", CompanionActionWheelTone.Profile),
             this.CreateNpcWheelOption(npcName, CompanionNpcWheelAction.Work, "wheel.work", CompanionActionWheelTone.Positive),
+            this.CreateNpcWheelOption(npcName, CompanionNpcWheelAction.FollowRoutine, "wheel.follow_routine", CompanionActionWheelTone.Follow),
             this.CreateNpcWheelOption(npcName, CompanionNpcWheelAction.Stop, "wheel.stop", CompanionActionWheelTone.Warning),
             this.CreateNpcWheelOption(npcName, CompanionNpcWheelAction.Dismiss, "wheel.dismiss", CompanionActionWheelTone.Danger),
             this.CreateNpcWheelOption(npcName, CompanionNpcWheelAction.Follow, "wheel.follow", CompanionActionWheelTone.Follow)
@@ -548,6 +550,9 @@ public sealed partial class ModEntry
                 break;
             case CompanionNpcWheelAction.Follow:
                 this.RecallCompanion(member.NpcName, member.OwnerId, showMessage: true);
+                break;
+            case CompanionNpcWheelAction.FollowRoutine:
+                this.RequestFollowCompanionRoutine(member);
                 break;
         }
     }

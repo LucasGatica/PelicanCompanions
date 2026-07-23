@@ -361,6 +361,8 @@ public sealed partial class ModEntry
 
             if (CompanionDialoguePolicy.CanSpeak(npc is Pet) && !string.IsNullOrWhiteSpace(text))
                 npc.showTextAboveHead(text);
+            if (message.FacingDirection is >= 0 and <= 3)
+                npc.faceDirection(message.FacingDirection);
             if (message.EmoteId >= 0)
                 npc.doEmote(message.EmoteId);
             if (message.JumpHeight > 0f)
@@ -470,7 +472,11 @@ public sealed partial class ModEntry
             || !string.IsNullOrWhiteSpace(context.FailureKey)
             || !string.IsNullOrWhiteSpace(context.ResultKey))
             return CompanionDialoguePriority.Command;
-        if (category.Equals("Idle", StringComparison.OrdinalIgnoreCase))
+        if (category.Equals("Idle", StringComparison.OrdinalIgnoreCase)
+            || category.Equals("LocationArrival", StringComparison.OrdinalIgnoreCase)
+            || category.Equals("WeatherReaction", StringComparison.OrdinalIgnoreCase)
+            || category.Equals("CompanionInteraction", StringComparison.OrdinalIgnoreCase)
+            || category.Equals("CompanionInteractionReply", StringComparison.OrdinalIgnoreCase))
             return CompanionDialoguePriority.Ambient;
         return CompanionDialoguePriority.Task;
     }

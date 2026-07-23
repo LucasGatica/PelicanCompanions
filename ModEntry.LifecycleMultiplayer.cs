@@ -409,6 +409,9 @@ public sealed partial class ModEntry
         this.companionProfiles.Clear();
         this.operationalProfiles.Clear();
         this.ownerLogistics.Clear();
+        this.CancelPendingChestMutations();
+        this.pendingCompanionChestDeposits.Clear();
+        this.companionChestDepositRetryAfterTicks.Clear();
         this.npcCosmetics.Clear();
         this.npcHatCache.Clear();
         this.npcHatFrameOffsets.Clear();
@@ -452,6 +455,8 @@ public sealed partial class ModEntry
         this.commandReplayGuard.Clear();
         this.dialogueScheduler.Clear();
         this.lastObservedCommunicationFailures.Clear();
+        this.inventoryTransferTokenWarnings.Clear();
+        this.ResetCompanionLifeState();
         this.vanillaMovementAllowances.Clear();
         this.controlledNpcLeases.Clear();
         this.localOwnerSimulationBlocks.Clear();
@@ -602,6 +607,7 @@ public sealed partial class ModEntry
         {
             this.ProcessDeferredActionRequests();
             this.UpdateOwnerTrails();
+            this.AdvanceTrackedFallingTreesOffscreen();
             this.ProcessPendingTasks();
             this.UpdateCompanionCommunication();
         }
@@ -649,6 +655,10 @@ public sealed partial class ModEntry
 
         if (e.IsMultipleOf(30))
             this.SendStateSnapshot();
+
+        // Cosmetic life runs after task planning/navigation so an NPC which
+        // starts work this tick cannot also be treated as idle.
+        this.UpdateCompanionLife();
     }
 
     private void OnTimeChanged(object? sender, TimeChangedEventArgs e)
@@ -764,7 +774,8 @@ public sealed partial class ModEntry
                     && expression.SoundCue.Length <= 128
                     && expression.EmoteId is >= -1 and <= 64
                     && expression.JumpHeight is >= 0f and <= 6f
-                    && expression.ShakeMilliseconds is >= 0 and <= 1000)
+                    && expression.ShakeMilliseconds is >= 0 and <= 1000
+                    && expression.FacingDirection is >= -1 and <= 3)
                 {
                     this.ApplyCompanionExpression(expression);
                 }
@@ -1007,6 +1018,18 @@ public sealed partial class ModEntry
                 this.RecallAllCompanions(playerId, showMessage: true);
                 break;
 
+            case "StopAllCompanionWork":
+                this.StopAllCompanionWork(playerId);
+                break;
+
+            case "DepositAllCompanionCargo":
+                this.DepositAllCompanionCargo(playerId);
+                break;
+
+            case "FollowAllCompanionRoutines":
+                this.FollowAllCompanionRoutines(playerId);
+                break;
+
             case "SetTasksEnabled":
                 if (message.DesiredEnabled is bool tasksEnabled)
                     this.SetTasksEnabled(playerId, tasksEnabled);
@@ -1021,6 +1044,11 @@ public sealed partial class ModEntry
                         message.Argument,
                         message.ExpectedStateToken);
                 }
+                break;
+
+            case "FollowRoutine":
+                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? followingRoutineMember))
+                    this.TryFollowCompanionRoutine(followingRoutineMember, playerId);
                 break;
 
             case "ManualTask":
@@ -1139,6 +1167,44 @@ public sealed partial class ModEntry
             case "WithdrawAllCompanionItems":
                 if (this.members.TryGetValue(message.NpcName, out SquadMemberState? allItemsMember))
                     this.WithdrawAllCompanionInventoryItems(allItemsMember, playerId);
+                break;
+
+            case "TransferInventory":
+                if (this.members.TryGetValue(message.NpcName, out SquadMemberState? transferMember)
+                    && TryParseInventoryTransferEndpoints(
+                        message.Argument,
+                        out CompanionInventoryEndpoint sourceEndpoint,
+                        out CompanionInventoryEndpoint destinationEndpoint))
+                {
+                    this.TransferInventoryItem(
+                        transferMember,
+                        playerId,
+                        sourceEndpoint,
+                        destinationEndpoint,
+                        message.Index,
+                        message.ExpectedItemToken,
+                        message.ExpectedStateToken,
+                        message.LocationName,
+                        message.TileX,
+                        message.TileY);
+                }
+                break;
+
+            case "SetInventoryFilter":
+                if (message.DesiredEnabled is bool filterEnabled
+                    && this.members.TryGetValue(message.NpcName, out SquadMemberState? filterMember)
+                    && Enum.TryParse(
+                        message.Argument,
+                        ignoreCase: true,
+                        out CompanionInventoryFilter filter)
+                    && Enum.IsDefined(filter))
+                {
+                    this.SetCompanionInventoryFilter(
+                        filterMember,
+                        playerId,
+                        filter,
+                        filterEnabled);
+                }
                 break;
 
             case "SetCompanionHat":

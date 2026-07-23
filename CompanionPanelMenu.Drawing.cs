@@ -314,8 +314,69 @@ internal sealed partial class CompanionPanelMenu
         this.focusTargets.AddRange(this.equipmentSlotsBounds.Select(p => p.Bounds));
         if (this.withdrawAllButton.Width > 0)
             this.focusTargets.Add(this.withdrawAllButton);
-        this.focusTargets.AddRange(this.inventorySlotsBounds.Select(p => p.Bounds));
+        this.focusTargets.AddRange(this.inventoryFilterButtons.Select(p => p.Bounds));
+        if (this.inventoryDrag is null)
+        {
+            this.focusTargets.AddRange(this.inventorySlotsBounds.Select(p => p.Bounds));
+            this.focusTargets.AddRange(this.playerInventorySlotsBounds.Select(p => p.Bounds));
+            this.focusTargets.AddRange(this.chestInventorySlotsBounds.Select(p => p.Bounds));
+        }
+        else
+        {
+            // Once a controller picks up an item, the three panes become the
+            // only inventory destinations. Avoid overlapping pane/slot focus
+            // targets and make the second confirm deterministic.
+            this.focusTargets.AddRange(this.inventoryPaneBounds.Select(p => p.Bounds));
+        }
+        if (this.controllerInventoryPageEndpoint
+                is CompanionInventoryEndpoint pagedEndpoint)
+        {
+            (Rectangle Bounds, CompanionInventoryEndpoint Endpoint) pane =
+                this.inventoryPaneBounds.FirstOrDefault(
+                    candidate => candidate.Endpoint == pagedEndpoint);
+            if (pane.Bounds.Width > 0)
+            {
+                int bestIndex = -1;
+                long bestDistance = long.MaxValue;
+                for (int index = 0; index < this.focusTargets.Count; index++)
+                {
+                    Point center = this.focusTargets[index].Center;
+                    if (!pane.Bounds.Contains(center))
+                        continue;
+
+                    long deltaX = center.X - (long)this.controllerInventoryPageFocus.X;
+                    long deltaY = center.Y - (long)this.controllerInventoryPageFocus.Y;
+                    long distance = deltaX * deltaX + deltaY * deltaY;
+                    if (distance >= bestDistance)
+                        continue;
+
+                    bestDistance = distance;
+                    bestIndex = index;
+                }
+                if (bestIndex >= 0)
+                    this.focusedControlIndex = bestIndex;
+            }
+        }
         this.AddRoutineFocusTargets(this.focusTargets);
+        this.AddTeamDashboardFocusTargets(this.focusTargets);
+
+        if (this.focusInventoryDestinationOnNextRebuild)
+        {
+            if (this.inventoryDrag is InventoryDragState drag)
+            {
+                CompanionInventoryEndpoint preferredEndpoint =
+                    GetQuickTransferDestination(drag.Source);
+                (Rectangle Bounds, CompanionInventoryEndpoint Endpoint) preferred =
+                    this.inventoryPaneBounds.FirstOrDefault(
+                        pane => pane.Endpoint == preferredEndpoint);
+                if (preferred.Bounds.Width > 0)
+                {
+                    this.focusedControlIndex = this.focusTargets.FindIndex(
+                        bounds => bounds == preferred.Bounds);
+                }
+            }
+            this.focusInventoryDestinationOnNextRebuild = false;
+        }
 
         if (this.focusSkillOnNextRebuild && this.skillButtons.Count > 0)
         {
@@ -352,6 +413,7 @@ internal sealed partial class CompanionPanelMenu
     {
         if (this.focusTargets.Count == 0)
             return;
+        this.controllerInventoryPageEndpoint = null;
         if (this.focusedControlIndex < 0)
             this.focusedControlIndex = 0;
         else
@@ -365,6 +427,7 @@ internal sealed partial class CompanionPanelMenu
     {
         if (this.focusTargets.Count == 0 || (horizontal == 0 && vertical == 0))
             return;
+        this.controllerInventoryPageEndpoint = null;
         if (this.focusedControlIndex < 0 || this.focusedControlIndex >= this.focusTargets.Count)
         {
             this.MoveFocus(1);
@@ -417,7 +480,15 @@ internal sealed partial class CompanionPanelMenu
             return;
         }
         Rectangle target = this.focusTargets[this.focusedControlIndex];
-        this.receiveLeftClick(target.Center.X, target.Center.Y);
+        this.activatingFocusedControl = true;
+        try
+        {
+            this.receiveLeftClick(target.Center.X, target.Center.Y);
+        }
+        finally
+        {
+            this.activatingFocusedControl = false;
+        }
     }
 
     private void DrawFocus(SpriteBatch b)
@@ -439,7 +510,15 @@ internal sealed partial class CompanionPanelMenu
 
     private void CycleTab(int delta)
     {
-        PanelTab[] tabs = { PanelTab.Overview, PanelTab.Work, PanelTab.Skills, PanelTab.Inventory, PanelTab.Routine };
+        PanelTab[] tabs =
+        {
+            PanelTab.Overview,
+            PanelTab.Work,
+            PanelTab.Skills,
+            PanelTab.Inventory,
+            PanelTab.Routine,
+            PanelTab.Team
+        };
         int index = Array.IndexOf(tabs, this.currentTab);
         this.SetTab(tabs[(index + delta + tabs.Length) % tabs.Length]);
     }
@@ -448,7 +527,9 @@ internal sealed partial class CompanionPanelMenu
     {
         if (this.currentTab == tab)
             return;
+        this.inventoryDrag = null;
         this.currentTab = tab;
+        this.ResetInventoryViewport();
         this.focusedControlIndex = -1;
         this.hoverText = "";
         this.focusSkillOnNextRebuild = tab == PanelTab.Skills;
@@ -466,11 +547,13 @@ internal sealed partial class CompanionPanelMenu
             PanelTab.Skills when compact => "companion.panel.tab_skills_short",
             PanelTab.Inventory when compact => "companion.panel.tab_inventory_short",
             PanelTab.Routine when compact => "companion.panel.tab_routine_short",
+            PanelTab.Team when compact => "companion.panel.tab_team_short",
             PanelTab.Overview => "companion.panel.tab_overview",
             PanelTab.Work => "companion.panel.tab_work",
             PanelTab.Skills => "companion.panel.tab_skills",
             PanelTab.Inventory => "companion.panel.tab_inventory",
             PanelTab.Routine => "companion.panel.tab_routine",
+            PanelTab.Team => "companion.panel.tab_team",
             _ => "companion.panel.tab_overview"
         }, null);
     }
@@ -509,7 +592,9 @@ internal sealed partial class CompanionPanelMenu
         string npcName = members[selectedIndex].NpcName;
         if (string.Equals(this.selectedNpcName, npcName, StringComparison.OrdinalIgnoreCase))
             return false;
+        this.inventoryDrag = null;
         this.selectedNpcName = npcName;
+        this.ResetInventoryViewport();
         this.EnsureSelectedMemberVisible(members, selectedIndex);
         return true;
     }
@@ -779,6 +864,7 @@ internal sealed partial class CompanionPanelMenu
         Work,
         Skills,
         Inventory,
-        Routine
+        Routine,
+        Team
     }
 }

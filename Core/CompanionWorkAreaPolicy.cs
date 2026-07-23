@@ -58,7 +58,11 @@ internal static class CompanionWorkAreaPolicy
             && tileY < bottomExclusive;
     }
 
-    /// <summary>Whether a tile belongs to a map-wide region with trusted positive dimensions.</summary>
+    /// <summary>
+    /// Whether a tile belongs to a location-wide region with trusted positive
+    /// dimensions. The method keeps its historical FarmWide name for save/API
+    /// compatibility, but it applies to any concrete map.
+    /// </summary>
     public static bool ContainsFarmWide(int mapWidth, int mapHeight, int tileX, int tileY)
     {
         return mapWidth > 0
@@ -131,13 +135,15 @@ internal static class CompanionWorkAreaPolicy
         return regionKind switch
         {
             CompanionWorkRegionKind.Circle => IsRegionGeometryValid(
-                regionKind,
-                centerX,
-                centerY,
-                radius,
-                minX,
-                minY,
-                size),
+                    regionKind,
+                    centerX,
+                    centerY,
+                    radius,
+                    minX,
+                    minY,
+                    size)
+                && centerX < mapWidth
+                && centerY < mapHeight,
             CompanionWorkRegionKind.DelimitedSquare => IsSquareGeometryValid(
                 minX,
                 minY,

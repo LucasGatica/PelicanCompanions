@@ -11,7 +11,7 @@ namespace PelicanCompanions;
 internal readonly record struct RoutineAreaSelectionPreset(int MinX, int MinY, int Size);
 
 /// <summary>
-/// Farm-view picker for a square routine work area. It intentionally imitates
+/// Map-view picker for a square routine work area. It intentionally imitates
 /// the public camera/view flow used by the carpenter menu without inheriting
 /// its building, resource, or multiplayer-lock behavior.
 /// </summary>
@@ -35,7 +35,7 @@ internal sealed class RoutineAreaSelectionMenu : IClickableMenu
     private static readonly Color CancelFill = new(205, 116, 92);
 
     private readonly IClickableMenu returnMenu;
-    private readonly Farm farm;
+    private readonly GameLocation targetLocation;
     private readonly Func<string, object?, string> translate;
     private readonly Action<int, int, int> onConfirm;
     private readonly GameLocation originLocation;
@@ -64,25 +64,25 @@ internal sealed class RoutineAreaSelectionMenu : IClickableMenu
 
     public RoutineAreaSelectionMenu(
         IClickableMenu returnMenu,
-        Farm farm,
+        GameLocation targetLocation,
         RoutineAreaSelectionPreset? initialPreset,
         Func<string, object?, string> translate,
         Action<int, int, int> onConfirm)
         : base(0, 0, Game1.uiViewport.Width, Game1.uiViewport.Height, false)
     {
         this.returnMenu = returnMenu ?? throw new ArgumentNullException(nameof(returnMenu));
-        this.farm = farm ?? throw new ArgumentNullException(nameof(farm));
+        this.targetLocation = targetLocation ?? throw new ArgumentNullException(nameof(targetLocation));
         this.translate = translate ?? throw new ArgumentNullException(nameof(translate));
         this.onConfirm = onConfirm ?? throw new ArgumentNullException(nameof(onConfirm));
 
-        if (farm.Map is null || farm.Map.Layers.Count == 0)
-            throw new ArgumentException("The farm must have a loaded map.", nameof(farm));
+        if (targetLocation.Map is null || targetLocation.Map.Layers.Count == 0)
+            throw new ArgumentException("The target location must have a loaded map.", nameof(targetLocation));
 
-        this.mapWidth = farm.Map.Layers[0].LayerWidth;
-        this.mapHeight = farm.Map.Layers[0].LayerHeight;
+        this.mapWidth = targetLocation.Map.Layers[0].LayerWidth;
+        this.mapHeight = targetLocation.Map.Layers[0].LayerHeight;
         int mapMaximumSize = Math.Min(MaximumSize, Math.Min(this.mapWidth, this.mapHeight));
         if (mapMaximumSize < MinimumSize)
-            throw new ArgumentException("The farm map is too small for a routine area.", nameof(farm));
+            throw new ArgumentException("The target map is too small for a routine area.", nameof(targetLocation));
 
         this.originLocation = Game1.currentLocation
             ?? throw new InvalidOperationException("A current location is required to open the routine area picker.");
@@ -105,15 +105,14 @@ internal sealed class RoutineAreaSelectionMenu : IClickableMenu
         else
         {
             this.size = Math.Clamp(DefaultSize, MinimumSize, mapMaximumSize);
-            Point farmhouseEntry = farm.GetMainFarmHouseEntry();
             this.initialCenterTile = new Point(
-                Math.Clamp(farmhouseEntry.X, 0, this.mapWidth - 1),
-                Math.Clamp(farmhouseEntry.Y, 0, this.mapHeight - 1));
+                Math.Clamp(this.originTile.X, 0, this.mapWidth - 1),
+                Math.Clamp(this.originTile.Y, 0, this.mapHeight - 1));
         }
 
         this.ReflowButtons();
         Game1.player.forceCanMove();
-        Game1.globalFadeToBlack(this.EnterFarmView, 0.02f);
+        Game1.globalFadeToBlack(this.EnterLocationView, 0.02f);
     }
 
     public override bool shouldClampGamePadCursor()
@@ -340,11 +339,19 @@ internal sealed class RoutineAreaSelectionMenu : IClickableMenu
 
         string title = this.GetText(
             "companion.routine.area_selector.title",
-            new { size = this.size },
+            new
+            {
+                size = this.size,
+                location = this.targetLocation.NameOrUniqueName
+            },
             $"Routine work area — {this.size} × {this.size}");
         string hint = this.GetText(
             "companion.routine.area_selector.hint",
-            new { size = this.size },
+            new
+            {
+                size = this.size,
+                location = this.targetLocation.NameOrUniqueName
+            },
             "Move the cursor to position the square. Scroll or LB/RB changes its size.");
         int bannerWidth = Math.Min(Math.Max(360, (int)Math.Max(
             Game1.smallFont.MeasureString(title).X,
@@ -385,15 +392,18 @@ internal sealed class RoutineAreaSelectionMenu : IClickableMenu
         base.cleanupBeforeExit();
     }
 
-    private void EnterFarmView()
+    private void EnterLocationView()
     {
         if (this.returning || this.restored)
             return;
 
-        Game1.currentLocation.cleanupBeforePlayerExit();
-        Game1.currentLocation = this.farm;
-        Game1.player.viewingLocation.Value = this.farm.NameOrUniqueName;
-        this.farm.resetForPlayerEntry();
+        if (Game1.currentLocation != this.targetLocation)
+        {
+            Game1.currentLocation.cleanupBeforePlayerExit();
+            Game1.currentLocation = this.targetLocation;
+            this.targetLocation.resetForPlayerEntry();
+        }
+        Game1.player.viewingLocation.Value = this.targetLocation.NameOrUniqueName;
         Game1.displayHUD = false;
         Game1.viewportFreeze = true;
         Game1.displayFarmer = false;
@@ -431,6 +441,12 @@ internal sealed class RoutineAreaSelectionMenu : IClickableMenu
         if (confirm)
             this.confirmedArea = this.GetSelection();
         Game1.playSound(confirm ? "smallSelect" : "bigDeSelect");
+
+        if (Game1.currentLocation == this.originLocation)
+        {
+            this.OnReturnedToOrigin();
+            return;
+        }
 
         try
         {

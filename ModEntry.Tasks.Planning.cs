@@ -144,6 +144,20 @@ public sealed partial class ModEntry
                 ? CompanionWorkAreaPolicy.Allows(member.WorkAreaSpecialty, CompanionTaskKind.Watering)
                 : member.SearchWatering)
             && this.GetConfiguredTaskMode(CompanionTaskKind.Watering) != TaskMode.Disabled;
+        if (requestedWood)
+            this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Lumbering);
+        if (requestedMining)
+            this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Mining);
+        if (includeWatering)
+            this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Watering);
+
+        if (includeWatering
+            && this.HasEmptyCompanionWateringCan(member)
+            && this.TryQueueSmartWaterRefill(member, location))
+        {
+            return true;
+        }
+
         bool hasAxe = this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering);
         bool hasPickaxe = this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Mining);
         bool hasWateringCan = this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Watering);
@@ -316,6 +330,11 @@ public sealed partial class ModEntry
 
     private bool TryAssignConfiguredAutonomousTask(SquadMemberState member)
     {
+        if (this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) == TaskMode.Autonomous)
+            this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Lumbering);
+        if (this.GetConfiguredTaskMode(CompanionTaskKind.Mining) == TaskMode.Autonomous)
+            this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Mining);
+
         bool includeWood = this.GetConfiguredTaskMode(CompanionTaskKind.Lumbering) == TaskMode.Autonomous
             && this.HasUsableCompanionToolForTask(member, CompanionTaskKind.Lumbering);
         bool includeMining = this.GetConfiguredTaskMode(CompanionTaskKind.Mining) == TaskMode.Autonomous
@@ -1004,6 +1023,7 @@ public sealed partial class ModEntry
         if (this.GetConfiguredTaskMode(CompanionTaskKind.Watering) == TaskMode.Disabled)
             return false;
 
+        Vector2 targetTile = NormalizeTile(rawTargetTile);
         if (!this.TryGetEquippedTool(member, CompanionEquipmentSlot.WateringCan, out WateringCan wateringCan))
         {
             this.SetTaskFailure(member, "companion.task_failure.need_watering_can");
@@ -1012,11 +1032,27 @@ public sealed partial class ModEntry
 
         if (wateringCan.WaterLeft <= 0)
         {
-            this.SetTaskFailure(member, "companion.task_failure.watering_can_empty");
-            return false;
+            if (this.TryQueueSmartWaterRefill(
+                    member,
+                    location,
+                    targetTile,
+                    manual: false))
+            {
+                return true;
+            }
+
+            if (!this.TryEnsureSmartToolForTask(member, CompanionTaskKind.Watering)
+                || !this.TryGetEquippedTool(
+                    member,
+                    CompanionEquipmentSlot.WateringCan,
+                    out wateringCan)
+                || wateringCan.WaterLeft <= 0)
+            {
+                this.SetTaskFailure(member, "companion.task_failure.watering_can_empty");
+                return false;
+            }
         }
 
-        Vector2 targetTile = NormalizeTile(rawTargetTile);
         if (!this.IsValidWateringTarget(location, targetTile))
         {
             this.SetTaskFailure(member, "companion.task_failure.target_lost");

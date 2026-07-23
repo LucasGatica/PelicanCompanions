@@ -38,6 +38,19 @@ internal sealed class CompanionEquipmentState
     public SavedItemStack? FishingRod { get; set; }
 }
 
+/// <summary>Per-owner/NPC rules used by manual and automatic cargo routing.</summary>
+internal sealed class CompanionInventoryRulesState
+{
+    /// <summary>Allow wood and hardwood to be deposited into the assigned chest.</summary>
+    public bool DepositWood { get; set; } = true;
+
+    /// <summary>Allow stone, coal, ore, bars, gems, and minerals to be deposited.</summary>
+    public bool DepositMinerals { get; set; } = true;
+
+    /// <summary>Keep edible items in companion cargo during filtered deposits.</summary>
+    public bool KeepFood { get; set; } = false;
+}
+
 internal sealed class CompanionRoutineHourState
 {
     public int Hour { get; set; }
@@ -104,6 +117,7 @@ internal sealed class CompanionOperationalProfileState
     public string NpcName { get; set; } = "";
     public long OwnerId { get; set; }
     public CompanionEquipmentState Equipment { get; set; } = new();
+    public CompanionInventoryRulesState InventoryRules { get; set; } = new();
     public CompanionRoutineState Routine { get; set; } = new();
     public CompanionChestDestinationState? ChestDestination { get; set; }
 }
@@ -214,8 +228,20 @@ internal static class CompanionOperationsStateCopy
             NpcName = source.NpcName,
             OwnerId = source.OwnerId,
             Equipment = CloneEquipment(source.Equipment),
+            InventoryRules = CloneInventoryRules(source.InventoryRules),
             Routine = CloneRoutine(source.Routine),
             ChestDestination = CloneChest(source.ChestDestination)
+        };
+    }
+
+    public static CompanionInventoryRulesState CloneInventoryRules(CompanionInventoryRulesState? source)
+    {
+        source ??= new CompanionInventoryRulesState();
+        return new CompanionInventoryRulesState
+        {
+            DepositWood = source.DepositWood,
+            DepositMinerals = source.DepositMinerals,
+            KeepFood = source.KeepFood
         };
     }
 

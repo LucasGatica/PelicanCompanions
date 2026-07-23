@@ -71,6 +71,10 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private readonly Func<SquadMemberState, CompanionPanelMapInfo> getMapInfo;
     private readonly Func<SquadMemberState, CompanionDirective, string> getDirectivePreviewText;
     private readonly Func<SquadMemberState, List<Item>> getInventoryItems;
+    private readonly Func<SquadMemberState, CompanionInventoryWorkspace> getInventoryWorkspace;
+    private readonly Func<SquadMemberState, CompanionInventoryTransferRequest, bool> transferInventoryItem;
+    private readonly Func<SquadMemberState, CompanionInventoryFilter, bool> getInventoryFilter;
+    private readonly Func<SquadMemberState, CompanionInventoryFilter, bool> toggleInventoryFilter;
     private readonly Func<SquadMemberState, Item?> getEquippedHat;
     private readonly Func<SquadMemberState, bool> hasEquippedHat;
     private readonly Func<SquadMemberState, bool> changeHat;
@@ -95,9 +99,15 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private readonly List<(Rectangle Bounds, string SkillId)> skillButtons = new();
     private readonly List<(Rectangle Bounds, CompanionEquipmentSlot Slot)> equipmentSlotsBounds = new();
     private readonly List<(Rectangle Bounds, int Index)> inventorySlotsBounds = new();
+    private readonly List<(Rectangle Bounds, int Index)> playerInventorySlotsBounds = new();
+    private readonly List<(Rectangle Bounds, int Index)> chestInventorySlotsBounds = new();
+    private readonly List<(Rectangle Bounds, CompanionInventoryEndpoint Endpoint)> inventoryPaneBounds = new();
+    private readonly List<InventoryPanePageState> inventoryPanePages = new();
+    private readonly List<(Rectangle Bounds, CompanionInventoryFilter Filter)> inventoryFilterButtons = new();
     private readonly List<Rectangle> focusTargets = new();
     private readonly Dictionary<string, PortraitCacheEntry> portraitCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, InventoryDisplayCacheEntry> inventoryDisplayCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<CompanionInventoryEndpoint, int> inventoryPageOffsets = new();
 
     private Rectangle memberListArea;
     private Rectangle previousMemberButton;
@@ -114,11 +124,19 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     private int focusedControlIndex = -1;
     private string? selectedNpcName;
     private string? inspectedSkillId;
-    private PanelTab currentTab = PanelTab.Overview;
+    private PanelTab currentTab = PanelTab.Team;
     private string hoverText = "";
     private bool wideLayout;
     private bool focusSkillOnNextRebuild;
     private bool skillDetailsEmbedded;
+    private InventoryDragState? inventoryDrag;
+    private CompanionInventoryWorkspace? inventoryWorkspaceCache;
+    private string inventoryWorkspaceCacheNpcName = "";
+    private int inventoryWorkspaceCacheUntilTick;
+    private bool activatingFocusedControl;
+    private bool focusInventoryDestinationOnNextRebuild;
+    private CompanionInventoryEndpoint? controllerInventoryPageEndpoint;
+    private Point controllerInventoryPageFocus;
 
     public CompanionPanelMenu(
         Func<IEnumerable<SquadMemberState>> getMembers,
@@ -131,6 +149,10 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         Func<SquadMemberState, CompanionPanelMapInfo> getMapInfo,
         Func<SquadMemberState, CompanionDirective, string> getDirectivePreviewText,
         Func<SquadMemberState, List<Item>> getInventoryItems,
+        Func<SquadMemberState, CompanionInventoryWorkspace> getInventoryWorkspace,
+        Func<SquadMemberState, CompanionInventoryTransferRequest, bool> transferInventoryItem,
+        Func<SquadMemberState, CompanionInventoryFilter, bool> getInventoryFilter,
+        Func<SquadMemberState, CompanionInventoryFilter, bool> toggleInventoryFilter,
         Func<SquadMemberState, Item?> getEquippedHat,
         Func<SquadMemberState, bool> hasEquippedHat,
         Func<SquadMemberState, bool> changeHat,
@@ -165,6 +187,10 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.getMapInfo = getMapInfo;
         this.getDirectivePreviewText = getDirectivePreviewText;
         this.getInventoryItems = getInventoryItems;
+        this.getInventoryWorkspace = getInventoryWorkspace;
+        this.transferInventoryItem = transferInventoryItem;
+        this.getInventoryFilter = getInventoryFilter;
+        this.toggleInventoryFilter = toggleInventoryFilter;
         this.getEquippedHat = getEquippedHat;
         this.hasEquippedHat = hasEquippedHat;
         this.changeHat = changeHat;
@@ -211,6 +237,14 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         {
             if (!bounds.Contains(x, y))
                 continue;
+            if (!string.Equals(
+                    this.selectedNpcName,
+                    npcName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                this.inventoryDrag = null;
+                this.ResetInventoryViewport();
+            }
             this.selectedNpcName = npcName;
             Game1.playSound("smallSelect");
             return;
@@ -227,6 +261,12 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         SquadMemberState? selected = this.GetSelectedMember();
         if (selected is null)
             return;
+
+        if (this.currentTab == PanelTab.Team
+            && this.TryHandleTeamDashboardClick(x, y))
+        {
+            return;
+        }
 
         if (this.waitButton.Contains(x, y))
         {
@@ -253,6 +293,7 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         {
             if (this.hatSlot.Contains(x, y))
             {
+                this.InvalidateInventoryWorkspaceCache();
                 Game1.playSound(this.changeHat(selected) ? "coin" : "cancel");
                 return;
             }
@@ -261,23 +302,28 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             {
                 if (!bounds.Contains(x, y))
                     continue;
+                this.InvalidateInventoryWorkspaceCache();
                 Game1.playSound(this.changeEquipment(selected, slot) ? "coin" : "cancel");
                 return;
             }
 
             if (this.withdrawAllButton.Contains(x, y))
             {
+                this.InvalidateInventoryWorkspaceCache();
                 Game1.playSound(this.withdrawAllInventoryItems(selected) ? "coin" : "cancel");
                 return;
             }
 
-            foreach ((Rectangle bounds, int index) in this.inventorySlotsBounds)
+            foreach ((Rectangle bounds, CompanionInventoryFilter filter) in this.inventoryFilterButtons)
             {
                 if (!bounds.Contains(x, y))
                     continue;
-                Game1.playSound(this.withdrawInventoryItem(selected, index) ? "coin" : "cancel");
+                Game1.playSound(this.toggleInventoryFilter(selected, filter) ? "smallSelect" : "cancel");
                 return;
             }
+
+            if (this.TryBeginInventoryDrag(selected, x, y))
+                return;
         }
         else if (this.currentTab == PanelTab.Work)
         {
@@ -327,6 +373,12 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
     {
         if (key is Keys.Escape or Keys.E)
         {
+            if (this.inventoryDrag is not null)
+            {
+                this.inventoryDrag = null;
+                Game1.playSound("bigDeSelect");
+                return;
+            }
             this.CloseMenu();
             return;
         }
@@ -350,19 +402,33 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 return;
             case Keys.Up:
             case Keys.W:
-                if (this.SelectRelativeMember(-1))
+                if ((this.currentTab == PanelTab.Team
+                        ? this.SelectRelativeTeamDashboardMember(-1)
+                        : this.SelectRelativeMember(-1)))
                     Game1.playSound("shiny4");
                 return;
             case Keys.Down:
             case Keys.S:
-                if (this.SelectRelativeMember(1))
+                if ((this.currentTab == PanelTab.Team
+                        ? this.SelectRelativeTeamDashboardMember(1)
+                        : this.SelectRelativeMember(1)))
                     Game1.playSound("shiny4");
                 return;
             case Keys.PageUp:
+                if (this.currentTab == PanelTab.Inventory)
+                {
+                    this.TryScrollFocusedInventoryPane(1);
+                    return;
+                }
                 if (this.SelectRelativeMember(-this.GetVisibleMemberRowCount()))
                     Game1.playSound("shiny4");
                 return;
             case Keys.PageDown:
+                if (this.currentTab == PanelTab.Inventory)
+                {
+                    this.TryScrollFocusedInventoryPane(-1);
+                    return;
+                }
                 if (this.SelectRelativeMember(this.GetVisibleMemberRowCount()))
                     Game1.playSound("shiny4");
                 return;
@@ -387,6 +453,9 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             case Keys.D5:
                 this.SetTab(PanelTab.Routine);
                 return;
+            case Keys.D6:
+                this.SetTab(PanelTab.Team);
+                return;
             default:
                 base.receiveKeyPress(key);
                 return;
@@ -399,6 +468,12 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         {
             case Buttons.B:
             case Buttons.Back:
+                if (this.inventoryDrag is not null)
+                {
+                    this.inventoryDrag = null;
+                    Game1.playSound("bigDeSelect");
+                    return;
+                }
                 this.CloseMenu();
                 return;
             case Buttons.LeftShoulder:
@@ -408,34 +483,54 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 this.CycleTab(1);
                 return;
             case Buttons.DPadUp:
-                if (this.currentTab == PanelTab.Skills)
+                if (this.currentTab is PanelTab.Skills or PanelTab.Inventory)
                 {
                     this.MoveFocusSpatial(0, -1);
                     return;
                 }
-                if (this.SelectRelativeMember(-1))
+                if ((this.currentTab == PanelTab.Team
+                        ? this.SelectRelativeTeamDashboardMember(-1)
+                        : this.SelectRelativeMember(-1)))
                     Game1.playSound("shiny4");
                 return;
             case Buttons.DPadDown:
-                if (this.currentTab == PanelTab.Skills)
+                if (this.currentTab is PanelTab.Skills or PanelTab.Inventory)
                 {
                     this.MoveFocusSpatial(0, 1);
                     return;
                 }
-                if (this.SelectRelativeMember(1))
+                if ((this.currentTab == PanelTab.Team
+                        ? this.SelectRelativeTeamDashboardMember(1)
+                        : this.SelectRelativeMember(1)))
                     Game1.playSound("shiny4");
                 return;
             case Buttons.DPadLeft:
-                if (this.currentTab == PanelTab.Skills)
+                if (this.currentTab is PanelTab.Skills or PanelTab.Inventory)
                     this.MoveFocusSpatial(-1, 0);
                 else
                     this.MoveFocus(-1);
                 return;
             case Buttons.DPadRight:
-                if (this.currentTab == PanelTab.Skills)
+                if (this.currentTab is PanelTab.Skills or PanelTab.Inventory)
                     this.MoveFocusSpatial(1, 0);
                 else
                     this.MoveFocus(1);
+                return;
+            case Buttons.LeftTrigger:
+                if (this.currentTab == PanelTab.Inventory)
+                {
+                    this.TryScrollFocusedInventoryPane(1);
+                    return;
+                }
+                base.receiveGamePadButton(button);
+                return;
+            case Buttons.RightTrigger:
+                if (this.currentTab == PanelTab.Inventory)
+                {
+                    this.TryScrollFocusedInventoryPane(-1);
+                    return;
+                }
+                base.receiveGamePadButton(button);
                 return;
             case Buttons.A:
                 this.ActivateFocusedControl();
@@ -448,6 +543,24 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
 
     public override void receiveScrollWheelAction(int direction)
     {
+        if (this.currentTab == PanelTab.Inventory
+            && this.TryScrollInventoryPane(
+                direction,
+                Game1.getMouseX(),
+                Game1.getMouseY()))
+        {
+            return;
+        }
+
+        if (this.currentTab == PanelTab.Team
+            && this.TryScrollTeamDashboard(
+                direction,
+                Game1.getMouseX(),
+                Game1.getMouseY()))
+        {
+            return;
+        }
+
         if (!this.wideLayout || this.memberListMaxScroll <= 0 || !this.memberListArea.Contains(Game1.getMouseX(), Game1.getMouseY()))
             return;
 
@@ -462,6 +575,12 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         SquadMemberState? selected = this.GetSelectedMember();
         if (selected is null)
             return;
+
+        if (this.currentTab == PanelTab.Team
+            && this.TryHandleTeamDashboardHover(x, y))
+        {
+            return;
+        }
 
         if (this.waitButton.Contains(x, y))
         {
@@ -541,6 +660,41 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
                 });
             }
             return;
+        }
+
+        foreach ((Rectangle bounds, int index) in this.playerInventorySlotsBounds)
+        {
+            if (!bounds.Contains(x, y))
+                continue;
+            CompanionInventoryWorkspace workspace = this.GetInventoryWorkspaceForPanel(selected);
+            Item? item = index >= 0 && index < workspace.PlayerItems.Count
+                ? workspace.PlayerItems[index]
+                : null;
+            if (item is not null)
+                this.hoverText = $"{item.DisplayName} ×{item.Stack}";
+            return;
+        }
+
+        foreach ((Rectangle bounds, int index) in this.chestInventorySlotsBounds)
+        {
+            if (!bounds.Contains(x, y))
+                continue;
+            CompanionInventoryWorkspace workspace = this.GetInventoryWorkspaceForPanel(selected);
+            Item? item = index >= 0 && index < workspace.ChestItems.Count
+                ? workspace.ChestItems[index]
+                : null;
+            if (item is not null)
+                this.hoverText = $"{item.DisplayName} ×{item.Stack}";
+            return;
+        }
+
+        foreach ((Rectangle bounds, CompanionInventoryFilter filter) in this.inventoryFilterButtons)
+        {
+            if (bounds.Contains(x, y))
+            {
+                this.hoverText = this.translate($"{GetInventoryFilterTranslationKey(filter)}_hint", null);
+                return;
+            }
         }
 
         foreach ((Rectangle bounds, string skillId) in this.skillButtons)
@@ -748,6 +902,29 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
             else
                 drawHoverText(b, this.hoverText, Game1.smallFont);
         }
+        if (this.inventoryDrag is InventoryDragState drag)
+        {
+            float dragScale = 0.7f;
+            Vector2 dragPosition = new(
+                Game1.getMouseX() - 22,
+                Game1.getMouseY() - 22);
+            if (drag.UsesFocus
+                && this.focusedControlIndex >= 0
+                && this.focusedControlIndex < this.focusTargets.Count)
+            {
+                Point center = this.focusTargets[this.focusedControlIndex].Center;
+                dragPosition = new Vector2(center.X - 22, center.Y - 22);
+            }
+            drag.Item.drawInMenu(
+                b,
+                dragPosition,
+                dragScale,
+                0.75f,
+                0.98f,
+                StackDrawType.Draw,
+                Color.White,
+                drawShadow: true);
+        }
         this.drawMouse(b);
     }
 
@@ -831,6 +1008,11 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.skillButtons.Clear();
         this.equipmentSlotsBounds.Clear();
         this.inventorySlotsBounds.Clear();
+        this.playerInventorySlotsBounds.Clear();
+        this.chestInventorySlotsBounds.Clear();
+        this.inventoryPaneBounds.Clear();
+        this.inventoryPanePages.Clear();
+        this.inventoryFilterButtons.Clear();
         this.focusTargets.Clear();
         this.memberListArea = new Rectangle();
         this.previousMemberButton = new Rectangle();
@@ -843,12 +1025,34 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         this.skillDetailsArea = new Rectangle();
         this.skillDetailsEmbedded = false;
         this.ResetRoutineGeometry();
+        this.ResetTeamDashboardGeometry();
         this.closeButton = new Rectangle(
             this.xPositionOnScreen + Math.Max(0, this.width - 46),
             this.yPositionOnScreen + 9,
             32,
             32);
     }
+
+    private sealed record InventoryDragState(
+        string NpcName,
+        CompanionInventoryEndpoint Source,
+        int SourceIndex,
+        Item Item,
+        string ExpectedItemToken,
+        string ChestId,
+        string ChestLocationName,
+        int ChestTileX,
+        int ChestTileY,
+        Rectangle SourceBounds,
+        bool UsesFocus);
+
+    private sealed record InventoryPanePageState(
+        Rectangle Bounds,
+        CompanionInventoryEndpoint Endpoint,
+        int Columns,
+        int VisibleCapacity,
+        int TotalSlots,
+        int Offset);
 
     private void DrawWideMemberList(SpriteBatch b, List<SquadMemberState> members, Rectangle area)
     {
@@ -1036,7 +1240,15 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
         }
 
         int tabGap = area.Width >= 700 ? 8 : area.Width >= 420 ? 5 : 2;
-        PanelTab[] tabs = { PanelTab.Overview, PanelTab.Work, PanelTab.Skills, PanelTab.Inventory, PanelTab.Routine };
+        PanelTab[] tabs =
+        {
+            PanelTab.Overview,
+            PanelTab.Work,
+            PanelTab.Skills,
+            PanelTab.Inventory,
+            PanelTab.Routine,
+            PanelTab.Team
+        };
         int tabWidth = Math.Max(1, (usableWidth - tabGap * (tabs.Length - 1)) / tabs.Length);
         for (int i = 0; i < tabs.Length; i++)
         {
@@ -1064,6 +1276,9 @@ internal sealed partial class CompanionPanelMenu : IClickableMenu
 
         switch (this.currentTab)
         {
+            case PanelTab.Team:
+                this.DrawTeamDashboard(b, body);
+                break;
             case PanelTab.Overview:
                 this.DrawOverview(b, member, body);
                 break;

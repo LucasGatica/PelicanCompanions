@@ -13,6 +13,7 @@ internal static class CompanionStateCopy
             DisplayName = source.DisplayName,
             OwnerId = source.OwnerId,
             Mode = source.Mode,
+            RoutinePausedByPlayer = source.RoutinePausedByPlayer,
             OriginalLocationName = source.OriginalLocationName,
             OriginalTileX = source.OriginalTileX,
             OriginalTileY = source.OriginalTileY,
@@ -171,7 +172,11 @@ internal static class CompanionStateCopy
             LumberingMode = source.LumberingMode,
             MiningMode = source.MiningMode,
             WateringMode = source.WateringMode,
-            PettingMode = source.PettingMode
+            PettingMode = source.PettingMode,
+            SmartWaterRefill = source.SmartWaterRefill,
+            SmartWaterRefillSearchRadius = source.SmartWaterRefillSearchRadius,
+            EnableSmartToolSwap = source.EnableSmartToolSwap,
+            SmartDeposit = source.SmartDeposit
         };
     }
 }

@@ -235,6 +235,7 @@ public sealed partial class ModEntry
         this.NormalizeEquipmentSlot(profile.Equipment, CompanionEquipmentSlot.Pickaxe, rejectUnavailableTools);
         this.NormalizeEquipmentSlot(profile.Equipment, CompanionEquipmentSlot.WateringCan, rejectUnavailableTools);
         this.NormalizeEquipmentSlot(profile.Equipment, CompanionEquipmentSlot.FishingRod, rejectUnavailableTools);
+        profile.InventoryRules ??= new CompanionInventoryRulesState();
 
         profile.Routine ??= new CompanionRoutineState();
         profile.Routine.Revision = Math.Max(0, profile.Routine.Revision);
@@ -625,6 +626,8 @@ public sealed partial class ModEntry
 
         Farmer? owner = this.GetOwnerFarmer(ownerId);
         if (owner is null || itemIndex < 0 || itemIndex >= owner.Items.Count)
+            return this.RejectStaleEquipmentCommand(ownerId);
+        if (owner.UsingTool && itemIndex == owner.CurrentToolIndex)
             return this.RejectStaleEquipmentCommand(ownerId);
 
         CompanionOperationalProfileState profile = this.GetOrCreateOperationalProfile(ownerId, member.NpcName);

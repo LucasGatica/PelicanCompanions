@@ -14,7 +14,7 @@ de linhas em um único arquivo.
 | `ModEntry.LifecycleMultiplayer.cs` | Ciclo de save/sessão, input, ticks e mensagens multiplayer. |
 | `ModEntry.Recruitment.cs` | Recrutar, dispensar, esperar, retomar e ownership. |
 | `ModEntry.FollowingNavigation.cs` | Formação, trilha, pathfinding, recall, tiles seguros e recuperação. |
-| `CompanionPathFindController.cs` | Controller sem o atalho de teleporte off-screen do pathfinding vanilla. |
+| `CompanionPathFindController.cs` | Controller que libera o atalho off-screen do pathfinding vanilla apenas para tarefas de rotina. |
 | `CompanionBehaviorPatches.cs` | Guards Harmony para IA de pet, spouse, chegada em casa e bedtime. |
 | `ModEntry.Tasks.cs` | Comandos, short-task queue e ações locais. |
 | `ModEntry.Tasks.Planning.cs` | Seleção, previews, diretivas e reservas de trabalho. |
@@ -29,11 +29,17 @@ de linhas em um único arquivo.
 | `ModEntry.GroundCommands.cs` | Validação de chão vazio e ordem transitória de deslocar e esperar. |
 | `ModEntry.WorkAreas.cs` | Execução persistente das áreas de trabalho; a roda manual cria círculos, com preview, especialidade e conclusão. |
 | `ModEntry.Routines.cs` | Edição CAS, executor horário, escopos Free/Delimited, presets legados, conclusão e modo de agenda original. |
-| `RoutineAreaSelectionMenu.cs` | Visão da fazenda para posicionar e dimensionar o quadrado 3 × 3–41 × 41 de uma atividade da rotina. |
+| `RoutineAreaSelectionMenu.cs` | Visão do mapa atual para posicionar e dimensionar o quadrado 3 × 3–41 × 41 de uma atividade da rotina. |
 | `ModEntry.WorkAnimations.cs` | Movimento visual de ferramenta/mão e feedback cosmético de sucesso/falha. |
 | `ModEntry.InventoryProgressionHud.cs` | Inventários, XP, loot e avisos. |
+| `ModEntry.CargoJournal.cs` | Checkpoint owner-scoped do cargo para reconciliação após falha de save. |
+| `ModEntry.InventoryTransfers.cs` | Workspace jogador/cargo/baú, filtros, CAS da pilha, escrow e transferência manual. |
 | `ModEntry.Equipment.cs` | Quatro slots owner/NPC, migração de ferramentas e troca CAS/atômica pela toolbar. |
 | `ModEntry.ChestLogistics.cs` | UI de baú-destino, GUID, resolução entre mapas/interiores e depósito transacional. |
+| `ModEntry.ChestMutations.cs` | Fila FIFO por instância física de baú e posse disciplinada do `NetMutex`. |
+| `ModEntry.TeamDashboard.cs` | Views de estado e comandos owner-scoped Parar/Depositar/Aplicar rotinas. |
+| `ModEntry.SmartAssistance.cs` | Troca opcional de ferramenta, busca canônica de água, refill e retomada da rega. |
+| `ModEntry.CompanionLife.cs` | Idle, clima/local, interações em pares, fairness e expressões sincronizadas. |
 | `ModEntry.Hats.cs` | Troca, persistência materializada e desenho dos chapéus cosméticos. |
 | `ModEntry.Communication.cs` | Fila priorizada, cooldown coletivo, histórico anti-repetição e expressões de pets. |
 | `ModEntry.DialogueWorld.cs` | Seleção de perfis/condições de diálogo, ambiente e controle de agenda. |
@@ -58,13 +64,16 @@ de linhas em um único arquivo.
 | `Core/GroundCommandPolicy.cs` | Regras puras de contexto e membros para comandos de chão vazio. |
 | `Core/CompanionSkillTreePolicy.cs` | Estado puro compartilhado entre a árvore de habilidades e a validação autoritativa. |
 | `Core/CompanionItemRoutingPolicy.cs` | Ordem pura dos destinos de item: companion, fallback configurado e mundo. |
+| `Core/CompanionInventoryFilterPolicy.cs` | Precedência pura de Guardar madeira/minerais e Manter comida. |
+| `Core/CompanionSmartRefillPolicy.cs` | Regra fail-closed de local, carga e fonte permitida para refill. |
+| `Core/CompanionIdleAnimationPolicy.cs` | Parser limitado das animações cosméticas e clamps de intervalo. |
 | `Core/CompanionChestRoutingPolicy.cs` | Precedência individual/default, validade de GUID e rejeição de identidade ambígua. |
 | `Core/SavedItemStackIdentity.cs` | Fingerprint determinístico de pilhas serializadas. |
 | `Core/CompanionStateCopy.cs` | Cópias profundas para saves e snapshots imutáveis. |
 | `CompanionOperationsModels.cs` | Perfis operacionais owner/NPC para ferramentas, rotina e logística individual. |
 | `CompanionQuickHud.cs` | HUD de consulta e atalhos rápidos. |
 | `CompanionActionWheel.cs` | Layout radial, páginas, foco espacial, hover e desenho das ações contextuais. |
-| `CompanionPanelMenu*.cs` | Shell/input/layout, conteúdo das abas e helpers de desenho do menu completo. |
+| `CompanionPanelMenu*.cs` | Shell/input/layout, seis abas, inventário paginado, painel geral da equipe e helpers de desenho. |
 
 ## Estado persistente e estado de runtime
 
@@ -75,9 +84,9 @@ formam o contrato de save. O estado tem três escopos deliberadamente distintos:
 - `CompanionProfileState`, indexado somente pelo nome interno do NPC, guarda XP,
   nível, pontos, skills e loot recente mesmo fora da equipe;
 - `SquadMemberState` guarda apenas a associação ativa: owner, cargo, modo,
-  posição/diretiva e área de trabalho;
+  pausa manual da rotina, posição/diretiva e área de trabalho;
 - `CompanionOperationalProfileState`, indexado por owner + NPC, guarda as quatro
-  ferramentas, a rotina e o override individual de baú.
+  ferramentas, filtros de depósito, a rotina e o override individual de baú.
 
 Dispensar remove somente `SquadMemberState`: o perfil permanente continua e é
 reatribuído ao próximo recrutamento, enquanto cargo/ownership nunca são
@@ -150,30 +159,48 @@ em andamento ainda possa assumir o membro até terminar ou o próximo bloco come
 Rotina sem repetição guarda o dia de ativação e é
 desabilitada no próximo `DayStarted`.
 
-Cada uma das quatro atividades de trabalho mantém seu próprio preset. `FarmWide`
-implementa **Área livre** sobre a fazenda principal retornada por
-`Game1.getFarm()`; não inclui estufa, interiores, Ilha Gengibre ou outro mapa.
-`DelimitedSquare` implementa **Área delimitada** como um quadrado de lado 3–41,
-com mínimo inclusivo e máximo exclusivo, inteiramente contido nas dimensões do
-mapa da fazenda. A ausência de preset é um terceiro estado deliberado: mantém o
-bloco pausado em retry e nunca é convertida implicitamente para `FarmWide`.
+Cada uma das quatro atividades de trabalho mantém seu próprio preset, inclusive
+o `NameOrUniqueName` da location. `FarmWide` é o nome serializado histórico de
+**Área livre**, mas sua semântica agora é a location inteira onde o painel foi
+aberto; saves antigos continuam apontando para a fazenda e, portanto, não mudam
+de comportamento. `DelimitedSquare` implementa **Área delimitada** como um
+quadrado de lado 3–41, com mínimo inclusivo e máximo exclusivo, inteiramente
+contido nas dimensões do mapa escolhido. A ausência de preset é um terceiro
+estado deliberado: mantém o bloco pausado em retry e nunca é convertida
+implicitamente para `FarmWide`.
+O host resolve os presets percorrendo locations persistentes e interiores, sem
+materializar níveis procedurais de mina/vulcão; mapas temporários de evento
+também falham fechados.
 
-`RoutineAreaSelectionMenu` reproduz o fluxo de visão ampla da fazenda usado pela
-construção da Robin, sem herdar custos nem colocação de construções. Mouse,
+`RoutineAreaSelectionMenu` reproduz o fluxo de visão ampla usado pela construção
+da Robin no mapa atual, sem herdar custos nem colocação de construções. Mouse,
 teclado e controle movem câmera/cursor; roda, `+`/`−` e LB/RB alteram o lado. O
-quadrado é limitado nas bordas inclusive em mapas de fazenda customizados.
+quadrado é limitado nas bordas inclusive em mapas customizados e interiores.
 Confirmar grava o novo preset apenas no draft; cancelar não o altera. Nos dois
 casos, location, viewport, HUD, farmer e a mesma instância do painel são
 restaurados, preservando as demais edições ainda não salvas.
 
 Ao ativar um bloco de trabalho, o host revalida mapa, geometria, alvo,
 modo/toggle e tile seguro antes de criar uma ordem `routine-*`. Círculos antigos
-continuam limitados pelo máximo de raio configurado; quadrados e fazenda inteira
-conservam sua própria geometria. A primeira tentativa reivindica
+continuam limitados pelo máximo de raio configurado; quadrados e mapa inteiro
+conservam sua própria geometria. Se o preset pertence a outra location,
+`PlaceNpc` faz a transferência host-authoritative para o tile seguro mais
+próximo do centro que ainda pertence à região; warp, `Action` e `TouchAction`
+nunca são endpoints. A primeira tentativa reivindica
 dia/bloco/revisão, permitindo que um override explícito termine sem ser apagado
 pelo refresh; área exaurida aplica Follow, Wait ou agenda original. Quando o
 override acaba, o refresh compara o modo durável e restaura o estado
 passivo/conclusão somente se ele divergir.
+Rotas até os alvos de uma ordem `routine-*` usam o intent transitório
+`RoutineTask`: se não houver farmer no mapa, somente esse intent permite ao
+controller concluir o caminho off-screen. Tasks manuais, áreas manuais, Follow,
+Recall e `MovingToWait` continuam pausados para impedir teleporte incidental.
+Como `updateEvenIfFarmerIsntHere` não atualiza terrain features, uma `Tree` que
+a própria rotina acabou de derrubar fica num tracker restrito e recebe um
+`tickUpdate` por passe de tarefas enquanto o mapa estiver vazio. O tracker
+guarda a origem `routine-*`, então a queda termina mesmo se a troca de bloco
+cancelar a tarefa no meio da animação. O Harmony de drops existente continua
+envolvendo esse tick; nenhuma outra feature ou árvore do mapa é simulada.
 `OriginalRoutine` mantém o member recrutado e os dados
 owner-scoped, mas o exclui de `CompanionBehaviorPatches` e dos locks periódicos
 até outro bloco readquirir o controle.
@@ -217,16 +244,59 @@ Ao carregar um save, o mod:
 6. restaura apenas posições explicitamente salvas para `Waiting`/disconnect;
 7. readquire o controle de agenda dos companions disponíveis.
 
-O schema de save do ramo atual é `14`. `CompanionWorkRegionKind.Circle = 0`
+O schema de save do ramo atual é `15`. `CompanionWorkRegionKind.Circle = 0`
 mantém a compatibilidade com JSON antigo sem discriminador: presets e ordens de
 schema 13 continuam circulares exatamente como estavam até o jogador
-substituí-los. A migração também não cria Área livre para uma especialidade sem
-preset. `SavedItemStack` preserva `modData`,
+substituí-los. Schema 15 acrescenta `InventoryRules` ao perfil operacional
+owner/NPC; sua ausência preserva a rota anterior (`madeira=true`,
+`minerais=true`, `manter comida=false`). A migração também não cria Área livre
+para uma especialidade sem preset. `SavedItemStack` preserva `modData`,
 ID qualificado, quantidade, qualidade, cor, parent preservado e, quando é
 ferramenta, upgrade e água restante do regador. Saves com schema
 mais novo ou dados ambíguos não são carregados nem sobrescritos; o mod entra em
 modo inerte nessa sessão para não alterar mundo/itens sem estado confiável. O
-schema de config é `8`.
+schema de config é `9`.
+
+### Inventário direto, depósitos e assistência
+
+O workspace do painel é apenas uma visão curta e cacheada. Ao iniciar um drag,
+a UI captura endpoint, índice, fingerprint da pilha e, quando aplicável,
+GUID/mapa/tile do baú atribuído. O host revalida todos esses campos no commit.
+O fluxo retira primeiro a instância da fonte para um escrow, tenta o destino e
+restaura o remainder na mesma posição. Se a restauração excepcional falhar, o
+remainder passa ao owner, depois ao mundo e somente então ao overflow
+persistente. Jogador↔baú move a instância runtime original; cargo aceita somente
+objetos stackable cujo round-trip em `SavedItemStack` é comprovado.
+
+Baús nunca são escolhidos por proximidade implícita durante um commit manual: o
+GUID, mapa e tile exibidos precisam continuar apontando para o mesmo objeto. A
+transferência manual e os depósitos de cargo/routine/bulk adquirem o `NetMutex`
+antes da mutação. Pedidos assíncronos revalidam o mesmo member e o mesmo baú
+depois de receber o lease, liberam-no em `finally` e publicam novo snapshot. Os
+filtros pertencem ao perfil owner/NPC e afetam somente rotas automáticas; um
+drag explícito sempre expressa a intenção do jogador.
+
+O refill é uma `PendingCompanionTask` própria. O host usa
+`CanRefillWateringCanOnTile`, reserva água e stand, caminha normalmente,
+revalida modo/local/fonte, atualiza o slot do regador com o mesmo journal de
+equipamento e tenta retomar o tile seco interrompido. Troca de ferramenta e
+depósito inteligente consultam as regras replicadas do host e não criam itens
+virtuais.
+
+### Painel da equipe e personalidade
+
+O painel da equipe consome views imutáveis montadas no host/cliente a partir do
+snapshot: mapa, activity/target, ferramenta relevante, água, capacidade e
+motivo somente enquanto o estado está realmente bloqueado. Os três comandos
+em lote continuam owner-scoped e reutilizam as mesmas transições individuais,
+filtros, rotina e validações de baú.
+
+Vida cosmética é host-authoritative e estritamente transitória. Observações de
+posição/local/clima, deadlines e cooldowns nunca entram no save; o reset central
+os limpa ao trocar de fazenda. Um companion com task/controller/recall/evento
+não é elegível. Por passe, no máximo um evento social por owner vence a ordem
+reação de mundo → interação em par → idle, e expressões/facing são replicados
+aos demais clientes.
 
 ## Autoridade multiplayer
 
@@ -260,8 +330,8 @@ recebê-las nunca cria tarefa, altera o mundo ou muda o save.
 
 `SetRoutine` envia a configuração inteira, inclusive os presets de região, e o
 SHA-256 do estado/revisão que o cliente leu. O host compara antes do commit,
-revalida owner, fazenda principal, dimensões e limites do quadrado, nunca aceita
-estado de execução do cliente e rejeita uma edição stale. Payloads do codec
+revalida owner, existência de cada location, dimensões e limites da região,
+nunca aceita estado de execução do cliente e rejeita uma edição stale. Payloads do codec
 antigo sem configuração de região preservam os presets correntes. Assim duas
 telas nunca intercalam células nem sobrescrevem silenciosamente uma rotina mais
 nova.
@@ -378,10 +448,14 @@ em expressão sem permitir texto.
 - Um resultado de tarefa materializado tenta baú-destino, cargo, squad/owner e
   mundo nessa ordem; cada destino recebe somente o remainder ainda não commitado.
 - Ferramentas entram apenas nos quatro slots operacionais por troca direta com
-  a célula selecionada da toolbar; nenhuma ferramenta ou item genérico pode ser
-  depositado no cargo do companion.
+  a célula selecionada da toolbar. Objetos genéricos stackable só entram no
+  cargo depois de um round-trip fiel; subtipos/custom state não representáveis
+  falham fechados. Jogador↔baú preserva a instância original.
 - Transferências de inventário são commitadas por pilha; se conteúdo customizado
   lançar após mutação parcial, a fonte é decrementada antes de qualquer fallback.
+- Um drag captura a pilha e o baú exibidos; troca de slot, GUID, mapa ou tile
+  torna o pedido stale. Toda mutação manual/de-cargo em baú exige o mutex e
+  revalida o member depois do callback assíncrono.
 - Um NPC nunca pode existir simultaneamente como member ativo e restore de agenda
   pendente.
 - Aquisição de controle de agenda é idempotente; a limpeza pesada não pertence
@@ -391,6 +465,10 @@ em expressão sem permitir texto.
 - A roda preserva até três ações globais e pagina os demais slots até expor os
   12 companions. Mouse/scroll, setas/WASD, D-pad/sticks, shoulders, A/Enter e
   B/Escape compartilham o mesmo modelo de seleção e cancelamento modal.
+- `FollowRoutine` é um intent host-authoritative separado de recall/follow. Só
+  depois de validar owner e rotina ativa ele passa por
+  `PrepareForRoutineModeChange`, removendo overrides manuais, e reavalia o bloco
+  atual sem zerar sua execução; trabalho e depósito já concluídos não repetem.
 - A comunicação usa uma fila limitada por owner: deduplicação, prioridade e TTL
   acontecem antes do cooldown coletivo. Falas recentes são evitadas no grupo e
   por speaker, e as quatro chaves recentes por NPC sobrevivem ao reload.

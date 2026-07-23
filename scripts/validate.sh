@@ -27,7 +27,9 @@ default_tokens="$(mktemp)"
 ptbr_tokens="$(mktemp)"
 profile_text_keys="$(mktemp)"
 missing_profile_text_keys="$(mktemp)"
-trap 'rm -f "$default_keys" "$ptbr_keys" "$default_tokens" "$ptbr_tokens" "$profile_text_keys" "$missing_profile_text_keys"' EXIT
+gmcm_translation_keys="$(mktemp)"
+missing_gmcm_translation_keys="$(mktemp)"
+trap 'rm -f "$default_keys" "$ptbr_keys" "$default_tokens" "$ptbr_tokens" "$profile_text_keys" "$missing_profile_text_keys" "$gmcm_translation_keys" "$missing_gmcm_translation_keys"' EXIT
 
 jq -r 'keys[]' i18n/default.json | sort >"$default_keys"
 jq -r 'keys[]' i18n/pt-BR.json | sort >"$ptbr_keys"
@@ -59,4 +61,17 @@ if [[ -s "$missing_profile_text_keys" ]]; then
     exit 1
 fi
 
-echo "Validation passed: build, regression test harness, JSON syntax, translation/profile coverage, and token parity."
+sed -nE 's/.*this\.Add(Keybind|Bool|Enum|BoundedInt|Int)Option\(gmcm, "([^"]+)".*/\2/p' \
+    ModEntry.ConfigMenu.cs \
+    | while IFS= read -r option_key; do
+        printf 'config.%s.name\nconfig.%s.description\n' "$option_key" "$option_key"
+    done \
+    | sort -u >"$gmcm_translation_keys"
+comm -23 "$gmcm_translation_keys" "$default_keys" >"$missing_gmcm_translation_keys"
+if [[ -s "$missing_gmcm_translation_keys" ]]; then
+    echo "GMCM options reference missing default translation keys:" >&2
+    sed 's/^/ - /' "$missing_gmcm_translation_keys" >&2
+    exit 1
+fi
+
+echo "Validation passed: build, regression tests, JSON syntax, translation/profile/GMCM coverage, and token parity."

@@ -29,7 +29,6 @@ internal sealed partial class CompanionPanelMenu
     private Rectangle routineAreaDelimitedButton;
     private Rectangle routineQuickShiftButton;
     private Rectangle routineSaveButton;
-    private CompanionRoutineActivity selectedRoutinePaintActivity = CompanionRoutineActivity.Clear;
 
     private void ResetRoutineGeometry()
     {
@@ -83,7 +82,7 @@ internal sealed partial class CompanionPanelMenu
                     && unchecked((uint)(Game1.ticks - cached.PendingSinceTick)) <= 300;
                 if (!stillWaitingForSnapshot)
                 {
-                    cached = CreateRoutineDraftEntry(current);
+                    cached = CreateRoutineDraftEntry(current, cached.SelectedPaintActivity);
                     this.routineDrafts[key] = cached;
                 }
             }
@@ -97,12 +96,21 @@ internal sealed partial class CompanionPanelMenu
         return created;
     }
 
-    private static RoutineDraftEntry CreateRoutineDraftEntry(CompanionRoutineState source)
+    private static RoutineDraftEntry CreateRoutineDraftEntry(
+        CompanionRoutineState source,
+        CompanionRoutineActivity? selectedPaintActivity = null)
     {
         CompanionRoutineState draft = CompanionOperationsStateCopy.CloneRoutine(source);
         draft.Hours = CompanionRoutinePolicy.NormalizeHours(draft.Hours).ToList();
         draft.AreaPresets = CompanionRoutinePolicy.NormalizeAreaPresets(draft.AreaPresets).ToList();
-        return new RoutineDraftEntry(draft, CompanionRoutinePolicy.CreateStateToken(source));
+        CompanionRoutineActivity selected = selectedPaintActivity is CompanionRoutineActivity requested
+            && Enum.IsDefined(requested)
+                ? requested
+                : CompanionRoutinePolicy.GetPreferredEditorActivity(draft, Game1.timeOfDay);
+        return new RoutineDraftEntry(
+            draft,
+            CompanionRoutinePolicy.CreateStateToken(source),
+            selected);
     }
 
     private bool HandleRoutineLeftClick(SquadMemberState member, int x, int y)
@@ -137,18 +145,21 @@ internal sealed partial class CompanionPanelMenu
         if (this.routineAreaFreeButton.Contains(x, y))
         {
             if (!CompanionRoutinePolicy.TryGetWorkSpecialty(
-                    this.selectedRoutinePaintActivity,
-                    out CompanionWorkSpecialty specialty))
+                    entry.SelectedPaintActivity,
+                    out CompanionWorkSpecialty specialty)
+                || Game1.currentLocation?.Map is null
+                || Game1.currentLocation.Map.Layers.Count == 0)
             {
                 Game1.playSound("cancel");
                 return true;
             }
 
+            string areaLocationName = Game1.currentLocation.NameOrUniqueName;
             CompanionRoutinePolicy.UpsertAreaPreset(draft, new CompanionRoutineAreaPreset
             {
                 Specialty = specialty,
                 RegionKind = CompanionWorkRegionKind.FarmWide,
-                LocationName = Game1.getFarm().NameOrUniqueName
+                LocationName = areaLocationName
             });
             this.routineFeedbackKeys.Remove(key);
             Game1.playSound("drumkit6");
@@ -158,29 +169,44 @@ internal sealed partial class CompanionPanelMenu
         if (this.routineAreaDelimitedButton.Contains(x, y))
         {
             if (!CompanionRoutinePolicy.TryGetWorkSpecialty(
-                    this.selectedRoutinePaintActivity,
-                    out CompanionWorkSpecialty specialty))
+                    entry.SelectedPaintActivity,
+                    out CompanionWorkSpecialty specialty)
+                || Game1.currentLocation?.Map is null
+                || Game1.currentLocation.Map.Layers.Count == 0
+                || Math.Min(
+                    Game1.currentLocation.Map.Layers[0].LayerWidth,
+                    Game1.currentLocation.Map.Layers[0].LayerHeight)
+                    < CompanionWorkAreaPolicy.MinimumSquareSize)
             {
                 Game1.playSound("cancel");
                 return true;
             }
 
+            GameLocation areaLocation = Game1.currentLocation;
+            string areaLocationName = areaLocation.NameOrUniqueName;
             CompanionRoutineAreaPreset? initialArea = CompanionRoutinePolicy.GetAreaPreset(draft, specialty);
-            RoutineAreaSelectionPreset? initialSelection = initialArea?.RegionKind switch
-            {
-                CompanionWorkRegionKind.DelimitedSquare => new RoutineAreaSelectionPreset(
-                    initialArea.MinX,
-                    initialArea.MinY,
-                    initialArea.Size),
-                CompanionWorkRegionKind.Circle => new RoutineAreaSelectionPreset(
-                    initialArea.CenterX - initialArea.Radius,
-                    initialArea.CenterY - initialArea.Radius,
-                    initialArea.Radius * 2 + 1),
-                _ => null
-            };
+            bool initialAreaBelongsToCurrentMap = initialArea is not null
+                && string.Equals(
+                    initialArea.LocationName,
+                    areaLocationName,
+                    StringComparison.Ordinal);
+            RoutineAreaSelectionPreset? initialSelection = initialAreaBelongsToCurrentMap
+                ? initialArea!.RegionKind switch
+                {
+                    CompanionWorkRegionKind.DelimitedSquare => new RoutineAreaSelectionPreset(
+                        initialArea.MinX,
+                        initialArea.MinY,
+                        initialArea.Size),
+                    CompanionWorkRegionKind.Circle => new RoutineAreaSelectionPreset(
+                        initialArea.CenterX - initialArea.Radius,
+                        initialArea.CenterY - initialArea.Radius,
+                        initialArea.Radius * 2 + 1),
+                    _ => null
+                }
+                : null;
             Game1.activeClickableMenu = new RoutineAreaSelectionMenu(
                 this,
-                Game1.getFarm(),
+                areaLocation,
                 initialSelection,
                 this.translate,
                 (minX, minY, size) =>
@@ -189,7 +215,7 @@ internal sealed partial class CompanionPanelMenu
                     {
                         Specialty = specialty,
                         RegionKind = CompanionWorkRegionKind.DelimitedSquare,
-                        LocationName = Game1.getFarm().NameOrUniqueName,
+                        LocationName = areaLocationName,
                         MinX = minX,
                         MinY = minY,
                         Size = size
@@ -203,7 +229,7 @@ internal sealed partial class CompanionPanelMenu
         {
             if (!bounds.Contains(x, y))
                 continue;
-            this.selectedRoutinePaintActivity = activity;
+            entry.SelectedPaintActivity = activity;
             Game1.playSound("smallSelect");
             return true;
         }
@@ -212,7 +238,7 @@ internal sealed partial class CompanionPanelMenu
         {
             if (!bounds.Contains(x, y))
                 continue;
-            CompanionRoutinePolicy.PaintHour(draft, hour, this.selectedRoutinePaintActivity);
+            CompanionRoutinePolicy.PaintHour(draft, hour, entry.SelectedPaintActivity);
             this.routineFeedbackKeys.Remove(key);
             Game1.playSound("drumkit6");
             return true;
@@ -220,7 +246,13 @@ internal sealed partial class CompanionPanelMenu
 
         if (this.routineQuickShiftButton.Contains(x, y))
         {
-            CompanionRoutinePolicy.ApplyWorkUntilSixPm(draft, this.selectedRoutinePaintActivity);
+            CompanionRoutineActivity workActivity = entry.SelectedPaintActivity;
+            if (!CompanionRoutinePolicy.TryGetWorkSpecialty(workActivity, out _))
+            {
+                workActivity = CompanionRoutineActivity.Clear;
+                entry.SelectedPaintActivity = workActivity;
+            }
+            CompanionRoutinePolicy.ApplyWorkUntilSixPm(draft, workActivity);
             this.routineFeedbackKeys.Remove(key);
             Game1.playSound("questcomplete");
             return true;
@@ -249,7 +281,8 @@ internal sealed partial class CompanionPanelMenu
 
     private void HandleRoutineHover(SquadMemberState member, int x, int y)
     {
-        CompanionRoutineState draft = this.GetRoutineDraft(member).State;
+        RoutineDraftEntry entry = this.GetRoutineDraft(member);
+        CompanionRoutineState draft = entry.State;
         if (this.routineEnabledButton.Contains(x, y))
         {
             this.hoverText = this.translate("companion.routine.enabled_hint", null);
@@ -267,15 +300,23 @@ internal sealed partial class CompanionPanelMenu
         }
         if (this.routineAreaFreeButton.Contains(x, y))
         {
-            this.hoverText = CompanionRoutinePolicy.TryGetWorkSpecialty(this.selectedRoutinePaintActivity, out _)
-                ? this.translate("companion.routine.scope.free_hint", null)
+            this.hoverText = CompanionRoutinePolicy.TryGetWorkSpecialty(entry.SelectedPaintActivity, out _)
+                ? this.translate("companion.routine.scope.free_hint", new
+                {
+                    activity = this.GetRoutineActivityLabel(entry.SelectedPaintActivity, shortLabel: false),
+                    location = Game1.currentLocation?.NameOrUniqueName ?? "?"
+                })
                 : this.translate("companion.routine.scope.select_work_hint", null);
             return;
         }
         if (this.routineAreaDelimitedButton.Contains(x, y))
         {
-            this.hoverText = CompanionRoutinePolicy.TryGetWorkSpecialty(this.selectedRoutinePaintActivity, out _)
-                ? this.translate("companion.routine.scope.delimited_hint", null)
+            this.hoverText = CompanionRoutinePolicy.TryGetWorkSpecialty(entry.SelectedPaintActivity, out _)
+                ? this.translate("companion.routine.scope.delimited_hint", new
+                {
+                    activity = this.GetRoutineActivityLabel(entry.SelectedPaintActivity, shortLabel: false),
+                    location = Game1.currentLocation?.NameOrUniqueName ?? "?"
+                })
                 : this.translate("companion.routine.scope.select_work_hint", null);
             return;
         }
@@ -331,10 +372,12 @@ internal sealed partial class CompanionPanelMenu
         if (area.Width <= 1 || area.Height <= 1)
             return;
 
-        CompanionRoutineState draft = this.GetRoutineDraft(member).State;
+        RoutineDraftEntry entry = this.GetRoutineDraft(member);
+        CompanionRoutineState draft = entry.State;
+        CompanionRoutineActivity selectedPaintActivity = entry.SelectedPaintActivity;
         if (area.Height < 180)
         {
-            this.DrawUltraCompactRoutine(b, draft, area);
+            this.DrawUltraCompactRoutine(b, draft, selectedPaintActivity, area);
             return;
         }
 
@@ -391,7 +434,7 @@ internal sealed partial class CompanionPanelMenu
                 shortLabel: paletteColumns == RoutineActivities.Length || button.Width < 112);
             if (!hasRequiredArea)
                 label += " !";
-            this.DrawRoutineActivityButton(b, button, label, activity == this.selectedRoutinePaintActivity, activity, hasRequiredArea);
+            this.DrawRoutineActivityButton(b, button, label, activity == selectedPaintActivity, activity, hasRequiredArea);
         }
 
         int actionHeight = Math.Clamp(area.Height / 10, 23, 32);
@@ -413,7 +456,7 @@ internal sealed partial class CompanionPanelMenu
             actionTop,
             Math.Max(1, area.Right - this.routineQuickShiftButton.Right - gap),
             actionHeight);
-        this.DrawRoutineAreaModeButtons(b, draft);
+        this.DrawRoutineAreaModeButtons(b, draft, selectedPaintActivity);
         this.DrawButton(b, this.routineQuickShiftButton, this.translate("companion.routine.quick_shift", null), false, danger: false);
         this.DrawButton(b, this.routineSaveButton, this.translate("companion.routine.save", null), true, danger: false);
 
@@ -421,7 +464,7 @@ internal sealed partial class CompanionPanelMenu
         int feedbackHeight = area.Height >= 260 ? 18 : 0;
         int gridBottom = Math.Max(gridTop + 1, actionTop - gap - feedbackHeight);
         Rectangle grid = new(area.X, gridTop, area.Width, Math.Max(1, gridBottom - gridTop));
-        this.DrawRoutineGrid(b, draft, grid, gap);
+        this.DrawRoutineGrid(b, draft, selectedPaintActivity, grid, gap);
 
         CompanionOperationalProfileKey key = CompanionEquipmentPolicy.CreateKey(member.OwnerId, member.NpcName);
         if (feedbackHeight > 0 && this.routineFeedbackKeys.TryGetValue(key, out string? feedbackKey))
@@ -439,6 +482,7 @@ internal sealed partial class CompanionPanelMenu
     private void DrawUltraCompactRoutine(
         SpriteBatch b,
         CompanionRoutineState draft,
+        CompanionRoutineActivity selectedPaintActivity,
         Rectangle area)
     {
         const int gap = 2;
@@ -502,7 +546,7 @@ internal sealed partial class CompanionPanelMenu
                 b,
                 button,
                 label,
-                activity == this.selectedRoutinePaintActivity,
+                activity == selectedPaintActivity,
                 activity,
                 hasRequiredArea);
         }
@@ -528,38 +572,57 @@ internal sealed partial class CompanionPanelMenu
             actionHeight);
 
         Rectangle grid = new(area.X, gridTop, area.Width, gridHeight);
-        this.DrawRoutineGrid(b, draft, grid, gap, columnsOverride: area.Width >= 240 ? 10 : 5);
+        this.DrawRoutineGrid(
+            b,
+            draft,
+            selectedPaintActivity,
+            grid,
+            gap,
+            columnsOverride: area.Width >= 240 ? 10 : 5);
 
-        this.DrawRoutineAreaModeButtons(b, draft);
+        this.DrawRoutineAreaModeButtons(b, draft, selectedPaintActivity);
         this.DrawButton(b, this.routineQuickShiftButton, this.translate("companion.routine.quick_shift", null), false, danger: false);
         this.DrawButton(b, this.routineSaveButton, this.translate("companion.routine.save", null), true, danger: false);
     }
 
-    private void DrawRoutineAreaModeButtons(SpriteBatch b, CompanionRoutineState draft)
+    private void DrawRoutineAreaModeButtons(
+        SpriteBatch b,
+        CompanionRoutineState draft,
+        CompanionRoutineActivity selectedPaintActivity)
     {
         bool workSelected = CompanionRoutinePolicy.TryGetWorkSpecialty(
-            this.selectedRoutinePaintActivity,
+            selectedPaintActivity,
             out CompanionWorkSpecialty specialty);
         CompanionRoutineAreaPreset? preset = workSelected
             ? CompanionRoutinePolicy.GetAreaPreset(draft, specialty)
             : null;
         bool free = preset?.RegionKind == CompanionWorkRegionKind.FarmWide;
         bool delimited = preset is not null && !free;
-        bool shortLabel = this.routineAreaFreeButton.Width < 104;
+        bool shortLabel = this.routineAreaFreeButton.Width < 126;
+        object? labelTokens = workSelected
+            ? new
+            {
+                activity = this.GetRoutineActivityLabel(selectedPaintActivity, shortLabel: true)
+            }
+            : null;
         this.DrawButton(
             b,
             this.routineAreaFreeButton,
-            this.translate(shortLabel
-                ? "companion.routine.scope.free.short"
-                : "companion.routine.scope.free", null),
+            this.translate(
+                shortLabel || !workSelected
+                    ? "companion.routine.scope.free.short"
+                    : "companion.routine.scope.free_for",
+                labelTokens),
             free,
             danger: false);
         this.DrawButton(
             b,
             this.routineAreaDelimitedButton,
-            this.translate(shortLabel
-                ? "companion.routine.scope.delimited.short"
-                : "companion.routine.scope.delimited", null),
+            this.translate(
+                shortLabel || !workSelected
+                    ? "companion.routine.scope.delimited.short"
+                    : "companion.routine.scope.delimited_for",
+                labelTokens),
             delimited,
             danger: false);
 
@@ -574,6 +637,7 @@ internal sealed partial class CompanionPanelMenu
     private void DrawRoutineGrid(
         SpriteBatch b,
         CompanionRoutineState draft,
+        CompanionRoutineActivity selectedPaintActivity,
         Rectangle grid,
         int gap,
         int? columnsOverride = null)
@@ -600,7 +664,7 @@ internal sealed partial class CompanionPanelMenu
             Color fill = Color.Lerp(new Color(255, 242, 205), accent, 0.12f);
             if (cell.Contains(Game1.getMouseX(), Game1.getMouseY()))
                 fill = Color.Lerp(fill, Color.White, 0.25f);
-            this.DrawFlatPanel(b, cell, fill, accent, hour.Activity == this.selectedRoutinePaintActivity ? 2 : 1);
+            this.DrawFlatPanel(b, cell, fill, accent, hour.Activity == selectedPaintActivity ? 2 : 1);
             string hourText = FormatRoutineHour(hour.Hour);
             string activityText = this.GetRoutineActivityLabel(hour.Activity, shortLabel: true);
             if (cell.Height >= 44 && cell.Width >= 52)
@@ -743,14 +807,19 @@ internal sealed partial class CompanionPanelMenu
 
     private sealed class RoutineDraftEntry
     {
-        public RoutineDraftEntry(CompanionRoutineState state, string expectedStateToken)
+        public RoutineDraftEntry(
+            CompanionRoutineState state,
+            string expectedStateToken,
+            CompanionRoutineActivity selectedPaintActivity)
         {
             this.State = state;
             this.ExpectedStateToken = expectedStateToken;
+            this.SelectedPaintActivity = selectedPaintActivity;
         }
 
         public CompanionRoutineState State { get; }
         public string ExpectedStateToken { get; set; }
+        public CompanionRoutineActivity SelectedPaintActivity { get; set; }
         public string PendingPreviousStateToken { get; set; } = "";
         public int PendingSinceTick { get; set; }
     }

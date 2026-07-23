@@ -18,7 +18,7 @@ public sealed partial class ModEntry : Mod
     private const string SaveKey = "pelican-companions-state";
     private const int CompanionProfilesSaveVersion = 11;
     private const int OperationalProfilesSaveVersion = 13;
-    private const int CurrentSaveVersion = 14;
+    private const int CurrentSaveVersion = 15;
     private const string NpcConfigAssetKey = "Lucas.PelicanCompanions/NpcConfig";
     private const string MessageActionRequest = "CompanionActionRequest";
     private const string MessageStateRequest = "CompanionStateRequest";
@@ -315,6 +315,13 @@ public sealed partial class ModEntry : Mod
             this.config.CommunicationGroupCooldownSeconds = Math.Max(1, this.config.CommunicationGroupCooldownSeconds);
             this.config.EnablePetExpressions = true;
             this.config.ConfigVersion = 8;
+        }
+
+        if (this.config.ConfigVersion < 9)
+        {
+            // New smart-assistance and social options already carry conservative
+            // property defaults. Preserve the player's old idle-animation choice.
+            this.config.ConfigVersion = 9;
         }
     }
 

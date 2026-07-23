@@ -330,7 +330,7 @@ public sealed partial class ModEntry
     private void OpenCompanionPanel(string? selectedNpcName = null)
     {
         this.RefreshCompanionPanelPreviews();
-        Game1.activeClickableMenu = new CompanionPanelMenu(
+        CompanionPanelMenu menu = new(
             getMembers: () => this.GetLocalMembers().ToList(),
             selectedNpcName: selectedNpcName,
             getNpc: this.GetNpcByName,
@@ -341,6 +341,10 @@ public sealed partial class ModEntry
             getMapInfo: this.GetCompanionMapInfo,
             getDirectivePreviewText: this.GetDirectivePreviewText,
             getInventoryItems: this.GetCompanionInventoryItems,
+            getInventoryWorkspace: this.GetCompanionInventoryWorkspace,
+            transferInventoryItem: this.TryTransferInventoryItemFromPanel,
+            getInventoryFilter: this.GetCompanionInventoryFilter,
+            toggleInventoryFilter: this.ToggleCompanionInventoryFilter,
             getEquippedHat: this.GetCompanionEquippedHat,
             hasEquippedHat: this.HasCompanionEquippedHat,
             changeHat: this.ChangeCompanionHat,
@@ -358,6 +362,12 @@ public sealed partial class ModEntry
             recallMember: member => this.RecallCompanion(member.NpcName, member.OwnerId, showMessage: true),
             dismissMember: this.ConfirmDismissFromPanel,
             inventorySlots: this.GetCompanionInventoryCapacity());
+        menu.ConfigureTeamDashboard(
+            this.GetCompanionTeamMemberView,
+            this.RequestStopAllCompanionWork,
+            this.RequestDepositAllCompanionCargo,
+            this.RequestFollowAllCompanionRoutines);
+        Game1.activeClickableMenu = menu;
     }
 
     private void ToggleWaitingFromPanel(SquadMemberState member)
@@ -424,6 +434,13 @@ public sealed partial class ModEntry
 
         if (member.CurrentActivityKey == "companion.status.fishing")
             return this.Tr("companion.status.fishing");
+
+        if (member.CurrentActivityKey is "companion.status.refilling_water"
+            or "companion.status.depositing"
+            or "companion.status.deposit_blocked")
+        {
+            return this.Tr(member.CurrentActivityKey);
+        }
 
         if (member.CurrentActivityKey == "companion.status.stuck")
             return this.Tr("companion.status.stuck");

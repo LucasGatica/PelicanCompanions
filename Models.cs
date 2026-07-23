@@ -15,7 +15,8 @@ internal enum CompanionMovementIntent
 {
     Follow,
     Recall,
-    Task
+    Task,
+    RoutineTask
 }
 
 internal sealed class SquadMemberState
@@ -26,6 +27,8 @@ internal sealed class SquadMemberState
     public string DisplayName { get; set; } = "";
     public long OwnerId { get; set; }
     public CompanionMode Mode { get; set; } = CompanionMode.Following;
+    /// <summary>Whether Waiting was explicitly requested by the player and should override scheduled routines.</summary>
+    public bool RoutinePausedByPlayer { get; set; }
     public string? OriginalLocationName { get; set; }
     public float OriginalTileX { get; set; }
     public float OriginalTileY { get; set; }
@@ -177,7 +180,59 @@ internal sealed class CompanionHostRules
     public TaskMode MiningMode { get; set; }
     public TaskMode WateringMode { get; set; }
     public TaskMode PettingMode { get; set; }
+    public SmartWaterRefillMode SmartWaterRefill { get; set; }
+    public int SmartWaterRefillSearchRadius { get; set; }
+    public bool EnableSmartToolSwap { get; set; }
+    public SmartDepositMode SmartDeposit { get; set; }
 }
+
+internal enum CompanionInventoryEndpoint
+{
+    Player = 0,
+    Companion = 1,
+    Chest = 2
+}
+
+internal enum CompanionInventoryFilter
+{
+    DepositWood = 0,
+    DepositMinerals = 1,
+    KeepFood = 2
+}
+
+internal readonly record struct CompanionInventoryTransferRequest(
+    CompanionInventoryEndpoint Source,
+    CompanionInventoryEndpoint Destination,
+    int SourceIndex,
+    string ExpectedItemToken,
+    string ChestId,
+    string ChestLocationName,
+    int ChestTileX,
+    int ChestTileY);
+
+internal sealed record CompanionInventoryWorkspace(
+    IReadOnlyList<Item?> PlayerItems,
+    IReadOnlyList<string> PlayerItemTokens,
+    IReadOnlyList<Item> CompanionItems,
+    IReadOnlyList<string> CompanionItemTokens,
+    IReadOnlyList<Item?> ChestItems,
+    IReadOnlyList<string> ChestItemTokens,
+    bool ChestAvailable,
+    string ChestDisplayName,
+    string ChestId,
+    string ChestLocationName,
+    int ChestTileX,
+    int ChestTileY);
+
+internal readonly record struct CompanionTeamMemberView(
+    string Location,
+    string Activity,
+    string Tool,
+    string Water,
+    int InventoryCount,
+    int InventoryCapacity,
+    bool InventoryFull,
+    string BlockReason);
 
 internal sealed class SavedItemStack
 {
@@ -293,6 +348,7 @@ internal sealed class CompanionExpressionMessage
     public string SoundCue { get; set; } = "";
     public float JumpHeight { get; set; }
     public int ShakeMilliseconds { get; set; }
+    public int FacingDirection { get; set; } = -1;
 }
 
 internal sealed class CompanionWorkVisualMessage
@@ -314,7 +370,8 @@ internal enum CompanionTaskKind
     Gathering,
     Harvesting,
     Petting,
-    Fishing
+    Fishing,
+    RefillingWater
 }
 
 internal sealed class PendingCompanionTask
@@ -357,6 +414,8 @@ internal sealed class PendingCompanionTask
     public string FishingWaterBodyToken { get; set; } = "";
     public int FishingWaterDepth { get; set; }
     public int NextFishingTime { get; set; }
+    public bool HasResumeWateringTarget { get; set; }
+    public Vector2 ResumeWateringTargetTile { get; set; }
 }
 
 internal sealed class SharedWorkTargetReservation
@@ -389,7 +448,9 @@ internal enum CompanionWorkSpecialty
 /// <summary>The persisted geometry used by a companion work order.</summary>
 /// <remarks>
 /// Circle must remain zero so work areas written before schema 14 retain their
-/// exact geometry when the new discriminator is absent from JSON.
+/// exact geometry when the new discriminator is absent from JSON. FarmWide is
+/// the historical serialized name for a region covering the preset's complete
+/// GameLocation; its numeric value is preserved for existing farm presets.
 /// </remarks>
 internal enum CompanionWorkRegionKind
 {
